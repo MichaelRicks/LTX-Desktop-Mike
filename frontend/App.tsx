@@ -221,7 +221,11 @@ function AppContent() {
       return
     }
 
-    if (forceApiGenerations || setupState.needsLicense || setupState.needsSetup) {
+    // With an LTX API key, generation can always run via the (free) LTX API, so
+    // never block startup on missing local models — local downloads stay
+    // available in Settings. (Also avoids a cold-boot model-scan race wrongly
+    // demanding the local text encoder.)
+    if (forceApiGenerations || settings.hasLtxApiKey || setupState.needsLicense || setupState.needsSetup) {
       setRequiredModelsGate('ready')
       return
     }
@@ -251,6 +255,7 @@ function AppContent() {
     areRequiredModelsDownloaded,
     backendLoading,
     forceApiGenerations,
+    settings.hasLtxApiKey,
     setupState,
     connected,
     waitingForRuntimePolicy,
