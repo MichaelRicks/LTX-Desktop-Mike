@@ -9,7 +9,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   Camera, ChevronRight, Copy, Download, Eraser, Film, Folder, FolderPlus, Image as ImageIcon,
-  Layers, Pencil, Plus, Search, Send, Trash2, Upload, Wand2, X,
+  Layers, Maximize2, Minimize2, Pencil, Plus, RotateCcw, Search, Send, Trash2, Upload, Wand2, X,
 } from 'lucide-react'
 import {
   PERF_FAMILIES, assemblePerformance, perfLabel, type PerfDelivery,
@@ -236,23 +236,107 @@ function PerformancePanel({
 }
 
 /* ---- Shot Setup ----------------------------------------------------------- */
+const SHOT_RANGES: Record<'rot' | 'tilt' | 'zoom', [number, number]> = { rot: [-90, 90], tilt: [-45, 45], zoom: [1, 20] }
+const clampShot = (v: number, mn: number, mx: number) => Math.max(mn, Math.min(mx, v))
+
 function ShotPanel({
-  shot, setShot, ctl, onCopy, onInject,
+  shot, setShot, ctl, onCopy, onInject, onUseImage, flash,
 }: {
   shot: ShotState; setShot: React.Dispatch<React.SetStateAction<ShotState>>
   ctl: SectionCtl; onCopy: (t: string) => void; onInject: (t: string) => void
+  onUseImage: (img: GpmImage) => void; flash: (m: string) => void
 }) {
   const shotOut = useMemo(() => buildShotPrompt(shot), [shot])
   const setSlider = (k: 'rot' | 'tilt' | 'zoom', v: number) => setShot((s) => ({ ...s, [k]: v, preset: null }))
+  const nudge = (k: 'rot' | 'tilt' | 'zoom', d: number) => setSlider(k, clampShot(shot[k] + d, SHOT_RANGES[k][0], SHOT_RANGES[k][1]))
   const toggleAnchor = (id: string) => setShot((s) => ({ ...s, anchors: { ...s.anchors, [id]: !s.anchors[id] } }))
   const sliders: Array<['rot' | 'tilt' | 'zoom', string, number, number]> = [
     ['rot', 'Rotate', -90, 90], ['tilt', 'Tilt', -45, 45], ['zoom', 'Zoom', 1, 20],
   ]
+
+  // Source frame the virtual camera reframes.
+  const [srcImage, setSrcImage] = useState<{ name: string; dataUrl: string } | null>(null)
+  const [library, setLibrary] = useState<GpmImage[]>([])
+  const [picker, setPicker] = useState(false)
+  const fileRef = useRef<HTMLInputElement | null>(null)
+  useEffect(() => { void loadImages().then(setLibrary) }, [])
+
+  const readFile = (file: File) => {
+    const r = new FileReader()
+    r.onload = () => setSrcImage({ name: file.name, dataUrl: String(r.result) })
+    r.readAsDataURL(file)
+  }
+  const onDropImg = (e: React.DragEvent) => {
+    e.preventDefault()
+    const gpm = e.dataTransfer.getData(GPM_IMAGE_DND_TYPE)
+    if (gpm) { const d = JSON.parse(gpm) as { name: string; dataUrl: string }; setSrcImage(d); return }
+    const file = e.dataTransfer.files?.[0]
+    if (file && file.type.startsWith('image/')) readFile(file)
+  }
+  const onKey = (e: React.KeyboardEvent) => {
+    const map: Record<string, () => void> = {
+      w: () => nudge('zoom', 1), s: () => nudge('zoom', -1),
+      a: () => nudge('rot', -5), d: () => nudge('rot', 5),
+      q: () => nudge('tilt', 5), e: () => nudge('tilt', -5),
+    }
+    const fn = map[e.key.toLowerCase()]
+    if (fn) { e.preventDefault(); fn() }
+  }
+  const scale = 0.6 + ((shot.zoom - 1) / 19) * 2.4
+  const previewTransform = `perspective(600px) rotateX(${-shot.tilt * 0.7}deg) rotateY(${shot.rot * 0.7}deg) scale(${scale.toFixed(3)})`
+
+  const applyShot = () => {
+    if (shotOut.trim()) onInject(shotOut)
+    if (srcImage) onUseImage({ id: gpmId(), name: srcImage.name, folderId: null, dataUrl: srcImage.dataUrl, addedAt: Date.now(), isVideo: false })
+  }
+  const resetView = () => setShot((s) => ({ ...s, rot: 0, tilt: 0, zoom: 8, preset: null }))
+
   return (
     <div>
       <p className="text-[11px] mb-3" style={{ color: C.muted }}>
         Virtual camera composer — a transformation applied to the selected shot's existing frame.
       </p>
+
+      <Section id="shot-source" title="Source frame & preview" ctl={ctl}>
+        {!srcImage ? (
+          <div
+            onDragOver={(e) => e.preventDefault()} onDrop={onDropImg}
+            className="rounded-md py-6 px-3 text-center"
+            style={{ border: `1px dashed ${C.borderLt}`, color: C.faint }}
+          >
+            <ImageIcon size={20} style={{ margin: '0 auto 6px' }} />
+            <div className="text-[11px] mb-2">Drag an image here (from the Images tab or a file)</div>
+            <div className="flex gap-2 justify-center">
+              <button onClick={() => setPicker(true)} className="rounded px-2 py-1 text-[10px]" style={{ background: C.blue, color: '#fff' }}>Pick from library</button>
+              <button onClick={() => fileRef.current?.click()} className="rounded px-2 py-1 text-[10px]" style={{ background: C.card, color: C.text, border: `1px solid ${C.border}` }}>Upload</button>
+            </div>
+          </div>
+        ) : (
+          <>
+            <div
+              tabIndex={0} onKeyDown={onKey} onDragOver={(e) => e.preventDefault()} onDrop={onDropImg}
+              className="relative w-full rounded-md overflow-hidden outline-none"
+              style={{ aspectRatio: '16/9', background: '#000', border: `1px solid ${C.border}` }}
+              title="Click here, then WASD to move · Q/E tilt"
+            >
+              <div className="absolute inset-0 flex items-center justify-center" style={{ perspective: '600px' }}>
+                <img src={srcImage.dataUrl} alt="" draggable={false} style={{ maxWidth: '100%', maxHeight: '100%', transform: previewTransform, transition: 'transform .08s' }} />
+              </div>
+              <div className="absolute top-1 left-1 px-1.5 py-0.5 rounded text-[9px]" style={{ background: 'rgba(0,0,0,0.6)', color: C.muted }}>
+                W/S zoom · A/D rotate · Q/E tilt
+              </div>
+            </div>
+            <div className="flex gap-2 mt-2">
+              <button onClick={() => setPicker(true)} className="rounded px-2 py-1 text-[10px]" style={{ background: C.card, color: C.text, border: `1px solid ${C.border}` }}>Change</button>
+              <button onClick={() => fileRef.current?.click()} className="rounded px-2 py-1 text-[10px]" style={{ background: C.card, color: C.text, border: `1px solid ${C.border}` }}>Upload</button>
+              <button onClick={resetView} title="Reset rotate/tilt/zoom to default" className="flex items-center gap-1 rounded px-2 py-1 text-[10px]" style={{ background: C.card, color: C.text, border: `1px solid ${C.border}` }}><RotateCcw size={11} />Reset</button>
+              <button onClick={() => setSrcImage(null)} className="rounded px-2 py-1 text-[10px]" style={{ background: C.card, color: C.muted, border: `1px solid ${C.border}` }}>Remove</button>
+            </div>
+          </>
+        )}
+        <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ''; if (f) readFile(f) }} />
+      </Section>
+
       <Section id="shot-presets" title="Presets" ctl={ctl}>
         <div className="grid grid-cols-4 gap-1.5">
           {SHOT_PRESETS.map((p) => {
@@ -270,7 +354,10 @@ function ShotPanel({
           })}
         </div>
       </Section>
-      <Section id="shot-camera" title="Camera" ctl={ctl}>
+      <Section
+        id="shot-camera" title="Camera" ctl={ctl}
+        right={<span onClick={(e) => { e.stopPropagation(); resetView() }} className="flex items-center gap-1 text-[10px]" style={{ color: C.muted }}><RotateCcw size={11} />Reset</span>}
+      >
         {sliders.map(([k, lbl, mn, mx]) => (
           <div key={k} className="mb-3">
             <div className="flex justify-between"><Label>{lbl}</Label><span className="text-xs tabular-nums" style={{ color: C.blue }}>{shot[k]}</span></div>
@@ -297,7 +384,27 @@ function ShotPanel({
       <div className="rounded-lg p-3 text-[11px] leading-snug" style={{ background: C.card, border: `1px solid ${C.border}`, color: C.text }}>
         {shotOut}
       </div>
-      <ActionRow text={shotOut} onCopy={onCopy} onInject={onInject} />
+      <div className="grid grid-cols-2 gap-2 mt-3">
+        <button
+          onClick={() => onCopy(shotOut)} disabled={!shotOut.trim()}
+          className="flex items-center justify-center gap-1.5 rounded-md px-3 py-2 text-xs font-medium disabled:opacity-40"
+          style={{ background: C.card, color: C.text, border: `1px solid ${C.border}` }}
+        >
+          <Copy size={13} />Copy prompt
+        </button>
+        <button
+          onClick={applyShot} disabled={!shotOut.trim()}
+          title={srcImage ? 'Inject the shot prompt and send the source image to Gen Space' : 'Inject the shot prompt'}
+          className="flex items-center justify-center gap-1.5 rounded-md px-3 py-2 text-xs font-semibold disabled:opacity-40"
+          style={{ background: C.green, color: '#fff' }}
+        >
+          <Send size={13} />{srcImage ? 'Apply + image' : 'Inject into prompt'}
+        </button>
+      </div>
+
+      {picker && (
+        <ImagePicker library={library} onPick={(img) => { setSrcImage({ name: img.name, dataUrl: img.dataUrl }); setPicker(false); flash('Source frame set') }} onClose={() => setPicker(false)} />
+      )}
     </div>
   )
 }
@@ -417,12 +524,12 @@ function WorkflowPanel({
         <div className="space-y-2">
           {wf.slots.map((s, i) => (
             <div key={s.id} className="rounded-lg p-2 flex gap-2 items-center" style={{ background: C.elev, border: `1px solid ${C.border}` }}>
-              <div className="relative w-12 h-12 shrink-0">
+              <div className="relative w-28 shrink-0">
                 <button
                   onClick={() => setPickerSlot(s.id)}
                   title={s.imgName ? `Bound: ${s.imgName} — click to change` : 'Bind a reference image'}
-                  className="w-12 h-12 rounded flex items-center justify-center overflow-hidden text-[8px] text-center"
-                  style={{ background: s.imgId ? '#000' : 'transparent', border: `1px dashed ${s.imgId ? C.border : C.borderLt}`, color: C.faint }}
+                  className="w-full rounded flex items-center justify-center overflow-hidden text-[8px] text-center"
+                  style={{ aspectRatio: '16/9', background: s.imgId ? '#000' : 'transparent', border: `1px dashed ${s.imgId ? C.border : C.borderLt}`, color: C.faint }}
                 >
                   {s.imgId && imgById[s.imgId]
                     ? (imgById[s.imgId].isVideo
@@ -550,11 +657,11 @@ function ImagePicker({ library, onPick, onClose }: { library: GpmImage[]; onPick
           {items.length === 0
             ? <p className="text-[11px] text-center py-8" style={{ color: C.faint }}>No images in the library. Add some in the Images tab.</p>
             : (
-              <div className="grid grid-cols-4 gap-2">
+              <div className="grid grid-cols-3 gap-2">
                 {items.map((im) => (
                   <button
                     key={im.id} onClick={() => onPick(im)} title={im.name}
-                    className="rounded-md overflow-hidden" style={{ aspectRatio: '1', background: '#000', border: `1px solid ${C.border}` }}
+                    className="rounded-md overflow-hidden" style={{ aspectRatio: '16/9', background: '#000', border: `1px solid ${C.border}` }}
                   >
                     {im.isVideo
                       ? <span className="w-full h-full flex items-center justify-center"><Film size={18} style={{ color: C.amber }} /></span>
@@ -913,6 +1020,29 @@ function Dock({ onClose }: { onClose: () => void }) {
     ['prompts', 'Prompts'], ['images', 'Images'], ['camera', 'Camera'],
     ['shot', 'Shot Setup'], ['plates', 'Plates'], ['workflow', 'Workflow'],
   ]
+  const ALL_TABS: Array<[GpmTab, string]> = [...TABS, ['performance', 'Performance Studio']]
+
+  // Enlarge the active tab into a centered modal workspace (Esc to shrink).
+  const [expanded, setExpanded] = useState(false)
+  useEffect(() => {
+    if (!expanded) return
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setExpanded(false) }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [expanded])
+
+  const activeLabel = ALL_TABS.find(([id]) => id === gpmTab)?.[1] ?? ''
+  const activePanel = (
+    <>
+      {gpmTab === 'performance' && <PerformancePanel perf={perf} setPerf={setPerf} ctl={ctl} onCopy={copyText} onInject={injectIntoPrompt} />}
+      {gpmTab === 'shot' && <ShotPanel shot={shot} setShot={setShot} ctl={ctl} onCopy={copyText} onInject={injectIntoPrompt} onUseImage={sendImageToGenSpace} flash={flash} />}
+      {gpmTab === 'camera' && <CameraPanel search={search} setSearch={setSearch} camCat={camCat} setCamCat={setCamCat} onInject={injectIntoPrompt} flash={flash} />}
+      {gpmTab === 'workflow' && <WorkflowPanel wf={wf} setWf={setWf} perfText={perfText} ctl={ctl} onCopy={copyText} onInject={injectIntoPrompt} onUseImage={sendImageToGenSpace} flash={flash} />}
+      {gpmTab === 'prompts' && <PromptsPanel ctl={ctl} onCopy={copyText} onInject={injectIntoPrompt} flash={flash} />}
+      {gpmTab === 'images' && <ImagesPanel ctl={ctl} onCopy={copyText} onUse={sendImageToGenSpace} flash={flash} />}
+      {gpmTab === 'plates' && <Stub title="Plates" desc="Panorama → plate workflow. Re-platforms onto the LTX canvas." />}
+    </>
+  )
 
   return (
     <div
@@ -947,7 +1077,13 @@ function Dock({ onClose }: { onClose: () => void }) {
             className="text-[11px] flex items-center gap-1 px-2 py-1 rounded"
             style={{ color: C.muted, background: C.card, border: `1px solid ${C.border}` }}
           >
-            {allOpen ? '⊟ Collapse all' : '⊞ Expand all'}
+            {allOpen ? '⊟' : '⊞'}
+          </button>
+          <button
+            onClick={() => setExpanded(true)} title="Enlarge panel (Esc to shrink)"
+            className="h-7 w-7 flex items-center justify-center rounded-md" style={{ color: C.muted, background: C.card, border: `1px solid ${C.border}` }}
+          >
+            <Maximize2 size={13} />
           </button>
           <button onClick={onClose} className="h-7 w-7 flex items-center justify-center rounded-md" style={{ color: C.muted }} title="Close">
             <X size={16} />
@@ -982,14 +1118,52 @@ function Dock({ onClose }: { onClose: () => void }) {
       </div>
 
       <div className="flex-1 overflow-y-auto p-4">
-        {gpmTab === 'performance' && <PerformancePanel perf={perf} setPerf={setPerf} ctl={ctl} onCopy={copyText} onInject={injectIntoPrompt} />}
-        {gpmTab === 'shot' && <ShotPanel shot={shot} setShot={setShot} ctl={ctl} onCopy={copyText} onInject={injectIntoPrompt} />}
-        {gpmTab === 'camera' && <CameraPanel search={search} setSearch={setSearch} camCat={camCat} setCamCat={setCamCat} onInject={injectIntoPrompt} flash={flash} />}
-        {gpmTab === 'workflow' && <WorkflowPanel wf={wf} setWf={setWf} perfText={perfText} ctl={ctl} onCopy={copyText} onInject={injectIntoPrompt} onUseImage={sendImageToGenSpace} flash={flash} />}
-        {gpmTab === 'prompts' && <PromptsPanel ctl={ctl} onCopy={copyText} onInject={injectIntoPrompt} flash={flash} />}
-        {gpmTab === 'images' && <ImagesPanel ctl={ctl} onCopy={copyText} onUse={sendImageToGenSpace} flash={flash} />}
-        {gpmTab === 'plates' && <Stub title="Plates" desc="Panorama → plate workflow. Re-platforms onto the LTX canvas." />}
+        {activePanel}
       </div>
+
+      {expanded && (
+        <div
+          className="fixed inset-0 z-[60] flex items-center justify-center p-8"
+          style={{ background: 'rgba(0,0,0,0.6)' }}
+          onClick={() => setExpanded(false)}
+        >
+          <div
+            className="w-full max-w-3xl rounded-xl overflow-hidden flex flex-col"
+            style={{ maxHeight: '86vh', background: C.panel, border: `2px solid ${C.blue}`, boxShadow: '0 30px 80px rgba(0,0,0,0.6)' }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between px-4 py-3 shrink-0" style={{ borderBottom: `1px solid ${C.border}` }}>
+              <span className="flex items-center gap-2 text-sm font-semibold" style={{ color: C.text }}>
+                <Wand2 size={15} style={{ color: C.blue }} />{activeLabel}
+              </span>
+              <button
+                onClick={() => setExpanded(false)}
+                className="flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-semibold"
+                style={{ background: C.blue, color: '#fff' }}
+              >
+                <Minimize2 size={13} />Shrink
+              </button>
+            </div>
+            <div className="px-4 py-2 flex flex-wrap gap-1.5 shrink-0" style={{ borderBottom: `1px solid ${C.border}` }}>
+              {ALL_TABS.map(([id, lbl]) => {
+                const active = gpmTab === id
+                return (
+                  <button
+                    key={id} onClick={() => setGpmTab(id)}
+                    className="rounded-md px-2.5 py-1 text-[11px] font-medium transition-colors"
+                    style={{ background: active ? C.blue : C.card, color: active ? '#fff' : C.muted, border: `1px solid ${active ? C.blue : C.border}` }}
+                  >
+                    {lbl}
+                  </button>
+                )
+              })}
+            </div>
+            <div className="overflow-y-auto p-5">
+              {activePanel}
+            </div>
+          </div>
+        </div>
+      )}
 
       {toast && (
         <div
