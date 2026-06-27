@@ -308,6 +308,23 @@ export const electronAPISchemas = {
     input: z.object({ eventName: z.string(), extraDetails: z.record(z.string(), z.unknown()).nullable().optional() }),
     output: z.void(),
   },
+
+  // Prompt Manager Pro — Downloads Browser (real-filesystem media library)
+  gpmLibList: {
+    input: z.object({}),
+    output: z.object({
+      root: z.string(),
+      folders: z.array(z.string()),
+      files: z.array(z.object({ folder: z.string(), name: z.string(), path: z.string(), isVideo: z.boolean() })),
+    }),
+  },
+  gpmLibCreateFolder: { input: z.object({ name: z.string() }), output: emptyResult },
+  gpmLibRenameFolder: { input: z.object({ from: z.string(), to: z.string() }), output: emptyResult },
+  gpmLibDeleteFolder: { input: z.object({ name: z.string() }), output: emptyResult },
+  gpmLibAddFiles: { input: z.object({ folder: z.string(), srcPaths: z.array(z.string()) }), output: ipcResult({ added: z.number() }) },
+  gpmLibMoveFile: { input: z.object({ fromFolder: z.string(), name: z.string(), toFolder: z.string() }), output: emptyResult },
+  gpmLibDeleteFile: { input: z.object({ folder: z.string(), name: z.string() }), output: emptyResult },
+  gpmLibReveal: { input: z.object({ folder: z.string().optional() }), output: emptyResult },
 } as const
 
 type Schemas = typeof electronAPISchemas

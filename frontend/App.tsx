@@ -18,6 +18,7 @@ import { LogViewer } from './components/LogViewer'
 import { ApiGatewayModal, type ApiGatewaySection } from './components/ApiGatewayModal'
 import { Button } from './components/ui/button'
 import { PromptManagerPro } from './components/gpm/PromptManagerPro'
+import { DownloadsBrowser } from './components/gpm/DownloadsBrowser'
 
 type SetupState = 'loading' | { needsSetup: boolean; needsLicense: boolean }
 type RequiredModelsGateState = 'checking' | 'missing' | 'ready'
@@ -599,6 +600,7 @@ function AppContent() {
       {restartingOverlay}
 
       <PromptManagerPro />
+      <DownloadsBrowser />
     </div>
   )
 }
