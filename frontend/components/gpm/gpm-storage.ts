@@ -33,6 +33,33 @@ export interface GpmImage {
   isVideo: boolean
 }
 
+export interface GpmWorkflowSlot {
+  id: string
+  role: string
+  note: string
+  filled: boolean
+  imgId?: string
+  imgName?: string
+}
+export interface GpmWorkflow {
+  id: string
+  name: string
+  updatedAt: number
+  slots: GpmWorkflowSlot[]
+  directive: string
+  aspectRatio: string
+  motionHint: string
+  performance: { enabled: boolean }
+}
+
+export interface GpmPanorama {
+  id: string
+  name: string
+  dataUrl: string
+  addedAt: number
+  sourceNote?: string
+}
+
 /** Backup envelope (extension format, version "1.6"). Unknown sections are
  *  preserved verbatim on import so re-export round-trips losslessly. */
 export interface GpmBackup {
@@ -49,16 +76,19 @@ export interface GpmBackup {
 }
 
 const DB_NAME = 'gpm_images_db'
-const DB_VERSION = 1
+const DB_VERSION = 2
 const IMG_STORE = 'images'
 const THUMB_STORE = 'prompt_thumbs'
 const KV_STORE = 'kv'
+const PANO_STORE = 'panoramas'
 
 const KEY_PROMPTS = 'gpm_data_v2'
 const KEY_IMG_FOLDERS = 'gpm_img_state_v1'
-const KEY_PASSTHROUGH = 'gpm_backup_passthrough' // workflows + dl* kept for lossless re-export
+const KEY_WORKFLOWS = 'gpm_workflows_v1'
+const KEY_PASSTHROUGH = 'gpm_backup_passthrough' // dl* kept for lossless re-export
 
 export const BACKUP_VERSION = '1.6'
+export const MAX_PANORAMAS = 20
 
 let dbPromise: Promise<IDBDatabase> | null = null
 
@@ -71,6 +101,7 @@ function openDb(): Promise<IDBDatabase> {
       if (!db.objectStoreNames.contains(IMG_STORE)) db.createObjectStore(IMG_STORE, { keyPath: 'id' })
       if (!db.objectStoreNames.contains(THUMB_STORE)) db.createObjectStore(THUMB_STORE, { keyPath: 'promptId' })
       if (!db.objectStoreNames.contains(KV_STORE)) db.createObjectStore(KV_STORE, { keyPath: 'key' })
+      if (!db.objectStoreNames.contains(PANO_STORE)) db.createObjectStore(PANO_STORE, { keyPath: 'id' })
     }
     req.onsuccess = () => resolve(req.result)
     req.onerror = () => reject(req.error)
@@ -157,12 +188,55 @@ export function deleteImage(id: string): Promise<undefined> {
   return tx<undefined>(IMG_STORE, 'readwrite', (s) => s.delete(id) as IDBRequest<undefined>)
 }
 
+/* ---- Saved workflows ----------------------------------------------------- */
+export function loadWorkflows(): Promise<GpmWorkflow[]> {
+  return kvGet<GpmWorkflow[]>(KEY_WORKFLOWS, [])
+}
+export function saveWorkflows(list: GpmWorkflow[]): Promise<IDBValidKey> {
+  return kvSet(KEY_WORKFLOWS, list)
+}
+
+/* ---- Panoramas (Plates) -------------------------------------------------- */
+export function loadPanoramas(): Promise<GpmPanorama[]> {
+  return getAll<GpmPanorama>(PANO_STORE)
+}
+export function putPanorama(p: GpmPanorama): Promise<IDBValidKey> {
+  return tx<IDBValidKey>(PANO_STORE, 'readwrite', (s) => s.put(p))
+}
+export function deletePanorama(id: string): Promise<undefined> {
+  return tx<undefined>(PANO_STORE, 'readwrite', (s) => s.delete(id) as IDBRequest<undefined>)
+}
+
+/* Map a saved workflow to the extension's backup slot shape and back. */
+function workflowToBackup(w: GpmWorkflow): Record<string, unknown> {
+  return {
+    id: w.id, name: w.name, updatedAt: w.updatedAt,
+    directive: w.directive, aspectRatio: w.aspectRatio, motionHint: w.motionHint,
+    performance: w.performance,
+    slots: w.slots.map((s) => ({ id: s.id, imgId: s.imgId, imgName: s.imgName, role: s.role, note: s.note })),
+  }
+}
+function workflowFromBackup(raw: unknown): GpmWorkflow | null {
+  if (!raw || typeof raw !== 'object') return null
+  const w = raw as Record<string, any>
+  if (!w.id || !w.name) return null
+  const slots: GpmWorkflowSlot[] = Array.isArray(w.slots)
+    ? w.slots.map((s: any) => ({ id: String(s.id ?? gpmId()), role: String(s.role ?? 'general'), note: String(s.note ?? ''), filled: !!s.imgId, imgId: s.imgId || undefined, imgName: s.imgName || undefined }))
+    : []
+  return {
+    id: String(w.id), name: String(w.name), updatedAt: Number(w.updatedAt) || Date.now(),
+    slots, directive: String(w.directive ?? ''), aspectRatio: String(w.aspectRatio ?? '16:9'),
+    motionHint: String(w.motionHint ?? ''), performance: { enabled: !!(w.performance && w.performance.enabled) },
+  }
+}
+
 /* ---- Backup: export / import (extension v1.6 compatible) ----------------- */
 export async function exportBackup(): Promise<GpmBackup> {
-  const [folders, imgFolders, imgImages, passthrough] = await Promise.all([
+  const [folders, imgFolders, imgImages, workflows, passthrough] = await Promise.all([
     loadPromptFolders(),
     loadImageFolders(),
     loadImages(),
+    loadWorkflows(),
     kvGet<Partial<GpmBackup>>(KEY_PASSTHROUGH, {}),
   ])
   // Re-inline prompt thumbnails for full fidelity with the extension format.
@@ -187,7 +261,7 @@ export async function exportBackup(): Promise<GpmBackup> {
     imgFolders,
     imgAssignments,
     imgImages,
-    workflows: passthrough.workflows ?? [],
+    workflows: workflows.map(workflowToBackup),
     dlFolders: passthrough.dlFolders ?? [],
     dlAssignments: passthrough.dlAssignments ?? {},
     dlPanelWidth: passthrough.dlPanelWidth ?? 416,
@@ -199,6 +273,7 @@ export interface ImportResult {
   prompts: number
   imageFolders: number
   images: number
+  workflows: number
 }
 
 /** Import a backup, REPLACING current data. Returns counts for feedback. */
@@ -229,15 +304,20 @@ export async function importBackup(data: GpmBackup): Promise<ImportResult> {
     })
   }
 
+  // Workflows: map the extension's shape into our saved-workflow store.
+  const workflows = (Array.isArray(data.workflows) ? data.workflows : [])
+    .map(workflowFromBackup)
+    .filter((w): w is GpmWorkflow => w !== null)
+  await saveWorkflows(workflows)
+
   // Preserve sections the fork doesn't manage yet so re-export is lossless.
   await kvSet(KEY_PASSTHROUGH, {
-    workflows: data.workflows ?? [],
     dlFolders: data.dlFolders ?? [],
     dlAssignments: data.dlAssignments ?? {},
     dlPanelWidth: data.dlPanelWidth ?? 416,
   })
 
-  return { promptFolders: folders.length, prompts, imageFolders: imgFolders.length, images: imgImages.length }
+  return { promptFolders: folders.length, prompts, imageFolders: imgFolders.length, images: imgImages.length, workflows: workflows.length }
 }
 
 /** Parse + validate a backup file's text. Throws on malformed input. */

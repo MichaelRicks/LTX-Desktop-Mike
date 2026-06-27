@@ -9,7 +9,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   Camera, ChevronRight, Copy, Download, Eraser, Film, Folder, FolderPlus, Image as ImageIcon,
-  Layers, Maximize2, Minimize2, Pencil, Plus, RotateCcw, Search, Send, Trash2, Upload, Wand2, X,
+  Layers, Maximize2, Minimize2, Pencil, Plus, RotateCcw, Save, Search, Send, Trash2, Upload, Wand2, X,
 } from 'lucide-react'
 import {
   PERF_FAMILIES, assemblePerformance, perfLabel, type PerfDelivery,
@@ -23,6 +23,8 @@ import {
   loadPromptFolders, savePromptFolders, loadImageFolders, saveImageFolders,
   loadImages, putImage, deleteImage, exportBackup, importBackup, parseBackup,
   loadAllPromptThumbs, deletePromptThumb,
+  type GpmWorkflow, loadWorkflows, saveWorkflows,
+  type GpmPanorama, loadPanoramas, putPanorama, deletePanorama, MAX_PANORAMAS,
 } from './gpm-storage'
 import { saveDataUrlToTempFile, GPM_IMAGE_DND_TYPE } from './gpm-image-file'
 
@@ -495,6 +497,32 @@ function WorkflowPanel({
   }
   const unbindImage = (slotId: string) => upSlot(slotId, { imgId: undefined, imgName: undefined, filled: false })
 
+  // Saved workflows (persisted in IndexedDB; round-trips in the backup).
+  const [saved, setSaved] = useState<GpmWorkflow[]>([])
+  const reloadSaved = () => { void loadWorkflows().then(setSaved) }
+  useEffect(reloadSaved, [])
+  const persistSaved = (list: GpmWorkflow[]) => { setSaved(list); void saveWorkflows(list) }
+  const saveCurrent = () => {
+    const name = wf.name.trim() || 'Untitled Workflow'
+    const rec: GpmWorkflow = {
+      id: gpmId(), name, updatedAt: Date.now(),
+      slots: wf.slots, directive: wf.directive, aspectRatio: wf.aspectRatio,
+      motionHint: wf.motionHint, performance: wf.performance,
+    }
+    persistSaved([rec, ...saved])
+    flash(`Saved "${name}"`)
+  }
+  const loadSaved = (w: GpmWorkflow) => {
+    setWf({
+      name: w.name,
+      slots: w.slots.map((s) => ({ id: s.id, role: s.role as WfRole, note: s.note, filled: s.filled, imgId: s.imgId, imgName: s.imgName })),
+      directive: w.directive, aspectRatio: w.aspectRatio, motionHint: w.motionHint,
+      performance: { enabled: w.performance.enabled },
+    })
+    flash(`Loaded "${w.name}"`)
+  }
+  const deleteSaved = (id: string) => persistSaved(saved.filter((w) => w.id !== id))
+
   // Bound images, in slot order. LTX's Gen Space takes a single input image,
   // so Inject sends the first bound image (and notes if there are more).
   const boundImages = wf.slots
@@ -609,6 +637,39 @@ function WorkflowPanel({
         </label>
       </Section>
 
+      <Section id="wf-saved" title={`Saved Workflows (${saved.length})`} ctl={ctl}>
+        <div className="flex gap-2 mb-3">
+          <input
+            value={wf.name} onChange={(e) => up('name', e.target.value)} placeholder="Workflow name…"
+            className="flex-1 rounded-md px-2 py-1.5 text-xs outline-none"
+            style={{ background: C.elev, color: C.text, border: `1px solid ${C.border}` }}
+          />
+          <button onClick={saveCurrent} className="flex items-center gap-1 rounded-md px-3 py-1.5 text-xs font-medium" style={{ background: C.blue, color: '#fff' }}>
+            <Save size={13} />Save
+          </button>
+        </div>
+        {saved.length === 0 && <p className="text-[11px]" style={{ color: C.faint }}>No saved workflows yet. Name it above and Save.</p>}
+        <div className="space-y-2">
+          {saved.map((w) => {
+            const filled = w.slots.filter((s) => s.filled).length
+            const date = new Date(w.updatedAt).toLocaleDateString()
+            return (
+              <div key={w.id} className="rounded-lg p-2" style={{ background: C.elev, border: `1px solid ${C.border}` }}>
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-medium truncate" style={{ color: C.text }}>{w.name}</span>
+                  <span className="text-[9px] tabular-nums shrink-0 ml-2" style={{ color: C.faint }}>{filled} img · {date}</span>
+                </div>
+                {w.directive && <div className="text-[10px] mt-1 leading-snug" style={{ color: C.muted, maxHeight: 30, overflow: 'hidden' }}>{w.directive}</div>}
+                <div className="flex gap-1.5 mt-2">
+                  <button onClick={() => loadSaved(w)} className="flex items-center gap-1 rounded px-2 py-1 text-[10px] font-semibold" style={{ background: C.blue, color: '#fff' }}><RotateCcw size={11} />Load</button>
+                  <button onClick={() => deleteSaved(w.id)} className="flex items-center gap-1 rounded px-2 py-1 text-[10px]" style={{ background: C.card, color: C.muted, border: `1px solid ${C.border}` }}><Trash2 size={11} />Delete</button>
+                </div>
+              </div>
+            )
+          })}
+        </div>
+      </Section>
+
       <div className="rounded-lg p-3 text-[11px] leading-snug" style={{ background: C.card, border: `1px solid ${C.border}`, color: C.text, minHeight: 44 }}>
         {wfOut || <span style={{ color: C.faint }}>Fill a slot or write a directive to assemble the prompt…</span>}
       </div>
@@ -676,13 +737,75 @@ function ImagePicker({ library, onPick, onClose }: { library: GpmImage[]; onPick
   )
 }
 
-function Stub({ title, desc }: { title: string; desc: string }) {
+/* ---- Plates (panorama library) ------------------------------------------- */
+function PlatesPanel({ flash }: { flash: (m: string) => void }) {
+  const [panos, setPanos] = useState<GpmPanorama[]>([])
+  const fileRef = useRef<HTMLInputElement | null>(null)
+  const reload = () => { void loadPanoramas().then(setPanos) }
+  useEffect(reload, [])
+
+  const readDataUrl = (file: File) => new Promise<string>((res, rej) => {
+    const r = new FileReader(); r.onload = () => res(String(r.result)); r.onerror = () => rej(r.error); r.readAsDataURL(file)
+  })
+  const addOne = async (name: string, dataUrl: string): Promise<boolean> => {
+    const existing = await loadPanoramas()
+    if (existing.length >= MAX_PANORAMAS) { flash(`Max ${MAX_PANORAMAS} panoramas reached`); return false }
+    await putPanorama({ id: gpmId(), name, dataUrl, addedAt: Date.now() })
+    return true
+  }
+  const addFiles = async (files: File[]) => {
+    let n = 0
+    for (const f of files) { if (!f.type.startsWith('image/')) continue; if (await addOne(f.name, await readDataUrl(f))) n++; else break }
+    if (n) { reload(); flash(`Added ${n} panorama${n !== 1 ? 's' : ''}`) }
+  }
+  const onDrop = (e: React.DragEvent) => {
+    e.preventDefault()
+    const gpm = e.dataTransfer.getData(GPM_IMAGE_DND_TYPE)
+    if (gpm) { const d = JSON.parse(gpm) as { name: string; dataUrl: string }; void addOne(d.name, d.dataUrl).then((ok) => { if (ok) { reload(); flash('Panorama saved') } }); return }
+    void addFiles(Array.from(e.dataTransfer.files ?? []))
+  }
+  const remove = (id: string) => { void deletePanorama(id).then(reload) }
+
   return (
-    <div className="rounded-lg p-5 text-center" style={{ background: C.card, border: `1px dashed ${C.borderLt}` }}>
-      <Layers size={22} style={{ color: C.faint, margin: '0 auto 8px' }} />
-      <div className="text-sm font-semibold mb-1" style={{ color: C.text }}>{title}</div>
-      <div className="text-[11px]" style={{ color: C.muted }}>{desc}</div>
-      <div className="text-[10px] mt-3 px-2 py-1 rounded inline-block" style={{ background: C.elev, color: C.faint }}>port pending</div>
+    <div>
+      <div className="rounded-lg p-3 mb-3 text-center" style={{ background: C.card, border: `1px solid ${C.border}` }}>
+        <Layers size={22} style={{ color: C.blue, margin: '0 auto 6px' }} />
+        <div className="text-sm font-semibold mb-1" style={{ color: C.blue }}>Background Plate Builder</div>
+        <p className="text-[11px]" style={{ color: C.muted }}>
+          Import an equirectangular panorama, then composite characters in via the Workflow Builder.
+          Tip: GPT Image 2 makes panoramas reliably with prompts like "make equirectangular panorama of [place]".
+        </p>
+      </div>
+
+      <div className="flex items-center justify-between mb-2">
+        <Label>Panoramas</Label>
+        <span className="text-[10px] tabular-nums" style={{ color: C.faint }}>{panos.length}/{MAX_PANORAMAS}</span>
+      </div>
+      <button onClick={() => fileRef.current?.click()} className="w-full flex items-center justify-center gap-1.5 rounded-md px-3 py-2 text-xs font-semibold mb-2" style={{ background: C.blue, color: '#fff' }}>
+        <Upload size={13} />Import Panorama
+      </button>
+      <div
+        onDragOver={(e) => e.preventDefault()} onDrop={onDrop}
+        className="rounded-md py-4 px-3 text-center text-[11px] mb-3"
+        style={{ border: `1px dashed ${C.borderLt}`, color: C.faint }}
+      >
+        Drop an image here (or from the Images tab) to save as a panorama
+      </div>
+
+      {panos.length === 0
+        ? <p className="text-[11px] text-center py-4" style={{ color: C.faint }}>No panoramas yet — import one to begin.</p>
+        : (
+          <div className="space-y-2">
+            {panos.map((p) => (
+              <div key={p.id} className="rounded-md overflow-hidden relative group" style={{ border: `1px solid ${C.border}`, background: '#000' }} title={p.name}>
+                <img src={p.dataUrl} alt={p.name} loading="lazy" style={{ width: '100%', aspectRatio: '2/1', objectFit: 'cover' }} />
+                <div className="absolute bottom-0 left-0 right-0 px-2 py-1 text-[10px] truncate" style={{ background: 'rgba(0,0,0,0.6)', color: C.text }}>{p.name}</div>
+                <button onClick={() => remove(p.id)} title="Delete" className="absolute top-1 right-1 h-5 w-5 flex items-center justify-center rounded opacity-0 group-hover:opacity-100 transition-opacity" style={{ background: 'rgba(0,0,0,0.6)', color: '#fff' }}><Trash2 size={11} /></button>
+              </div>
+            ))}
+          </div>
+        )}
+      <input ref={fileRef} type="file" accept="image/*" multiple className="hidden" onChange={(e) => { const fs = Array.from(e.target.files ?? []); e.target.value = ''; void addFiles(fs) }} />
     </div>
   )
 }
@@ -707,7 +830,7 @@ function BackupRow({ onAfterImport, flash }: { onAfterImport: () => void; flash:
     try {
       const r = await importBackup(parseBackup(await file.text()))
       onAfterImport()
-      flash(`Imported ${r.promptFolders} folders · ${r.prompts} prompts · ${r.images} images`)
+      flash(`Imported ${r.promptFolders} folders · ${r.prompts} prompts · ${r.images} images · ${r.workflows} workflows`)
     } catch (err) { flash('Import failed: ' + (err instanceof Error ? err.message : 'bad file')) }
   }
   return (
@@ -1040,7 +1163,7 @@ function Dock({ onClose }: { onClose: () => void }) {
       {gpmTab === 'workflow' && <WorkflowPanel wf={wf} setWf={setWf} perfText={perfText} ctl={ctl} onCopy={copyText} onInject={injectIntoPrompt} onUseImage={sendImageToGenSpace} flash={flash} />}
       {gpmTab === 'prompts' && <PromptsPanel ctl={ctl} onCopy={copyText} onInject={injectIntoPrompt} flash={flash} />}
       {gpmTab === 'images' && <ImagesPanel ctl={ctl} onCopy={copyText} onUse={sendImageToGenSpace} flash={flash} />}
-      {gpmTab === 'plates' && <Stub title="Plates" desc="Panorama → plate workflow. Re-platforms onto the LTX canvas." />}
+      {gpmTab === 'plates' && <PlatesPanel flash={flash} />}
     </>
   )
 
