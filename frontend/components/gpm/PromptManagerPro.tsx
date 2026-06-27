@@ -242,11 +242,13 @@ const SHOT_RANGES: Record<'rot' | 'tilt' | 'zoom', [number, number]> = { rot: [-
 const clampShot = (v: number, mn: number, mx: number) => Math.max(mn, Math.min(mx, v))
 
 function ShotPanel({
-  shot, setShot, ctl, onCopy, onInject, onUseImage, flash,
+  shot, setShot, ctl, onCopy, onInject, onUseImage, flash, srcImage, setSrcImage,
 }: {
   shot: ShotState; setShot: React.Dispatch<React.SetStateAction<ShotState>>
   ctl: SectionCtl; onCopy: (t: string) => void; onInject: (t: string) => void
   onUseImage: (img: GpmImage) => void; flash: (m: string) => void
+  srcImage: { name: string; dataUrl: string } | null
+  setSrcImage: React.Dispatch<React.SetStateAction<{ name: string; dataUrl: string } | null>>
 }) {
   const shotOut = useMemo(() => buildShotPrompt(shot), [shot])
   const setSlider = (k: 'rot' | 'tilt' | 'zoom', v: number) => setShot((s) => ({ ...s, [k]: v, preset: null }))
@@ -256,8 +258,7 @@ function ShotPanel({
     ['rot', 'Rotate', -90, 90], ['tilt', 'Tilt', -45, 45], ['zoom', 'Zoom', 1, 20],
   ]
 
-  // Source frame the virtual camera reframes.
-  const [srcImage, setSrcImage] = useState<{ name: string; dataUrl: string } | null>(null)
+  // Source frame the virtual camera reframes (lifted to the Dock so it survives enlarge/shrink).
   const [library, setLibrary] = useState<GpmImage[]>([])
   const [picker, setPicker] = useState(false)
   const fileRef = useRef<HTMLInputElement | null>(null)
@@ -737,9 +738,70 @@ function ImagePicker({ library, onPick, onClose }: { library: GpmImage[]; onPick
   )
 }
 
+/* ---- 3D Scene Builder (panorama viewer in an iframe) --------------------- */
+const SCENE_LENSES = ['12mm', '24mm', '35mm', '50mm', '85mm']
+function SceneViewer({ pano, onPlate, onClose, lens, setLens, aimRef }: {
+  pano: GpmPanorama; onPlate: (dataUrl: string, name: string) => void; onClose: () => void
+  lens: string; setLens: (l: string) => void
+  aimRef: React.MutableRefObject<{ yaw: number; pitch: number }>
+}) {
+  const iframeRef = useRef<HTMLIFrameElement | null>(null)
+  const [ready, setReady] = useState(false)
+  const reqId = useRef(0)
+  const post = (msg: Record<string, unknown>) => iframeRef.current?.contentWindow?.postMessage(msg, '*')
+
+  useEffect(() => {
+    const onMsg = (e: MessageEvent) => {
+      const m = e.data as { type?: string; dataUrl?: string; yaw?: number; pitch?: number }
+      if (!m || typeof m.type !== 'string' || !m.type.startsWith('gpm-scene-')) return
+      if (m.type === 'gpm-scene-ready') {
+        setReady(true)
+        const w = iframeRef.current?.contentWindow
+        w?.postMessage({ type: 'gpm-scene-load', dataUrl: pano.dataUrl }, '*')
+        w?.postMessage({ type: 'gpm-scene-set-lens', lens }, '*')
+        w?.postMessage({ type: 'gpm-scene-set-aim', yaw: aimRef.current.yaw, pitch: aimRef.current.pitch }, '*')
+      } else if (m.type === 'gpm-scene-aim') {
+        if (typeof m.yaw === 'number' && typeof m.pitch === 'number') aimRef.current = { yaw: m.yaw, pitch: m.pitch }
+      } else if (m.type === 'gpm-scene-captured' && m.dataUrl) {
+        onPlate(m.dataUrl, pano.name)
+      }
+    }
+    window.addEventListener('message', onMsg)
+    return () => window.removeEventListener('message', onMsg)
+  }, [pano, onPlate, lens, aimRef])
+  useEffect(() => { if (ready) post({ type: 'gpm-scene-set-lens', lens }) }, [lens, ready])
+  const resetAim = () => { aimRef.current = { yaw: 0, pitch: 0 }; post({ type: 'gpm-scene-reset-aim' }) }
+
+  const src = `${import.meta.env.BASE_URL}gpm-scene/viewer.html`
+  return (
+    <div className="rounded-lg overflow-hidden mb-3" style={{ border: `1px solid ${C.blue}` }}>
+      <div className="flex items-center justify-between px-2 py-1.5" style={{ background: C.card }}>
+        <span className="text-[11px] font-semibold truncate" style={{ color: C.text }}>🎬 {pano.name}</span>
+        <button onClick={onClose} className="h-6 w-6 flex items-center justify-center rounded" style={{ color: C.muted }} title="Close viewer"><X size={14} /></button>
+      </div>
+      <iframe ref={iframeRef} src={src} title="Scene viewer" style={{ width: '100%', aspectRatio: '16/9', border: 'none', background: '#000', display: 'block' }} />
+      <div className="flex items-center gap-2 px-2 py-2" style={{ background: C.card }}>
+        <span className="text-[10px]" style={{ color: C.muted }}>Lens</span>
+        <select value={lens} onChange={(e) => setLens(e.target.value)} className="rounded px-1.5 py-1 text-[11px] outline-none" style={{ background: C.elev, color: C.text, border: `1px solid ${C.border}` }}>
+          {SCENE_LENSES.map((l) => <option key={l} value={l}>{l}</option>)}
+        </select>
+        <button onClick={resetAim} className="flex items-center gap-1 rounded px-2 py-1 text-[10px]" style={{ background: C.card, color: C.text, border: `1px solid ${C.border}` }}><RotateCcw size={11} />Reset aim</button>
+        <button onClick={() => post({ type: 'gpm-scene-capture', requestId: ++reqId.current, width: 1280, height: 720 })} disabled={!ready} className="flex items-center gap-1 rounded px-2 py-1 text-[10px] font-semibold ml-auto disabled:opacity-40" style={{ background: C.green, color: '#fff' }}><Camera size={11} />Generate plate</button>
+      </div>
+      <div className="px-2 pb-2 text-[10px]" style={{ background: C.card, color: C.faint }}>Drag to look around · pick a lens · "Generate plate" sends the framed 1280×720 view to Gen Space.</div>
+    </div>
+  )
+}
+
 /* ---- Plates (panorama library) ------------------------------------------- */
-function PlatesPanel({ flash }: { flash: (m: string) => void }) {
+function PlatesPanel({ onUse, flash, activeId, setActiveId, sceneLens, setSceneLens, sceneAimRef }: {
+  onUse: (img: GpmImage) => void; flash: (m: string) => void
+  activeId: string | null; setActiveId: React.Dispatch<React.SetStateAction<string | null>>
+  sceneLens: string; setSceneLens: (l: string) => void
+  sceneAimRef: React.MutableRefObject<{ yaw: number; pitch: number }>
+}) {
   const [panos, setPanos] = useState<GpmPanorama[]>([])
+  const openScene = (id: string) => { if (id !== activeId) sceneAimRef.current = { yaw: 0, pitch: 0 }; setActiveId(id) }
   const fileRef = useRef<HTMLInputElement | null>(null)
   const reload = () => { void loadPanoramas().then(setPanos) }
   useEffect(reload, [])
@@ -764,7 +826,12 @@ function PlatesPanel({ flash }: { flash: (m: string) => void }) {
     if (gpm) { const d = JSON.parse(gpm) as { name: string; dataUrl: string }; void addOne(d.name, d.dataUrl).then((ok) => { if (ok) { reload(); flash('Panorama saved') } }); return }
     void addFiles(Array.from(e.dataTransfer.files ?? []))
   }
-  const remove = (id: string) => { void deletePanorama(id).then(reload) }
+  const remove = (id: string) => { if (id === activeId) setActiveId(null); void deletePanorama(id).then(reload) }
+  const active = panos.find((p) => p.id === activeId) ?? null
+  const onPlate = (dataUrl: string, name: string) => {
+    onUse({ id: gpmId(), name: `plate-${name}`, folderId: null, dataUrl, addedAt: Date.now(), isVideo: false })
+    flash('Plate sent to Gen Space')
+  }
 
   return (
     <div>
@@ -772,10 +839,12 @@ function PlatesPanel({ flash }: { flash: (m: string) => void }) {
         <Layers size={22} style={{ color: C.blue, margin: '0 auto 6px' }} />
         <div className="text-sm font-semibold mb-1" style={{ color: C.blue }}>Background Plate Builder</div>
         <p className="text-[11px]" style={{ color: C.muted }}>
-          Import an equirectangular panorama, then composite characters in via the Workflow Builder.
-          Tip: GPT Image 2 makes panoramas reliably with prompts like "make equirectangular panorama of [place]".
+          Import an equirectangular panorama, open it in 3D, aim the virtual camera, and generate clean
+          background plates. Composite characters in via the Workflow Builder.
         </p>
       </div>
+
+      {active && <SceneViewer key={active.id} pano={active} onClose={() => setActiveId(null)} onPlate={onPlate} lens={sceneLens} setLens={setSceneLens} aimRef={sceneAimRef} />}
 
       <div className="flex items-center justify-between mb-2">
         <Label>Panoramas</Label>
@@ -797,10 +866,15 @@ function PlatesPanel({ flash }: { flash: (m: string) => void }) {
         : (
           <div className="space-y-2">
             {panos.map((p) => (
-              <div key={p.id} className="rounded-md overflow-hidden relative group" style={{ border: `1px solid ${C.border}`, background: '#000' }} title={p.name}>
-                <img src={p.dataUrl} alt={p.name} loading="lazy" style={{ width: '100%', aspectRatio: '2/1', objectFit: 'cover' }} />
-                <div className="absolute bottom-0 left-0 right-0 px-2 py-1 text-[10px] truncate" style={{ background: 'rgba(0,0,0,0.6)', color: C.text }}>{p.name}</div>
-                <button onClick={() => remove(p.id)} title="Delete" className="absolute top-1 right-1 h-5 w-5 flex items-center justify-center rounded opacity-0 group-hover:opacity-100 transition-opacity" style={{ background: 'rgba(0,0,0,0.6)', color: '#fff' }}><Trash2 size={11} /></button>
+              <div key={p.id} className="rounded-md overflow-hidden relative group" style={{ border: `1px solid ${p.id === activeId ? C.blue : C.border}`, background: '#000' }} title={p.name}>
+                <button onClick={() => openScene(p.id)} className="block w-full" title="Open in 3D scene">
+                  <img src={p.dataUrl} alt={p.name} loading="lazy" style={{ width: '100%', aspectRatio: '2/1', objectFit: 'cover', display: 'block' }} />
+                </button>
+                <div className="absolute bottom-0 left-0 right-0 px-2 py-1 text-[10px] truncate pointer-events-none" style={{ background: 'rgba(0,0,0,0.6)', color: C.text }}>{p.name}</div>
+                <div className="absolute top-1 right-1 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                  <button onClick={() => openScene(p.id)} title="Open in 3D scene" className="h-5 px-1.5 flex items-center justify-center rounded text-[9px] font-semibold" style={{ background: C.blue, color: '#fff' }}>3D</button>
+                  <button onClick={() => remove(p.id)} title="Delete" className="h-5 w-5 flex items-center justify-center rounded" style={{ background: 'rgba(0,0,0,0.6)', color: '#fff' }}><Trash2 size={11} /></button>
+                </div>
               </div>
             ))}
           </div>
@@ -1106,6 +1180,11 @@ function Dock({ onClose }: { onClose: () => void }) {
   const [shot, setShot] = useState<ShotState>({
     rot: 35, tilt: -8, zoom: 9, preset: SHOT_PRESETS[1], anchors: { faces: true },
   })
+  // Ephemeral panel state lifted here so it survives the enlarge/shrink remount.
+  const [shotSrcImage, setShotSrcImage] = useState<{ name: string; dataUrl: string } | null>(null)
+  const [platesActiveId, setPlatesActiveId] = useState<string | null>(null)
+  const [sceneLens, setSceneLens] = useState('50mm')
+  const sceneAimRef = useRef<{ yaw: number; pitch: number }>({ yaw: 0, pitch: 0 })
 
   const [camCat, setCamCat] = useState<'All' | CameraCategory>('All')
 
@@ -1158,12 +1237,12 @@ function Dock({ onClose }: { onClose: () => void }) {
   const activePanel = (
     <>
       {gpmTab === 'performance' && <PerformancePanel perf={perf} setPerf={setPerf} ctl={ctl} onCopy={copyText} onInject={injectIntoPrompt} />}
-      {gpmTab === 'shot' && <ShotPanel shot={shot} setShot={setShot} ctl={ctl} onCopy={copyText} onInject={injectIntoPrompt} onUseImage={sendImageToGenSpace} flash={flash} />}
+      {gpmTab === 'shot' && <ShotPanel shot={shot} setShot={setShot} ctl={ctl} onCopy={copyText} onInject={injectIntoPrompt} onUseImage={sendImageToGenSpace} flash={flash} srcImage={shotSrcImage} setSrcImage={setShotSrcImage} />}
       {gpmTab === 'camera' && <CameraPanel search={search} setSearch={setSearch} camCat={camCat} setCamCat={setCamCat} onInject={injectIntoPrompt} flash={flash} />}
       {gpmTab === 'workflow' && <WorkflowPanel wf={wf} setWf={setWf} perfText={perfText} ctl={ctl} onCopy={copyText} onInject={injectIntoPrompt} onUseImage={sendImageToGenSpace} flash={flash} />}
       {gpmTab === 'prompts' && <PromptsPanel ctl={ctl} onCopy={copyText} onInject={injectIntoPrompt} flash={flash} />}
       {gpmTab === 'images' && <ImagesPanel ctl={ctl} onCopy={copyText} onUse={sendImageToGenSpace} flash={flash} />}
-      {gpmTab === 'plates' && <PlatesPanel flash={flash} />}
+      {gpmTab === 'plates' && <PlatesPanel onUse={sendImageToGenSpace} flash={flash} activeId={platesActiveId} setActiveId={setPlatesActiveId} sceneLens={sceneLens} setSceneLens={setSceneLens} sceneAimRef={sceneAimRef} />}
     </>
   )
 
@@ -1241,7 +1320,7 @@ function Dock({ onClose }: { onClose: () => void }) {
       </div>
 
       <div className="flex-1 overflow-y-auto p-4">
-        {activePanel}
+        {!expanded && activePanel}
       </div>
 
       {expanded && (

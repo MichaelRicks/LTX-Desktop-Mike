@@ -16,7 +16,7 @@ export function setupCSP(): void {
           "object-src 'none'",
           "base-uri 'self'",
           "form-action 'self'",
-          "frame-ancestors 'none'",
+          "frame-ancestors 'self'",
         ].join('; ')
       : [
           "default-src 'self'",
@@ -29,7 +29,7 @@ export function setupCSP(): void {
           "object-src 'none'",
           "base-uri 'self'",
           "form-action 'self'",
-          "frame-ancestors 'none'",
+          "frame-ancestors 'self'",
         ].join('; ')
 
     callback({
