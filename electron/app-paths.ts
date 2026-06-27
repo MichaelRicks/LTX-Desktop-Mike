@@ -2,7 +2,15 @@ import { app } from 'electron'
 import path from 'path'
 import os from 'os'
 
-export const APP_FOLDER_NAME = 'LTXDesktop'
+// Dev runs use a separate folder so the fork never collides with an installed
+// LTX Desktop (independent single-instance lock + isolated settings). The dev
+// userData's `models/` is junctioned to the installed app's models, so nothing
+// re-downloads. Packaged builds keep the original folder name.
+export const APP_FOLDER_NAME = app.isPackaged ? 'LTXDesktop' : 'LTXDesktopMikeDev'
+
+if (!app.isPackaged) {
+  app.setName('LTX Desktop Mike (Dev)')
+}
 
 function resolveUserDataPath(): string {
   if (process.platform === 'win32') {

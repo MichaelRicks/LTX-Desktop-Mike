@@ -18,6 +18,7 @@ import type { Asset } from '../types/project-model'
 import { GenerationErrorDialog } from '../components/GenerationErrorDialog'
 import { addVisualAssetToProject } from '../lib/asset-copy'
 import { pathToFileUrl } from '../lib/file-url'
+import { GPM_IMAGE_DND_TYPE, saveDataUrlToTempFile, type GpmDndImage } from '../components/gpm/gpm-image-file'
 import {
   areVideoGenerationSettingsEquivalent,
   getVideoGenerationModelSpecs,
@@ -444,6 +445,15 @@ function PromptBar({
   const handleDrop = (e: React.DragEvent) => {
     e.preventDefault()
     setIsDragOver(false)
+
+    // Image dragged from the Prompt Manager Pro library (a dataURL): persist to
+    // a file, then use it as the input image.
+    const gpmData = e.dataTransfer.getData(GPM_IMAGE_DND_TYPE)
+    if (gpmData) {
+      const { name, dataUrl } = JSON.parse(gpmData) as GpmDndImage
+      void saveDataUrlToTempFile(dataUrl, name).then(onInputImageChange).catch(() => {})
+      return
+    }
 
     const assetData = e.dataTransfer.getData('asset')
     if (assetData) {
@@ -901,6 +911,11 @@ export function GenSpace() {
     genSpaceIcLoraSource,
     setGenSpaceIcLoraSource,
     setPendingIcLoraUpdate,
+    genSpacePromptInjection,
+    setGenSpacePromptInjection,
+    genSpaceInputImagePath,
+    setGenSpaceInputImagePath,
+    genSpacePromptClearNonce,
   } = useProjects()
   const currentProjectId = activeProject?.id ?? null
   const { shouldVideoGenerateWithLtxApi, forceApiGenerations, settings: appSettings } = useAppSettings()
@@ -1027,6 +1042,32 @@ export function GenSpace() {
       setGenSpaceEditMode(null)
     }
   }, [genSpaceEditImagePath, setGenSpaceEditImagePath, setGenSpaceEditMode])
+
+  // Handle prompt text injected from Prompt Manager Pro. Append to any existing
+  // prompt (on its own line) so it composes with whatever the user is writing.
+  useEffect(() => {
+    if (genSpacePromptInjection == null) return
+    const injected = genSpacePromptInjection
+    setPrompt((prev) => (prev.trim() ? `${prev.trimEnd()}\n${injected}` : injected))
+    setGenSpacePromptInjection(null)
+  }, [genSpacePromptInjection, setGenSpacePromptInjection])
+
+  // Handle reference image sent from Prompt Manager Pro (keeps the prompt intact).
+  useEffect(() => {
+    if (!genSpaceInputImagePath) return
+    setMode('video')
+    setInputImage(genSpaceInputImagePath)
+    setGenSpaceInputImagePath(null)
+  }, [genSpaceInputImagePath, setGenSpaceInputImagePath])
+
+  // Clear the prompt box on request from Prompt Manager Pro (skip initial mount).
+  const lastClearNonce = useRef(genSpacePromptClearNonce)
+  useEffect(() => {
+    if (genSpacePromptClearNonce !== lastClearNonce.current) {
+      lastClearNonce.current = genSpacePromptClearNonce
+      setPrompt('')
+    }
+  }, [genSpacePromptClearNonce])
 
   // Handle incoming audio from the Video Editor for A2V
   useEffect(() => {

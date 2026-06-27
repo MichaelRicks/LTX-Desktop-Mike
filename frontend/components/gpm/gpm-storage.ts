@@ -1,0 +1,261 @@
+/**
+ * Prompt Manager Pro — persistence layer (frontend, renderer-only).
+ *
+ * IndexedDB-backed, schema-compatible with the Grok "Prompt Manager Pro"
+ * browser extension so its backup files (version "1.6") import/export cleanly.
+ * Storage keys keep the `gpm_*` names to stay compatible with existing backups.
+ *
+ * NOTE: this is a frontend module (IndexedDB/DOM is fine here). It is NOT part
+ * of the pure `gpm-core` engine package.
+ */
+
+/* ---- Types (mirror of the extension's backup shapes) --------------------- */
+export interface GpmPrompt {
+  id: string
+  text: string
+  _thumb?: string // optional thumbnail dataURL (stored separately, hydrated on demand)
+}
+export interface GpmPromptFolder {
+  id: string
+  name: string
+  prompts: GpmPrompt[]
+}
+export interface GpmImageFolder {
+  id: string
+  name: string
+}
+export interface GpmImage {
+  id: string
+  name: string
+  folderId: string | null
+  dataUrl: string
+  addedAt: number | null
+  isVideo: boolean
+}
+
+/** Backup envelope (extension format, version "1.6"). Unknown sections are
+ *  preserved verbatim on import so re-export round-trips losslessly. */
+export interface GpmBackup {
+  version: string
+  date: string
+  folders: GpmPromptFolder[]
+  imgFolders: GpmImageFolder[]
+  imgAssignments: Record<string, string>
+  imgImages: GpmImage[]
+  workflows?: unknown[]
+  dlFolders?: unknown[]
+  dlAssignments?: Record<string, unknown>
+  dlPanelWidth?: number
+}
+
+const DB_NAME = 'gpm_images_db'
+const DB_VERSION = 1
+const IMG_STORE = 'images'
+const THUMB_STORE = 'prompt_thumbs'
+const KV_STORE = 'kv'
+
+const KEY_PROMPTS = 'gpm_data_v2'
+const KEY_IMG_FOLDERS = 'gpm_img_state_v1'
+const KEY_PASSTHROUGH = 'gpm_backup_passthrough' // workflows + dl* kept for lossless re-export
+
+export const BACKUP_VERSION = '1.6'
+
+let dbPromise: Promise<IDBDatabase> | null = null
+
+function openDb(): Promise<IDBDatabase> {
+  if (dbPromise) return dbPromise
+  dbPromise = new Promise((resolve, reject) => {
+    const req = indexedDB.open(DB_NAME, DB_VERSION)
+    req.onupgradeneeded = () => {
+      const db = req.result
+      if (!db.objectStoreNames.contains(IMG_STORE)) db.createObjectStore(IMG_STORE, { keyPath: 'id' })
+      if (!db.objectStoreNames.contains(THUMB_STORE)) db.createObjectStore(THUMB_STORE, { keyPath: 'promptId' })
+      if (!db.objectStoreNames.contains(KV_STORE)) db.createObjectStore(KV_STORE, { keyPath: 'key' })
+    }
+    req.onsuccess = () => resolve(req.result)
+    req.onerror = () => reject(req.error)
+  })
+  return dbPromise
+}
+
+function tx<T>(store: string, mode: IDBTransactionMode, fn: (s: IDBObjectStore) => IDBRequest<T>): Promise<T> {
+  return openDb().then(
+    (db) =>
+      new Promise<T>((resolve, reject) => {
+        const t = db.transaction(store, mode)
+        const req = fn(t.objectStore(store))
+        req.onsuccess = () => resolve(req.result)
+        req.onerror = () => reject(req.error)
+      }),
+  )
+}
+
+function getAll<T>(store: string): Promise<T[]> {
+  return tx<T[]>(store, 'readonly', (s) => s.getAll() as IDBRequest<T[]>)
+}
+
+/* ---- KV helpers (folders/passthrough live here) -------------------------- */
+interface KvRecord<T> { key: string; value: T }
+
+async function kvGet<T>(key: string, fallback: T): Promise<T> {
+  const rec = await tx<KvRecord<T> | undefined>(KV_STORE, 'readonly', (s) => s.get(key) as IDBRequest<KvRecord<T> | undefined>)
+  return rec ? rec.value : fallback
+}
+function kvSet<T>(key: string, value: T): Promise<IDBValidKey> {
+  return tx<IDBValidKey>(KV_STORE, 'readwrite', (s) => s.put({ key, value }))
+}
+
+/* ---- IDs ----------------------------------------------------------------- */
+export function gpmId(): string {
+  return Math.random().toString(36).slice(2, 9)
+}
+
+/* ---- Prompt folders ------------------------------------------------------ */
+export function loadPromptFolders(): Promise<GpmPromptFolder[]> {
+  return kvGet<GpmPromptFolder[]>(KEY_PROMPTS, [])
+}
+export function savePromptFolders(folders: GpmPromptFolder[]): Promise<IDBValidKey> {
+  // Persist folders without inline thumbs (kept lean); thumbs live in THUMB_STORE.
+  const lean = folders.map((f) => ({ ...f, prompts: f.prompts.map(({ id, text }) => ({ id, text })) }))
+  return kvSet(KEY_PROMPTS, lean)
+}
+
+interface ThumbRecord { promptId: string; _thumb: string }
+export function getPromptThumb(promptId: string): Promise<string | undefined> {
+  return tx<ThumbRecord | undefined>(THUMB_STORE, 'readonly', (s) => s.get(promptId) as IDBRequest<ThumbRecord | undefined>)
+    .then((r) => r?._thumb)
+}
+export function setPromptThumb(promptId: string, thumb: string): Promise<IDBValidKey> {
+  return tx<IDBValidKey>(THUMB_STORE, 'readwrite', (s) => s.put({ promptId, _thumb: thumb }))
+}
+export function deletePromptThumb(promptId: string): Promise<undefined> {
+  return tx<undefined>(THUMB_STORE, 'readwrite', (s) => s.delete(promptId) as IDBRequest<undefined>)
+}
+/** Load every prompt thumbnail at once, keyed by promptId. */
+export function loadAllPromptThumbs(): Promise<Record<string, string>> {
+  return getAll<ThumbRecord>(THUMB_STORE).then((recs) => {
+    const map: Record<string, string> = {}
+    for (const r of recs) map[r.promptId] = r._thumb
+    return map
+  })
+}
+
+/* ---- Image folders + images ---------------------------------------------- */
+export function loadImageFolders(): Promise<GpmImageFolder[]> {
+  return kvGet<GpmImageFolder[]>(KEY_IMG_FOLDERS, [])
+}
+export function saveImageFolders(folders: GpmImageFolder[]): Promise<IDBValidKey> {
+  return kvSet(KEY_IMG_FOLDERS, folders)
+}
+export function loadImages(): Promise<GpmImage[]> {
+  return getAll<GpmImage>(IMG_STORE)
+}
+export function putImage(img: GpmImage): Promise<IDBValidKey> {
+  return tx<IDBValidKey>(IMG_STORE, 'readwrite', (s) => s.put(img))
+}
+export function deleteImage(id: string): Promise<undefined> {
+  return tx<undefined>(IMG_STORE, 'readwrite', (s) => s.delete(id) as IDBRequest<undefined>)
+}
+
+/* ---- Backup: export / import (extension v1.6 compatible) ----------------- */
+export async function exportBackup(): Promise<GpmBackup> {
+  const [folders, imgFolders, imgImages, passthrough] = await Promise.all([
+    loadPromptFolders(),
+    loadImageFolders(),
+    loadImages(),
+    kvGet<Partial<GpmBackup>>(KEY_PASSTHROUGH, {}),
+  ])
+  // Re-inline prompt thumbnails for full fidelity with the extension format.
+  const foldersWithThumbs: GpmPromptFolder[] = await Promise.all(
+    folders.map(async (f) => ({
+      ...f,
+      prompts: await Promise.all(
+        f.prompts.map(async (p) => {
+          const thumb = await getPromptThumb(p.id)
+          return thumb ? { ...p, _thumb: thumb } : p
+        }),
+      ),
+    })),
+  )
+  const imgAssignments: Record<string, string> = {}
+  for (const im of imgImages) if (im.folderId) imgAssignments[`__id__${im.id}`] = im.folderId
+
+  return {
+    version: BACKUP_VERSION,
+    date: new Date().toISOString(),
+    folders: foldersWithThumbs,
+    imgFolders,
+    imgAssignments,
+    imgImages,
+    workflows: passthrough.workflows ?? [],
+    dlFolders: passthrough.dlFolders ?? [],
+    dlAssignments: passthrough.dlAssignments ?? {},
+    dlPanelWidth: passthrough.dlPanelWidth ?? 416,
+  }
+}
+
+export interface ImportResult {
+  promptFolders: number
+  prompts: number
+  imageFolders: number
+  images: number
+}
+
+/** Import a backup, REPLACING current data. Returns counts for feedback. */
+export async function importBackup(data: GpmBackup): Promise<ImportResult> {
+  const folders = Array.isArray(data.folders) ? data.folders : []
+  const imgFolders = Array.isArray(data.imgFolders) ? data.imgFolders : []
+  const imgImages = Array.isArray(data.imgImages) ? data.imgImages : []
+
+  // Split thumbnails out, persist prompt folders lean.
+  await savePromptFolders(folders)
+  let prompts = 0
+  for (const f of folders) {
+    for (const p of f.prompts ?? []) {
+      prompts++
+      if (p._thumb) await setPromptThumb(p.id, p._thumb)
+    }
+  }
+
+  await saveImageFolders(imgFolders)
+  for (const im of imgImages) {
+    await putImage({
+      id: im.id,
+      name: im.name,
+      folderId: im.folderId ?? null,
+      dataUrl: im.dataUrl,
+      addedAt: im.addedAt ?? null,
+      isVideo: !!im.isVideo,
+    })
+  }
+
+  // Preserve sections the fork doesn't manage yet so re-export is lossless.
+  await kvSet(KEY_PASSTHROUGH, {
+    workflows: data.workflows ?? [],
+    dlFolders: data.dlFolders ?? [],
+    dlAssignments: data.dlAssignments ?? {},
+    dlPanelWidth: data.dlPanelWidth ?? 416,
+  })
+
+  return { promptFolders: folders.length, prompts, imageFolders: imgFolders.length, images: imgImages.length }
+}
+
+/** Parse + validate a backup file's text. Throws on malformed input. */
+export function parseBackup(text: string): GpmBackup {
+  const data = JSON.parse(text) as Partial<GpmBackup>
+  if (!data || typeof data !== 'object' || !Array.isArray(data.folders)) {
+    throw new Error('Not a valid Prompt Manager Pro backup (missing "folders").')
+  }
+  return {
+    version: data.version ?? BACKUP_VERSION,
+    date: data.date ?? new Date().toISOString(),
+    folders: data.folders,
+    imgFolders: data.imgFolders ?? [],
+    imgAssignments: data.imgAssignments ?? {},
+    imgImages: data.imgImages ?? [],
+    workflows: data.workflows ?? [],
+    dlFolders: data.dlFolders ?? [],
+    dlAssignments: data.dlAssignments ?? {},
+    dlPanelWidth: data.dlPanelWidth ?? 416,
+  }
+}

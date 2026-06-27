@@ -46,6 +46,17 @@ interface ProjectContextType {
   setGenSpaceIcLoraSource: (source: GenSpaceIcLoraSource | null) => void
   pendingIcLoraUpdate: PendingIcLoraUpdate | null
   setPendingIcLoraUpdate: (update: PendingIcLoraUpdate | null) => void
+
+  // Prompt text pushed into the Gen Space prompt box (e.g. from Prompt Manager Pro).
+  genSpacePromptInjection: string | null
+  setGenSpacePromptInjection: (text: string | null) => void
+  // Reference image set as the Gen Space input image WITHOUT clearing the prompt
+  // (used by Prompt Manager Pro's "send to Gen Space" / drag-drop).
+  genSpaceInputImagePath: string | null
+  setGenSpaceInputImagePath: (path: string | null) => void
+  // Bumped to request clearing the Gen Space prompt box (Prompt Manager Pro).
+  genSpacePromptClearNonce: number
+  clearGenSpacePrompt: () => void
 }
 
 export interface GenSpaceRetakeSource {
@@ -94,6 +105,10 @@ export function ProjectProvider({ children }: { children: React.ReactNode }) {
   const [pendingRetakeUpdate, setPendingRetakeUpdate] = useState<PendingRetakeUpdate | null>(null)
   const [genSpaceIcLoraSource, setGenSpaceIcLoraSource] = useState<GenSpaceIcLoraSource | null>(null)
   const [pendingIcLoraUpdate, setPendingIcLoraUpdate] = useState<PendingIcLoraUpdate | null>(null)
+  const [genSpacePromptInjection, setGenSpacePromptInjection] = useState<string | null>(null)
+  const [genSpaceInputImagePath, setGenSpaceInputImagePath] = useState<string | null>(null)
+  const [genSpacePromptClearNonce, setGenSpacePromptClearNonce] = useState(0)
+  const clearGenSpacePrompt = useCallback(() => setGenSpacePromptClearNonce((n) => n + 1), [])
 
   const bumpProjectRevision = useCallback(() => {
     setProjectRevision(prev => prev + 1)
@@ -333,6 +348,12 @@ export function ProjectProvider({ children }: { children: React.ReactNode }) {
       setGenSpaceIcLoraSource,
       pendingIcLoraUpdate,
       setPendingIcLoraUpdate,
+      genSpacePromptInjection,
+      setGenSpacePromptInjection,
+      genSpaceInputImagePath,
+      setGenSpaceInputImagePath,
+      genSpacePromptClearNonce,
+      clearGenSpacePrompt,
     }}>
       {children}
     </ProjectContext.Provider>

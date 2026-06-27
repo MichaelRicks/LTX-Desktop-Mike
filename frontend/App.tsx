@@ -17,6 +17,7 @@ import { SettingsModal, type SettingsTabId } from './components/SettingsModal'
 import { LogViewer } from './components/LogViewer'
 import { ApiGatewayModal, type ApiGatewaySection } from './components/ApiGatewayModal'
 import { Button } from './components/ui/button'
+import { PromptManagerPro } from './components/gpm/PromptManagerPro'
 
 type SetupState = 'loading' | { needsSetup: boolean; needsLicense: boolean }
 type RequiredModelsGateState = 'checking' | 'missing' | 'ready'
@@ -596,6 +597,8 @@ function AppContent() {
       )}
 
       {restartingOverlay}
+
+      <PromptManagerPro />
     </div>
   )
 }
