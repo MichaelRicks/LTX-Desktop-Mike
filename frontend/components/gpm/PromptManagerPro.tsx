@@ -34,6 +34,16 @@ const C = {
   blue: '#1f8fff', green: '#28c76f', amber: '#f5a623',
 }
 
+// Camera reference thumbnails, bundled by Vite. Map filename -> resolved URL.
+const CAM_IMAGE_URLS = import.meta.glob('../../assets/gpm-camera/*.jpg', {
+  eager: true, query: '?url', import: 'default',
+}) as Record<string, string>
+function camImageUrl(file?: string): string | undefined {
+  if (!file) return undefined
+  const hit = Object.entries(CAM_IMAGE_URLS).find(([p]) => p.endsWith('/' + file))
+  return hit?.[1]
+}
+
 type GpmTab = 'performance' | 'shot' | 'camera' | 'workflow' | 'prompts' | 'images' | 'plates'
 
 interface PerfState {
@@ -319,22 +329,29 @@ function CameraPanel({
         })}
       </div>
       <div className="grid grid-cols-2 gap-2">
-        {cards.map((c) => (
-          <button
-            key={c.id}
-            onClick={() => { onInject(c.phrase); flash(`Injected "${c.label}"`) }}
-            title={c.phrase}
-            className="rounded-lg overflow-hidden text-left transition-transform hover:scale-[1.02]"
-            style={{ border: `1px solid ${C.border}`, background: C.card }}
-          >
-            <div style={{ aspectRatio: '4/3', background: 'linear-gradient(135deg, #2b2620, #14110d)' }} className="flex items-end p-2">
-              <Camera size={14} style={{ color: C.amber, opacity: 0.7 }} />
-            </div>
-            <div className="px-2 py-1.5">
-              <div className="text-[11px] font-semibold uppercase tracking-wide" style={{ color: C.text }}>{c.label}</div>
-            </div>
-          </button>
-        ))}
+        {cards.map((c) => {
+          const url = camImageUrl(c.image)
+          return (
+            <button
+              key={c.id}
+              onClick={() => { onInject(c.phrase); flash(`Injected "${c.label}"`) }}
+              title={c.phrase}
+              className="rounded-lg overflow-hidden text-left transition-transform hover:scale-[1.02]"
+              style={{ border: `1px solid ${C.border}`, background: C.card }}
+            >
+              <div style={{ aspectRatio: '4/3', background: (url || c.svg) ? '#0f1117' : 'linear-gradient(135deg, #2b2620, #14110d)' }} className="relative flex items-end p-2 overflow-hidden">
+                {url
+                  ? <img src={url} alt={c.label} loading="lazy" className="absolute inset-0 w-full h-full object-cover" />
+                  : c.svg
+                    ? <div className="absolute inset-0" dangerouslySetInnerHTML={{ __html: c.svg }} />
+                    : <Camera size={14} style={{ color: C.amber, opacity: 0.7 }} />}
+              </div>
+              <div className="px-2 py-1.5">
+                <div className="text-[11px] font-semibold uppercase tracking-wide" style={{ color: C.text }}>{c.label}</div>
+              </div>
+            </button>
+          )
+        })}
       </div>
     </div>
   )
