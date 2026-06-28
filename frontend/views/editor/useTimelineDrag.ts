@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
 import type { Asset, TimelineClip, Track } from '../../types/project-model'
 import { resolveOverlaps, migrateClip, type ToolType } from './video-editor-utils'
+import { isDroppedMediaEvent, readDroppedMediaAsset } from './dropped-media-asset'
 
 interface DragPreviewPosition {
   startTime: number
@@ -102,7 +103,7 @@ export function useTimelineDrag(params: UseTimelineDragParams) {
     selectedClipIds, setSelectedClipIds,
     currentTime, setCurrentTime, setIsPlaying,
     snapEnabled, getMaxClipDuration, addClipToTimeline,
-    assets, timelines, activeTimeline,
+    assets, timelines, activeTimeline, currentProjectId,
     timelineRef, trackContainerRef,
     orderedTracks, getTrackHeight, trackTopPx,
     splitClipAtPlayhead, setSelectedSubtitleId, setSelectedGap,
@@ -1026,7 +1027,21 @@ export function useTimelineDrag(params: UseTimelineDragParams) {
   
   const handleTrackDrop = (e: React.DragEvent, trackIndex: number) => {
     e.preventDefault()
-    
+
+    // Image/video dragged from the Prompt Manager Pro Downloads Browser or
+    // Images tab — neither is a registered project Asset yet, so build one
+    // (copy into project storage, probe duration/dimensions) then insert.
+    if (isDroppedMediaEvent(e) && trackContainerRef.current) {
+      const rect = trackContainerRef.current.getBoundingClientRect()
+      const scrollLeft = trackContainerRef.current.scrollLeft
+      const x = e.clientX - rect.left + scrollLeft
+      const startTime = Math.max(0, x / pixelsPerSecond)
+      void readDroppedMediaAsset(e, currentProjectId).then((asset) => {
+        if (asset) addClipToTimeline(asset, trackIndex, startTime)
+      })
+      return
+    }
+
     // Check if it's a timeline being dropped (flatten on drop)
     const timelineData = e.dataTransfer.getData('timeline')
     if (timelineData && trackContainerRef.current) {

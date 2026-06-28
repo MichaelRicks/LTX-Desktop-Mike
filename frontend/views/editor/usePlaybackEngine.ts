@@ -2,10 +2,10 @@ import { useEffect, useLayoutEffect, useRef } from 'react'
 import {
   selectActiveTimelineInPoint,
   selectActiveTimelineOutPoint,
+  selectContentEnd,
   selectIsPlaying,
   selectPlayingInOut,
   selectShuttleSpeed,
-  selectTotalDuration,
 } from './editor-selectors'
 import { useEditorActions, useEditorStore } from './editor-store'
 
@@ -25,7 +25,7 @@ export function usePlaybackEngine(params: UsePlaybackEngineParams) {
   const playingInOut = useEditorStore(selectPlayingInOut)
   const inPoint = useEditorStore(selectActiveTimelineInPoint)
   const outPoint = useEditorStore(selectActiveTimelineOutPoint)
-  const totalDuration = useEditorStore(selectTotalDuration)
+  const contentEnd = useEditorStore(selectContentEnd)
 
   const lastStateUpdateRef = useRef(0)
   const prevIsPlayingRef = useRef(isPlaying)
@@ -42,6 +42,19 @@ export function usePlaybackEngine(params: UsePlaybackEngineParams) {
 
   useEffect(() => {
     if (!isPlaying) return
+
+    // If we're sitting at/past the active stop bound (OUT point or content
+    // end) when Play is pressed, restart from the IN point (or 0) instead of
+    // sitting motionless at the bound.
+    if (!playingInOut) {
+      const contentLimit = contentEnd > 0 ? contentEnd : 30
+      const bound = outPoint !== null ? Math.min(outPoint, contentLimit) : contentLimit
+      if (playbackTimeRef.current >= bound) {
+        const restart = inPoint !== null ? inPoint : 0
+        playbackTimeRef.current = restart
+        setCurrentTime(restart)
+      }
+    }
 
     const effectiveSpeed = shuttleSpeed !== 0 ? shuttleSpeed : 1
     let lastTimestamp: number | null = null
@@ -68,8 +81,14 @@ export function usePlaybackEngine(params: UsePlaybackEngineParams) {
         if (next >= loopEnd) next = loopStart
         else if (next <= loopStart) next = loopEnd
       } else {
-        if (next >= totalDuration) {
-          next = 0
+        // Stop at the end of the last clip — don't keep running into the
+        // padded-minimum ruler length, and don't rewind to 0 on reaching it.
+        // If timeline in/out marks are set, ordinary playback is bounded by
+        // them too (not just the dedicated "play in to out" loop button).
+        const contentLimit = contentEnd > 0 ? contentEnd : 30
+        const end = outPoint !== null ? Math.min(outPoint, contentLimit) : contentLimit
+        if (next >= end) {
+          next = end
           stopped = true
         } else if (next < 0) {
           next = 0
@@ -104,7 +123,7 @@ export function usePlaybackEngine(params: UsePlaybackEngineParams) {
     playingInOut,
     inPoint,
     outPoint,
-    totalDuration,
+    contentEnd,
     playbackTimeRef,
     setCurrentTime,
     stopShuttle,

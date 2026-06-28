@@ -19,6 +19,7 @@ import { GenerationErrorDialog } from '../components/GenerationErrorDialog'
 import { addVisualAssetToProject } from '../lib/asset-copy'
 import { pathToFileUrl } from '../lib/file-url'
 import { GPM_IMAGE_DND_TYPE, saveDataUrlToTempFile, type GpmDndImage } from '../components/gpm/gpm-image-file'
+import { FILE_DND, type LibFile } from '../components/gpm/DownloadsBrowser'
 import {
   areVideoGenerationSettingsEquivalent,
   getVideoGenerationModelSpecs,
@@ -455,6 +456,14 @@ function PromptBar({
       return
     }
 
+    // Image dragged from the Downloads Browser — already a real file on disk.
+    const dlData = e.dataTransfer.getData(FILE_DND)
+    if (dlData) {
+      const f = JSON.parse(dlData) as LibFile
+      if (!f.isVideo) onInputImageChange(f.path)
+      return
+    }
+
     const assetData = e.dataTransfer.getData('asset')
     if (assetData) {
       const asset = JSON.parse(assetData) as Asset
@@ -598,6 +607,12 @@ function PromptBar({
             value={prompt}
             onChange={(e) => onPromptChange(e.target.value)}
             onKeyDown={handleKeyDown}
+            onDragOver={(e) => {
+              if (e.dataTransfer.types.includes(GPM_IMAGE_DND_TYPE) || e.dataTransfer.types.includes(FILE_DND) || e.dataTransfer.types.includes('asset')) e.preventDefault()
+            }}
+            onDrop={(e) => {
+              if (e.dataTransfer.types.includes(GPM_IMAGE_DND_TYPE) || e.dataTransfer.types.includes(FILE_DND) || e.dataTransfer.types.includes('asset')) handleDrop(e)
+            }}
             placeholder={mode === 'retake'
               ? "Describe what should happen in the selected section..."
               : mode === 'ic-lora'

@@ -726,6 +726,7 @@ function VideoEditorWithStore({
         playbackTimeRef={playbackTimeRef}
         setDraggingMarker={handleProgramMonitorMarkerDrag}
         kbLayout={kbLayout}
+        currentProjectId={currentProjectId}
       />
     </div>
   )
@@ -827,6 +828,7 @@ function VideoEditorWithStore({
                 >
                   <VideoEditorSourceMonitor
                     ref={sourceMonitorActionsRef}
+                    currentProjectId={currentProjectId}
                   />
                 </div>
               </Panel>

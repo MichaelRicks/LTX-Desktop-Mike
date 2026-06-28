@@ -19,6 +19,8 @@ import { ApiGatewayModal, type ApiGatewaySection } from './components/ApiGateway
 import { Button } from './components/ui/button'
 import { PromptManagerPro } from './components/gpm/PromptManagerPro'
 import { DownloadsBrowser } from './components/gpm/DownloadsBrowser'
+import { useDownloadsBrowserOpen, getDownloadsBrowserOpen, setDownloadsBrowserOpen } from './components/gpm/downloads-browser-store'
+import { getPromptManagerProOpen, setPromptManagerProOpen } from './components/gpm/prompt-manager-pro-store'
 
 type SetupState = 'loading' | { needsSetup: boolean; needsLicense: boolean }
 type RequiredModelsGateState = 'checking' | 'missing' | 'ready'
@@ -27,6 +29,34 @@ type LtxUpgradeRecommendation = Extract<LtxRecommendation, { status: 'upgrade' }
 
 function AppContent() {
   const { currentView } = useView()
+  const downloadsBrowserOpen = useDownloadsBrowserOpen()
+
+  // Tab toggles both Prompt Manager Pro panels closed/open together — like
+  // Photoshop/Premiere's "hide all panels" — restoring whichever side(s) were
+  // actually open before collapsing.
+  const panelsCollapsedRef = useRef(false)
+  const savedPanelStateRef = useRef({ left: false, right: true })
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key !== 'Tab') return
+      const el = document.activeElement as HTMLElement | null
+      const isEditable = !!el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT' || el.isContentEditable)
+      if (isEditable) return
+      e.preventDefault()
+      if (!panelsCollapsedRef.current) {
+        savedPanelStateRef.current = { left: getDownloadsBrowserOpen(), right: getPromptManagerProOpen() }
+        setDownloadsBrowserOpen(false)
+        setPromptManagerProOpen(false)
+        panelsCollapsedRef.current = true
+      } else {
+        setDownloadsBrowserOpen(savedPanelStateRef.current.left)
+        setPromptManagerProOpen(savedPanelStateRef.current.right)
+        panelsCollapsedRef.current = false
+      }
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [])
   const { connected, processStatus, isLoading: backendLoading } = useBackend()
   const { settings, saveLtxApiKey, saveFalApiKey, forceApiGenerations, isLoaded, runtimePolicyLoaded } = useAppSettings()
 
@@ -518,7 +548,12 @@ function AppContent() {
 
   return (
     <div className="relative h-screen w-screen">
-      {renderView()}
+      <div
+        className="h-full w-full transition-[margin-left] duration-150"
+        style={{ marginLeft: downloadsBrowserOpen ? 340 : 0 }}
+      >
+        {renderView()}
+      </div>
 
       {showGlobalControls && (
         <div className="fixed top-[18px] right-3 z-50 flex items-center gap-1">

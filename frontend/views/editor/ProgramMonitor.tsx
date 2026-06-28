@@ -2,7 +2,7 @@ import React from 'react'
 import {
   Layers, Video, ChevronDown,
   ChevronLeft, ChevronRight, Pause, Play, Repeat,
-  Expand, Shrink,
+  Expand, Shrink, XCircle,
 } from 'lucide-react'
 import { Button } from '../../components/ui/button'
 import { Tooltip } from '../../components/ui/tooltip'
@@ -27,6 +27,7 @@ import {
   selectTracks,
 } from './editor-selectors'
 import { useEditorActions, useEditorStore } from './editor-store'
+import { isDroppedMediaEvent, readDroppedMediaAsset } from './dropped-media-asset'
 
 type MonitorRenderMode = 'playback' | 'scrub'
 type SyncTarget = 'active' | 'incoming' | 'compositing'
@@ -414,6 +415,7 @@ export interface ProgramMonitorProps {
   playbackTimeRef: React.MutableRefObject<number>
   setDraggingMarker: React.Dispatch<React.SetStateAction<'timelineIn' | 'timelineOut' | null>>
   kbLayout: KeyboardLayout
+  currentProjectId?: string | null
 }
 
 export interface ProgramMonitorHandle {
@@ -424,9 +426,12 @@ export const ProgramMonitor = React.forwardRef<ProgramMonitorHandle, ProgramMoni
   playbackTimeRef,
   setDraggingMarker,
   kbLayout,
+  currentProjectId = null,
 }: ProgramMonitorProps, ref) {
   const {
     clearClipSelection,
+    clearTimelineMarks,
+    insertAssetsToTimeline,
     pause,
     play,
     selectClip,
@@ -1150,6 +1155,14 @@ export const ProgramMonitor = React.forwardRef<ProgramMonitorHandle, ProgramMoni
           ref={previewContainerRef}
           className={`flex-1 relative overflow-hidden min-h-0 min-w-0 ${isFullscreen ? 'bg-black' : ''}`}
           style={{ backgroundColor: isFullscreen ? '#000' : '#333', ...(previewZoom !== 'fit' ? { cursor: 'grab' } : {}) }}
+          onDragOver={(e) => { if (isDroppedMediaEvent(e)) { e.preventDefault(); e.dataTransfer.dropEffect = 'copy' } }}
+          onDrop={(e) => {
+            if (!isDroppedMediaEvent(e)) return
+            e.preventDefault()
+            void readDroppedMediaAsset(e, currentProjectId).then((asset) => {
+              if (asset) insertAssetsToTimeline({ assets: [asset], trackIndex: 0, startTime: currentTime })
+            })
+          }}
           onMouseDown={(e) => {
             if (previewZoom === 'fit') return
             if (e.button !== 0 && e.button !== 1) return
@@ -1828,6 +1841,20 @@ export const ProgramMonitor = React.forwardRef<ProgramMonitorHandle, ProgramMoni
                 }}
               >
                 <Repeat className="h-3 w-3" />
+              </Button>
+            </Tooltip>
+            {/* Clear In/Out */}
+            <Tooltip content={tooltipLabel('Clear In/Out', getShortcutLabel(kbLayout, 'mark.clearInOut'))} side="top">
+              <Button
+                variant="ghost" size="icon"
+                className={`h-6 w-6 text-zinc-500 ${inPoint === null && outPoint === null ? 'opacity-30 cursor-not-allowed' : ''}`}
+                disabled={inPoint === null && outPoint === null}
+                onClick={() => {
+                  if (playingInOut) { togglePlayInOut(); pause() }
+                  clearTimelineMarks()
+                }}
+              >
+                <XCircle className="h-3.5 w-3.5" />
               </Button>
             </Tooltip>
           </div>

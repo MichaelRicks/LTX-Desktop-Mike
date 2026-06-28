@@ -8,11 +8,11 @@
  */
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
-  Camera, ChevronRight, Copy, Download, Eraser, Film, Folder, FolderPlus, Image as ImageIcon,
+  Camera, ChevronRight, Copy, Download, Eraser, Folder, FolderPlus, Image as ImageIcon,
   Layers, Maximize2, Minimize2, Pencil, Plus, RotateCcw, Save, Search, Send, Trash2, Upload, Wand2, X,
 } from 'lucide-react'
 import {
-  PERF_FAMILIES, assemblePerformance, perfLabel, type PerfDelivery,
+  PERF_FAMILIES, assemblePerformance, perfLabel, defaultDialogueForFamily, type PerfDelivery,
   SHOT_PRESETS, SHOT_ANCHORS, buildShotPrompt, type ShotState,
   CAM_CATS, filterCameraCards, type CameraCategory,
   WF_ROLES, buildWorkflowPrompt, type WfState, type WfRole,
@@ -27,6 +27,9 @@ import {
   type GpmPanorama, loadPanoramas, putPanorama, deletePanorama, MAX_PANORAMAS,
 } from './gpm-storage'
 import { saveDataUrlToTempFile, GPM_IMAGE_DND_TYPE } from './gpm-image-file'
+import { FILE_DND, type LibFile } from './DownloadsBrowser'
+import { usePromptManagerProOpen, setPromptManagerProOpen } from './prompt-manager-pro-store'
+import { MediaThumb } from './MediaThumb'
 
 /* Theme tokens sampled from the LTX / GPM screenshots (from the prototype). */
 const C = {
@@ -54,6 +57,8 @@ interface PerfState {
   asymmetry: number
   dialogue: string
   delivery: PerfDelivery
+  /** True while `dialogue` is the auto-filled per-family default (cleared on focus). */
+  dialogueAuto: boolean
 }
 
 /* Section open-state shared across the dock, with a global collapse-all. */
@@ -172,7 +177,33 @@ function PerformancePanel({
   ctl: SectionCtl; onCopy: (t: string) => void; onInject: (t: string) => void
 }) {
   const up = <K extends keyof PerfState>(k: K, v: PerfState[K]) => setPerf((p) => ({ ...p, [k]: v }))
-  const perfOut = useMemo(() => assemblePerformance(perf), [perf])
+  // Mirrors the extension: the dialogue box shows the family's default as a
+  // placeholder (not a real value) until clicked; if the box is still empty,
+  // the assembled prompt falls back to the placeholder text too.
+  const placeholder = defaultDialogueForFamily(perf.familyIndex)
+  const perfOut = useMemo(
+    () => assemblePerformance({ ...perf, dialogue: perf.dialogue || placeholder }),
+    [perf, placeholder],
+  )
+
+  // Family change: if the box currently holds a previous auto-filled default
+  // (dialogueAuto), swap it for the new family's text. If the box is empty
+  // and untouched, leave it empty — the placeholder above already updates.
+  const changeFamily = (idx: number) => setPerf((p) => ({
+    ...p, familyIndex: idx,
+    dialogue: p.dialogueAuto ? defaultDialogueForFamily(idx) : p.dialogue,
+  }))
+  // Clicking into an empty box promotes the placeholder into a real, selected value.
+  const onDialogueClick = (e: React.MouseEvent<HTMLTextAreaElement>) => {
+    if (perf.dialogue) return
+    const v = defaultDialogueForFamily(perf.familyIndex)
+    if (!v) return
+    setPerf((p) => ({ ...p, dialogue: v, dialogueAuto: true }))
+    const el = e.currentTarget
+    requestAnimationFrame(() => el.select())
+  }
+  // Typing marks the field as user-owned so later family changes won't overwrite it.
+  const onDialogueChange = (v: string) => setPerf((p) => ({ ...p, dialogue: v, dialogueAuto: false }))
   return (
     <div>
       <p className="text-[11px] mb-3" style={{ color: C.muted }}>
@@ -181,7 +212,7 @@ function PerformancePanel({
       <Section id="perf-controls" title="Controls" ctl={ctl}>
         <Label>Emotion Family</Label>
         <select
-          value={perf.familyIndex} onChange={(e) => up('familyIndex', parseInt(e.target.value, 10))}
+          value={perf.familyIndex} onChange={(e) => changeFamily(parseInt(e.target.value, 10))}
           className="w-full rounded-md px-3 py-2 text-sm mb-4 outline-none"
           style={{ background: C.elev, color: C.text, border: `1px solid ${C.border}` }}
         >
@@ -202,13 +233,28 @@ function PerformancePanel({
 
         <div className="mt-4 mb-1 flex items-center gap-2">
           <Label>Dialogue</Label>
-          {perf.dialogue.trim() && <span className="text-[10px]" style={{ color: C.amber }}>auto-appends lip sync</span>}
+          {!perf.dialogue
+            ? <span className="text-[10px]" style={{ color: C.faint }}>click to use the default, or type your own</span>
+            : perf.dialogue.trim() ? <span className="text-[10px]" style={{ color: C.amber }}>auto-appends lip sync</span> : null}
         </div>
-        <textarea
-          value={perf.dialogue} onChange={(e) => up('dialogue', e.target.value)} rows={2}
-          className="w-full rounded-md px-3 py-2 text-sm outline-none resize-none"
-          style={{ background: C.elev, color: C.text, border: `1px solid ${C.border}` }}
-        />
+        <div className="relative">
+          <textarea
+            value={perf.dialogue} placeholder={placeholder} onClick={onDialogueClick}
+            onChange={(e) => onDialogueChange(e.target.value)} rows={2}
+            className="w-full rounded-md px-3 py-2 pr-7 text-sm outline-none resize-none"
+            style={{ background: C.elev, color: C.text, border: `1px solid ${C.border}` }}
+          />
+          {perf.dialogue && (
+            <button
+              type="button" title="Clear dialogue" tabIndex={-1}
+              onClick={() => setPerf((p) => ({ ...p, dialogue: '', dialogueAuto: false }))}
+              className="absolute top-1.5 right-1.5 h-5 w-5 flex items-center justify-center rounded"
+              style={{ color: C.faint }}
+            >
+              <X size={12} />
+            </button>
+          )}
+        </div>
 
         <Label className="mt-4">Delivery</Label>
         <select
@@ -562,7 +608,7 @@ function WorkflowPanel({
                 >
                   {s.imgId && imgById[s.imgId]
                     ? (imgById[s.imgId].isVideo
-                        ? <Film size={16} style={{ color: C.amber }} />
+                        ? <video src={imgById[s.imgId].dataUrl} muted playsInline preload="metadata" className="w-full h-full object-cover" />
                         : <img src={imgById[s.imgId].dataUrl} alt="" className="w-full h-full object-cover" />)
                     : <ImageIcon size={15} style={{ color: C.faint }} />}
                 </button>
@@ -726,7 +772,7 @@ function ImagePicker({ library, onPick, onClose }: { library: GpmImage[]; onPick
                     className="rounded-md overflow-hidden" style={{ aspectRatio: '16/9', background: '#000', border: `1px solid ${C.border}` }}
                   >
                     {im.isVideo
-                      ? <span className="w-full h-full flex items-center justify-center"><Film size={18} style={{ color: C.amber }} /></span>
+                      ? <video src={im.dataUrl} muted playsInline preload="metadata" className="w-full h-full object-cover" />
                       : <img src={im.dataUrl} alt={im.name} className="w-full h-full object-cover" />}
                   </button>
                 ))}
@@ -1071,22 +1117,36 @@ function ImagesPanel({ ctl, onCopy, onUse, flash }: { ctl: SectionCtl; onCopy: (
   }
   const removeImage = (id: string) => { void deleteImage(id); setImages(images.filter((im) => im.id !== id)) }
 
+  // Drop a file from the Downloads Browser into a folder — reads it off disk
+  // via IPC and adds it as a real library image.
+  const addFromLibFile = async (f: LibFile, folderId: string | null) => {
+    const api = window.electronAPI
+    if (!api) return
+    const r = await api.gpmLibReadAsDataUrl({ path: f.path })
+    if (!r.success) { flash(r.error); return }
+    const img: GpmImage = { id: gpmId(), name: f.name, folderId, dataUrl: r.dataUrl, addedAt: Date.now(), isVideo: f.isVideo }
+    await putImage(img); setImages((prev) => [img, ...prev])
+    flash(`Added ${f.name}`)
+  }
+  const onLibFileDrop = (e: React.DragEvent, folderId: string | null) => {
+    const raw = e.dataTransfer.getData(FILE_DND)
+    if (!raw) return
+    e.preventDefault()
+    void addFromLibFile(JSON.parse(raw) as LibFile, folderId)
+  }
+
   const renderGrid = (items: GpmImage[]) => (
-    <div className="grid grid-cols-3 gap-2">
+    <div className="grid grid-cols-2 gap-2">
       {items.map((im) => (
-        <div
-          key={im.id} className="rounded-md overflow-hidden relative group" style={{ border: `1px solid ${C.border}`, background: C.card }} title={im.name}
-          draggable={!im.isVideo}
+        <MediaThumb
+          key={im.id} src={im.dataUrl} isVideo={im.isVideo} name={im.name}
+          className="rounded-md" style={{ border: `1px solid ${C.border}` }}
+          draggable
           onDragStart={(e) => {
             e.dataTransfer.setData(GPM_IMAGE_DND_TYPE, JSON.stringify({ name: im.name, dataUrl: im.dataUrl }))
             e.dataTransfer.effectAllowed = 'copy'
           }}
         >
-          <div style={{ aspectRatio: '1', background: '#000' }} className="flex items-center justify-center">
-            {im.isVideo
-              ? <Film size={20} style={{ color: C.amber }} />
-              : <img src={im.dataUrl} alt={im.name} className="w-full h-full object-cover" draggable={false} />}
-          </div>
           <div className="absolute top-1 right-1 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
             {!im.isVideo && (
               <button onClick={() => onUse(im)} title="Send to Gen Space as input image" className="h-5 w-5 flex items-center justify-center rounded" style={{ background: C.green, color: '#fff' }}><Send size={11} /></button>
@@ -1094,7 +1154,7 @@ function ImagesPanel({ ctl, onCopy, onUse, flash }: { ctl: SectionCtl; onCopy: (
             <button onClick={() => onCopy(im.name)} title="Copy filename" className="h-5 w-5 flex items-center justify-center rounded" style={{ background: 'rgba(0,0,0,0.6)', color: '#fff' }}><Copy size={11} /></button>
             <button onClick={() => removeImage(im.id)} title="Delete" className="h-5 w-5 flex items-center justify-center rounded" style={{ background: 'rgba(0,0,0,0.6)', color: '#fff' }}><Trash2 size={11} /></button>
           </div>
-        </div>
+        </MediaThumb>
       ))}
     </div>
   )
@@ -1120,8 +1180,13 @@ function ImagesPanel({ ctl, onCopy, onUse, flash }: { ctl: SectionCtl; onCopy: (
       {folders.map((f) => {
         const items = images.filter((im) => im.folderId === f.id)
         return (
+          <div
+            key={f.id}
+            onDragOver={(e) => { if (e.dataTransfer.types.includes(FILE_DND)) e.preventDefault() }}
+            onDrop={(e) => onLibFileDrop(e, f.id)}
+          >
           <Section
-            key={f.id} id={`if-${f.id}`} ctl={ctl}
+            id={`if-${f.id}`} ctl={ctl}
             title={<span className="flex items-center gap-1.5"><Folder size={12} style={{ color: C.muted }} />{f.name} ({items.length})</span>}
             right={
               <span className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
@@ -1141,12 +1206,18 @@ function ImagesPanel({ ctl, onCopy, onUse, flash }: { ctl: SectionCtl; onCopy: (
               ? <button onClick={() => pickFor(f.id)} className="w-full rounded-md py-3 text-[11px] flex items-center justify-center gap-1.5" style={{ border: `1px dashed ${C.borderLt}`, color: C.faint }}><ImageIcon size={14} />Add images</button>
               : renderGrid(items)}
           </Section>
+          </div>
         )
       })}
       {unassigned.length > 0 && (
-        <Section id="if-unassigned" ctl={ctl} title={`Unassigned (${unassigned.length})`}>
-          {renderGrid(unassigned)}
-        </Section>
+        <div
+          onDragOver={(e) => { if (e.dataTransfer.types.includes(FILE_DND)) e.preventDefault() }}
+          onDrop={(e) => onLibFileDrop(e, null)}
+        >
+          <Section id="if-unassigned" ctl={ctl} title={`Unassigned (${unassigned.length})`}>
+            {renderGrid(unassigned)}
+          </Section>
+        </div>
       )}
       <input ref={fileRef} type="file" accept="image/*,video/*" multiple className="hidden" onChange={onFiles} />
     </div>
@@ -1173,7 +1244,7 @@ function Dock({ onClose }: { onClose: () => void }) {
 
   const [perf, setPerf] = useState<PerfState>({
     familyIndex: 0, intensity: 0.5, asymmetry: 0.25,
-    dialogue: "I don't know how to do this without you.", delivery: 'natural',
+    dialogue: '', delivery: 'natural', dialogueAuto: false,
   })
   const perfText = useMemo(() => assemblePerformance(perf).text, [perf])
 
@@ -1282,10 +1353,11 @@ function Dock({ onClose }: { onClose: () => void }) {
             {allOpen ? '⊟' : '⊞'}
           </button>
           <button
-            onClick={() => setExpanded(true)} title="Enlarge panel (Esc to shrink)"
-            className="h-7 w-7 flex items-center justify-center rounded-md" style={{ color: C.muted, background: C.card, border: `1px solid ${C.border}` }}
+            onClick={() => setExpanded(true)} title="Enlarge panel for a bigger workspace (Esc to shrink)"
+            className="flex items-center gap-1 px-2.5 py-1.5 rounded-md text-[11px] font-semibold"
+            style={{ color: '#fff', background: C.blue }}
           >
-            <Maximize2 size={13} />
+            <Maximize2 size={13} />Enlarge
           </button>
           <button onClick={onClose} className="h-7 w-7 flex items-center justify-center rounded-md" style={{ color: C.muted }} title="Close">
             <X size={16} />
@@ -1381,17 +1453,17 @@ function Dock({ onClose }: { onClose: () => void }) {
 
 /* ---- Self-mounting launcher ---------------------------------------------- */
 export function PromptManagerPro() {
-  const [open, setOpen] = useState(true)
+  const open = usePromptManagerProOpen()
   if (!open) {
     return (
       <button
-        onClick={() => setOpen(true)} title="Open Prompt Manager Pro"
-        className="fixed bottom-4 right-4 z-[55] flex items-center gap-1.5 rounded-full px-3.5 py-2 text-xs font-semibold shadow-lg"
-        style={{ background: C.blue, color: '#fff' }}
+        onClick={() => setPromptManagerProOpen(true)} title="Open Prompt Manager Pro"
+        className="fixed top-1/2 -translate-y-1/2 right-0 z-[55] flex items-center justify-center"
+        style={{ width: 24, height: 84, background: C.blue, color: '#fff', borderRadius: '8px 0 0 8px', boxShadow: '-3px 0 10px rgba(0,0,0,0.35)' }}
       >
-        <Wand2 size={14} />Prompt Manager Pro
+        <ChevronRight size={18} style={{ transform: 'rotate(180deg)' }} />
       </button>
     )
   }
-  return <Dock onClose={() => setOpen(false)} />
+  return <Dock onClose={() => setPromptManagerProOpen(false)} />
 }

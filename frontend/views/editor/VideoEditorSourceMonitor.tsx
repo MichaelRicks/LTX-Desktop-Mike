@@ -6,6 +6,7 @@ import { Tooltip } from '../../components/ui/tooltip'
 import { pathToFileUrl } from '../../lib/file-url'
 import { selectHasSourceAsset } from './editor-selectors'
 import { useEditorActions, useEditorStore } from './editor-store'
+import { isDroppedMediaEvent, readDroppedMediaAsset } from './dropped-media-asset'
 
 export type SourceKeyboardAction =
   | 'transport.playPause'
@@ -51,7 +52,11 @@ function getLoopRange(sourceIn: number | null, sourceOut: number | null, duratio
     : { start: end, end: start }
 }
 
-export const VideoEditorSourceMonitor = React.forwardRef<VideoEditorSourceMonitorHandle>(function VideoEditorSourceMonitor(_props, ref) {
+export interface VideoEditorSourceMonitorProps {
+  currentProjectId?: string | null
+}
+
+export const VideoEditorSourceMonitor = React.forwardRef<VideoEditorSourceMonitorHandle, VideoEditorSourceMonitorProps>(function VideoEditorSourceMonitor({ currentProjectId = null }, ref) {
   const {
     closeSourceMonitor,
     insertSourceEdit,
@@ -375,7 +380,15 @@ export const VideoEditorSourceMonitor = React.forwardRef<VideoEditorSourceMonito
         </Tooltip>
       </div>
 
-      <div className="flex-1 relative overflow-hidden bg-black flex items-center justify-center min-h-0">
+      <div
+        className="flex-1 relative overflow-hidden bg-black flex items-center justify-center min-h-0"
+        onDragOver={(e) => { if (isDroppedMediaEvent(e)) { e.preventDefault(); e.dataTransfer.dropEffect = 'copy' } }}
+        onDrop={(e) => {
+          if (!isDroppedMediaEvent(e)) return
+          e.preventDefault()
+          void readDroppedMediaAsset(e, currentProjectId).then((asset) => { if (asset) openAsset(asset) })
+        }}
+      >
         {sourceAsset ? (
           <>
             {sourceAsset.type === 'video' ? (

@@ -6,8 +6,11 @@
  * permission dance — it's the real filesystem.
  */
 import { useEffect, useRef, useState } from 'react'
-import { ChevronLeft, Film, Folder, FolderPlus, FolderOpen, GripVertical, Pencil, RefreshCw, Trash2, Upload, X } from 'lucide-react'
+import { ChevronLeft, Folder, FolderPlus, FolderOpen, GripVertical, Pencil, RefreshCw, Send, Trash2, Upload, X } from 'lucide-react'
 import { pathToFileUrl } from '../../lib/file-url'
+import { useProjects } from '../../contexts/ProjectContext'
+import { MediaThumb } from './MediaThumb'
+import { useDownloadsBrowserOpen, setDownloadsBrowserOpen } from './downloads-browser-store'
 
 const C = {
   panel: '#0e0e12', card: '#16161b', elev: '#1c1c22',
@@ -16,9 +19,9 @@ const C = {
   blue: '#1f8fff', green: '#28c76f',
 }
 
-interface LibFile { folder: string; name: string; path: string; isVideo: boolean }
+export interface LibFile { folder: string; name: string; path: string; isVideo: boolean }
 const ORDER_KEY = 'gpm_dl_order'
-const FILE_DND = 'application/x-gpm-dl-file'
+export const FILE_DND = 'application/x-gpm-dl-file'
 const FOLDER_DND = 'application/x-gpm-dl-folder'
 
 function loadOrder(): string[] { try { return JSON.parse(localStorage.getItem(ORDER_KEY) || '[]') as string[] } catch { return [] } }
@@ -29,6 +32,7 @@ function applyOrder(folders: string[]): string[] {
 }
 
 function Dock({ onClose }: { onClose: () => void }) {
+  const { setGenSpaceInputImagePath, setCurrentTab } = useProjects()
   const [folders, setFolders] = useState<string[]>([])
   const [files, setFiles] = useState<LibFile[]>([])
   const [active, setActive] = useState<string>('')
@@ -36,6 +40,9 @@ function Dock({ onClose }: { onClose: () => void }) {
   const [renaming, setRenaming] = useState<string | null>(null)
   const [renameVal, setRenameVal] = useState('')
   const [toast, setToast] = useState<string | null>(null)
+  const [moveTarget, setMoveTarget] = useState<LibFile | null>(null)
+  const [moveDest, setMoveDest] = useState('')
+  const [dropLine, setDropLine] = useState<{ target: string; before: boolean } | null>(null)
   const dragFolder = useRef<string | null>(null)
   const flash = (m: string) => { setToast(m); setTimeout(() => setToast(null), 1600) }
 
@@ -86,14 +93,31 @@ function Dock({ onClose }: { onClose: () => void }) {
     const r = await api.gpmLibDeleteFile({ folder: f.folder, name: f.name })
     if (r.success) await refresh(); else flash(r.error)
   }
+  const sendToGenSpace = (f: LibFile) => {
+    if (f.isVideo) return
+    setGenSpaceInputImagePath(f.path)
+    setCurrentTab('gen-space')
+    flash('Sent to Gen Space')
+  }
+  const openMove = (f: LibFile) => {
+    setMoveTarget(f)
+    setMoveDest(folders.find((x) => x !== f.folder) ?? '')
+  }
+  const confirmMove = async () => {
+    if (!moveTarget || !moveDest) return
+    await moveFile(moveTarget, moveDest)
+    setMoveTarget(null)
+  }
 
-  // Drag-reorder folders.
-  const onFolderDrop = (target: string) => {
+  // Drag-reorder folders, with a blue drop-line indicator like the extension.
+  const onFolderDrop = (target: string, before: boolean) => {
     const dragged = dragFolder.current
     dragFolder.current = null
+    setDropLine(null)
     if (!dragged || dragged === target) return
     const order = folders.filter((f) => f !== dragged)
-    const idx = order.indexOf(target)
+    let idx = order.indexOf(target)
+    if (!before) idx += 1
     order.splice(idx, 0, dragged)
     saveOrder(order); setFolders(order)
   }
@@ -126,15 +150,32 @@ function Dock({ onClose }: { onClose: () => void }) {
               key={f}
               draggable
               onDragStart={(e) => { dragFolder.current = f; e.dataTransfer.setData(FOLDER_DND, f); e.dataTransfer.effectAllowed = 'move' }}
-              onDragOver={(e) => { if (e.dataTransfer.types.includes(FOLDER_DND) || e.dataTransfer.types.includes(FILE_DND)) e.preventDefault() }}
+              onDragEnd={() => { dragFolder.current = null; setDropLine(null) }}
+              onDragOver={(e) => {
+                if (!e.dataTransfer.types.includes(FOLDER_DND) && !e.dataTransfer.types.includes(FILE_DND)) return
+                e.preventDefault()
+                if (dragFolder.current && dragFolder.current !== f) {
+                  const r = e.currentTarget.getBoundingClientRect()
+                  const before = e.clientY - r.top < r.height / 2
+                  setDropLine({ target: f, before })
+                }
+              }}
+              onDragLeave={() => setDropLine((d) => (d?.target === f ? null : d))}
               onDrop={(e) => {
+                e.preventDefault()
                 if (e.dataTransfer.types.includes(FILE_DND)) { const d = JSON.parse(e.dataTransfer.getData(FILE_DND)) as LibFile; void moveFile(d, f) }
-                else onFolderDrop(f)
+                else if (dragFolder.current) onFolderDrop(f, dropLine?.before ?? true)
               }}
               onClick={() => setActive(f)}
-              className="flex items-center gap-1.5 px-3 py-2 cursor-pointer group"
+              className="relative flex items-center gap-1.5 px-3 py-2 cursor-pointer group"
               style={{ background: isActive ? 'rgba(31,143,255,0.12)' : 'transparent', borderLeft: `2px solid ${isActive ? C.blue : 'transparent'}` }}
             >
+              {dropLine?.target === f && (
+                <div
+                  className="absolute left-0 right-0 z-10 pointer-events-none"
+                  style={{ [dropLine.before ? 'top' : 'bottom']: -1, height: 2, background: C.blue, boxShadow: `0 0 4px ${C.blue}` }}
+                />
+              )}
               <GripVertical size={12} style={{ color: C.faint, cursor: 'grab' }} />
               <Folder size={13} style={{ color: isActive ? C.blue : C.muted }} />
               {renaming === f ? (
@@ -160,36 +201,72 @@ function Dock({ onClose }: { onClose: () => void }) {
         {activeFiles.length === 0
           ? <p className="text-[11px] text-center py-6" style={{ color: C.faint }}>Empty. Add files or drag media here.</p>
           : (
-            <div className="grid grid-cols-3 gap-2">
+            <div className="grid grid-cols-2 gap-2">
               {activeFiles.map((f) => (
-                <div
-                  key={f.path} draggable
-                  onDragStart={(e) => { e.dataTransfer.setData(FILE_DND, JSON.stringify(f)); e.dataTransfer.effectAllowed = 'move' }}
-                  className="rounded-md overflow-hidden relative group" style={{ aspectRatio: '1', background: '#000', border: `1px solid ${C.border}` }} title={f.name}
+                <MediaThumb
+                  key={f.path} src={pathToFileUrl(f.path)} isVideo={f.isVideo} name={f.name}
+                  className="rounded-md" style={{ border: `1px solid ${C.border}` }}
+                  draggable
+                  onDragStart={(e) => { e.dataTransfer.setData(FILE_DND, JSON.stringify(f)); e.dataTransfer.effectAllowed = 'copyMove' }}
                 >
-                  {f.isVideo
-                    ? <span className="w-full h-full flex items-center justify-center"><Film size={20} style={{ color: C.muted }} /></span>
-                    : <img src={pathToFileUrl(f.path)} alt={f.name} loading="lazy" className="w-full h-full object-cover" draggable={false} />}
-                  <button onClick={() => void deleteFile(f)} title="Delete" className="absolute top-1 right-1 h-5 w-5 flex items-center justify-center rounded opacity-0 group-hover:opacity-100" style={{ background: 'rgba(0,0,0,0.6)', color: '#fff' }}><Trash2 size={11} /></button>
-                </div>
+                  <div className="absolute top-1 right-1 flex gap-1 opacity-0 group-hover:opacity-100">
+                    {!f.isVideo && (
+                      <button onClick={() => sendToGenSpace(f)} title="Send to Gen Space as input image" className="h-5 w-5 flex items-center justify-center rounded" style={{ background: C.green, color: '#fff' }}><Send size={11} /></button>
+                    )}
+                    <button onClick={() => openMove(f)} title="Move to folder…" className="h-5 w-5 flex items-center justify-center rounded" style={{ background: 'rgba(0,0,0,0.6)', color: '#fff' }}><FolderOpen size={11} /></button>
+                    <button onClick={() => void deleteFile(f)} title="Delete" className="h-5 w-5 flex items-center justify-center rounded" style={{ background: 'rgba(0,0,0,0.6)', color: '#fff' }}><Trash2 size={11} /></button>
+                  </div>
+                </MediaThumb>
               ))}
             </div>
           )}
       </div>
 
       {toast && <div className="absolute left-1/2 bottom-4 -translate-x-1/2 px-3 py-2 rounded-lg text-xs" style={{ background: C.elev, border: `1px solid ${C.borderLt}`, color: C.text }}>{toast}</div>}
+
+      <button
+        onClick={onClose} title="Close Downloads Browser"
+        className="fixed top-1/2 -translate-y-1/2 z-[56] flex items-center justify-center"
+        style={{ left: 340, width: 16, height: 84, background: C.blue, color: '#fff', borderRadius: '0 8px 8px 0', boxShadow: '3px 0 10px rgba(0,0,0,0.35)' }}
+      >
+        <ChevronLeft size={14} />
+      </button>
+
+      {moveTarget && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center" style={{ background: 'rgba(0,0,0,0.55)' }} onClick={() => setMoveTarget(null)}>
+          <div
+            className="rounded-lg p-4 w-[280px]" style={{ background: C.card, border: `1px solid ${C.borderLt}`, boxShadow: '0 20px 50px rgba(0,0,0,0.6)' }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <p className="text-sm font-semibold mb-2" style={{ color: C.text }}>Move To Folder…</p>
+            <p className="text-xs mb-1 truncate" style={{ color: C.text }}>"{moveTarget.name}"</p>
+            <p className="text-[11px] mb-3" style={{ color: C.muted }}>From: <span style={{ color: C.blue }}>{moveTarget.folder}</span></p>
+            <select
+              value={moveDest} onChange={(e) => setMoveDest(e.target.value)}
+              className="w-full rounded-md px-2 py-1.5 text-xs outline-none mb-3"
+              style={{ background: C.elev, color: C.text, border: `1px solid ${C.border}` }}
+            >
+              {folders.filter((f) => f !== moveTarget.folder).map((f) => <option key={f} value={f}>{f}</option>)}
+            </select>
+            <div className="flex justify-end gap-2">
+              <button onClick={() => setMoveTarget(null)} className="rounded-md px-3 py-1.5 text-xs font-medium" style={{ background: C.elev, color: C.text, border: `1px solid ${C.border}` }}>Cancel</button>
+              <button onClick={() => void confirmMove()} disabled={!moveDest} className="rounded-md px-3 py-1.5 text-xs font-medium disabled:opacity-40" style={{ background: C.blue, color: '#fff' }}>Move</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
 
 export function DownloadsBrowser() {
-  const [open, setOpen] = useState(false)
+  const open = useDownloadsBrowserOpen()
   if (!open) {
     return (
-      <button onClick={() => setOpen(true)} title="Open Downloads Browser" className="fixed top-1/2 -translate-y-1/2 left-0 flex items-center justify-center" style={{ width: 24, height: 84, background: C.blue, color: '#fff', borderRadius: '0 8px 8px 0', boxShadow: '3px 0 10px rgba(0,0,0,0.35)' }}>
+      <button onClick={() => setDownloadsBrowserOpen(true)} title="Open Downloads Browser" className="fixed top-1/2 -translate-y-1/2 left-0 flex items-center justify-center" style={{ width: 24, height: 84, background: C.blue, color: '#fff', borderRadius: '0 8px 8px 0', boxShadow: '3px 0 10px rgba(0,0,0,0.35)' }}>
         <ChevronLeft size={18} style={{ transform: 'rotate(180deg)' }} />
       </button>
     )
   }
-  return <Dock onClose={() => setOpen(false)} />
+  return <Dock onClose={() => setDownloadsBrowserOpen(false)} />
 }

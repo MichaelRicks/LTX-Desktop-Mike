@@ -337,11 +337,13 @@ export function selectActiveTimelineOutPoint(state: EditorState): number | null 
   return selectActiveTimelineInOutRange(state).outPoint
 }
 
+/** End of the last clip on the timeline, with no padding — used to stop playback at content end. */
+export function selectContentEnd(state: EditorState): number {
+  return selectClips(state).reduce((max, clip) => Math.max(max, clip.startTime + clip.duration), 0)
+}
+
 export function selectTotalDuration(state: EditorState): number {
-  return Math.max(
-    selectClips(state).reduce((max, clip) => Math.max(max, clip.startTime + clip.duration), 0),
-    30,
-  )
+  return Math.max(selectContentEnd(state), 30)
 }
 
 export function selectZoom(state: EditorState): number {

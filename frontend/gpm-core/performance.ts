@@ -163,6 +163,44 @@ export const PERF_FAMILIES: PerfFamily[] = [
   ] },
 ];
 
+/**
+ * Per-family default dialogue — pre-filled into the dialogue box for each
+ * emotion (and injected) until the user clicks to type their own. Strings for
+ * matching families come from the Grok extension; the rest are authored to fit.
+ */
+export const PERF_DEFAULT_DIALOGUE: Record<string, string> = {
+  Sadness: "I don't know how to do this without you.",
+  Fear: "Something's wrong. I can feel it.",
+  Anger: "Don't ever say that to me again.",
+  Joy: "I can't believe this is real.",
+  Surprise: 'Wait — what did you just say?',
+  Disgust: "I can't even look at this.",
+  Determination: "Move. I'm not asking again.",
+  Tenderness: "Hey. I've got you.",
+  Awe: 'Are you seeing this?',
+  Sinister: "Oh, we're going to have so much fun.",
+  Hope: 'Do you really think so?',
+  Exhaustion: "I just... I can't right now.",
+  Longing: 'I keep reaching for you, and you are never there.',
+  Pride: 'I did that. Me.',
+  Shame: 'Can we just— forget I said that?',
+  Guilt: 'I should have told you sooner.',
+  Contempt: "You actually thought I'd believe that.",
+  Envy: "No, it's fine. I'm happy for you.",
+  Confusion: "That doesn't make any sense.",
+  Boredom: 'Are we done yet?',
+  Anticipation: 'Any second now. Any second.',
+  Relief: 'Oh thank god. Thank god.',
+  Nostalgia: 'We were really something back then.',
+  Curiosity: 'Wait... what is that?',
+};
+
+/** Default dialogue for a family index (empty string if none). */
+export function defaultDialogueForFamily(familyIndex: number): string {
+  const fam = PERF_FAMILIES[familyIndex]
+  return fam ? (PERF_DEFAULT_DIALOGUE[fam.family] ?? '') : ''
+}
+
 const lerp = (a: number, b: number, t: number): number => a + (b - a) * t;
 
 interface WaypointPair {

@@ -325,6 +325,10 @@ export const electronAPISchemas = {
   gpmLibMoveFile: { input: z.object({ fromFolder: z.string(), name: z.string(), toFolder: z.string() }), output: emptyResult },
   gpmLibDeleteFile: { input: z.object({ folder: z.string(), name: z.string() }), output: emptyResult },
   gpmLibReveal: { input: z.object({ folder: z.string().optional() }), output: emptyResult },
+  gpmLibReadAsDataUrl: {
+    input: z.object({ path: z.string() }),
+    output: ipcResult({ dataUrl: z.string() }),
+  },
 } as const
 
 type Schemas = typeof electronAPISchemas

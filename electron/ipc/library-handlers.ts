@@ -12,6 +12,11 @@ import { handle } from './typed-handle'
 
 const MEDIA_EXT = new Set(['.png', '.jpg', '.jpeg', '.webp', '.gif', '.bmp', '.mp4', '.webm', '.mkv', '.mov', '.avi'])
 const VIDEO_EXT = new Set(['.mp4', '.webm', '.mkv', '.mov', '.avi'])
+const MIME_BY_EXT: Record<string, string> = {
+  '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp',
+  '.gif': 'image/gif', '.bmp': 'image/bmp',
+  '.mp4': 'video/mp4', '.webm': 'video/webm', '.mkv': 'video/x-matroska', '.mov': 'video/quicktime', '.avi': 'video/x-msvideo',
+}
 
 function libRoot(): string {
   const root = path.join(app.getPath('downloads'), 'PromptManagerPro')
@@ -113,5 +118,17 @@ export function registerLibraryHandlers(): void {
   handle('gpmLibReveal', ({ folder }) => {
     try { void shell.openPath(folder ? folderPath(folder) : libRoot()); return { success: true as const } }
     catch (e) { logger.warn(`gpmLibReveal failed: ${e}`); return { success: false as const, error: 'reveal failed' } }
+  })
+
+  handle('gpmLibReadAsDataUrl', ({ path: p }) => {
+    try {
+      validatePath(p, getAllowedRoots())
+      const ext = path.extname(p).toLowerCase()
+      const mime = MIME_BY_EXT[ext] ?? 'application/octet-stream'
+      const b64 = fs.readFileSync(p).toString('base64')
+      return { success: true as const, dataUrl: `data:${mime};base64,${b64}` }
+    } catch (e) {
+      return { success: false as const, error: e instanceof Error ? e.message : 'read failed' }
+    }
   })
 }

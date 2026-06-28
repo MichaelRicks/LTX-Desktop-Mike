@@ -22,6 +22,8 @@ import { useAppSettings } from '../../contexts/AppSettingsContext'
 import { useVideoGenerationModelSpecs } from '../../hooks/use-video-generation-model-specs'
 import type { GenerationError } from '../../lib/generation-errors'
 import { addVisualAssetToProject } from '../../lib/asset-copy'
+import { GPM_IMAGE_DND_TYPE } from '../../components/gpm/gpm-image-file'
+import { FILE_DND } from '../../components/gpm/DownloadsBrowser'
 import { GapGenerationModal } from './GapGenerationModal'
 import { ClipContextMenu, type ClipContextMenuState } from './ClipContextMenu'
 import type { TimelineClip, Track, SubtitleClip, Asset, TextOverlayStyle } from '../../types/project-model'
@@ -2199,8 +2201,14 @@ export function VideoEditorTimelineEditingPanel(props: VideoEditorTimelineEditin
                   }}
                   className="relative"
                   onDragOver={(e) => {
-                    // Allow asset/timeline drops anywhere on the timeline area
-                    if (e.dataTransfer.types.includes('assetid') || e.dataTransfer.types.includes('assetids') || e.dataTransfer.types.includes('asset') || e.dataTransfer.types.includes('timeline')) {
+                    // Allow asset/timeline drops anywhere on the timeline area, including
+                    // images/videos dragged from the Prompt Manager Pro Downloads Browser
+                    // or Images tab.
+                    if (
+                      e.dataTransfer.types.includes('assetid') || e.dataTransfer.types.includes('assetids')
+                      || e.dataTransfer.types.includes('asset') || e.dataTransfer.types.includes('timeline')
+                      || e.dataTransfer.types.includes(FILE_DND) || e.dataTransfer.types.includes(GPM_IMAGE_DND_TYPE)
+                    ) {
                       e.preventDefault()
                       e.dataTransfer.dropEffect = 'copy'
                     }
