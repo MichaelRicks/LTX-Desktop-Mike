@@ -77,6 +77,7 @@ interface UseTimelineDragParams {
   resolveClipPath: (clip: TimelineClip | null) => string
   getMaxClipDuration: (clip: TimelineClip) => number
   addClipToTimeline: (asset: Asset, trackIndex: number, startTime?: number) => void
+  addAssetToEditor: (asset: Asset) => void
   assets: Asset[]
   timelines: any[]
   activeTimeline: any
@@ -102,7 +103,7 @@ export function useTimelineDrag(params: UseTimelineDragParams) {
     clips, setClips, tracks,
     selectedClipIds, setSelectedClipIds,
     currentTime, setCurrentTime, setIsPlaying,
-    snapEnabled, getMaxClipDuration, addClipToTimeline,
+    snapEnabled, getMaxClipDuration, addClipToTimeline, addAssetToEditor,
     assets, timelines, activeTimeline, currentProjectId,
     timelineRef, trackContainerRef,
     orderedTracks, getTrackHeight, trackTopPx,
@@ -1037,7 +1038,9 @@ export function useTimelineDrag(params: UseTimelineDragParams) {
       const x = e.clientX - rect.left + scrollLeft
       const startTime = Math.max(0, x / pixelsPerSecond)
       void readDroppedMediaAsset(e, currentProjectId).then((asset) => {
-        if (asset) addClipToTimeline(asset, trackIndex, startTime)
+        if (!asset) return
+        addAssetToEditor(asset)
+        addClipToTimeline(asset, trackIndex, startTime)
       })
       return
     }

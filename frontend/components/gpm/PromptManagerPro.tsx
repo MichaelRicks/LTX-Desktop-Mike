@@ -750,7 +750,7 @@ function ImagePicker({ library, onPick, onClose }: { library: GpmImage[]; onPick
   const [q, setQ] = useState('')
   const items = library.filter((im) => !q || im.name.toLowerCase().includes(q.trim().toLowerCase()))
   return (
-    <div className="fixed inset-0 z-[60] flex items-center justify-center p-6" style={{ background: 'rgba(0,0,0,0.6)' }} onClick={onClose}>
+    <div className="fixed inset-0 z-[80] flex items-center justify-center p-6" style={{ background: 'rgba(0,0,0,0.6)' }} onClick={onClose}>
       <div
         className="w-full max-w-md rounded-xl flex flex-col overflow-hidden"
         style={{ maxHeight: '80%', background: C.panel, border: `1px solid ${C.borderLt}` }}
@@ -1319,7 +1319,7 @@ function Dock({ onClose }: { onClose: () => void }) {
 
   return (
     <div
-      className="fixed top-0 right-0 z-[55] h-screen w-[396px] flex flex-col"
+      className="fixed top-0 right-0 z-[75] h-screen w-[396px] flex flex-col"
       style={{ background: C.panel, borderLeft: `1px solid ${C.border}`, boxShadow: '-8px 0 24px rgba(0,0,0,0.4)' }}
     >
       {/* Side tab on the left edge (centered) to collapse the panel. */}
@@ -1397,7 +1397,7 @@ function Dock({ onClose }: { onClose: () => void }) {
 
       {expanded && (
         <div
-          className="fixed inset-0 z-[60] flex items-center justify-center p-8"
+          className="fixed inset-0 z-[80] flex items-center justify-center p-8"
           style={{ background: 'rgba(0,0,0,0.6)' }}
           onClick={() => setExpanded(false)}
         >
@@ -1458,7 +1458,7 @@ export function PromptManagerPro() {
     return (
       <button
         onClick={() => setPromptManagerProOpen(true)} title="Open Prompt Manager Pro"
-        className="fixed top-1/2 -translate-y-1/2 right-0 z-[55] flex items-center justify-center"
+        className="fixed top-1/2 -translate-y-1/2 right-0 z-[75] flex items-center justify-center"
         style={{ width: 24, height: 84, background: C.blue, color: '#fff', borderRadius: '8px 0 0 8px', boxShadow: '-3px 0 10px rgba(0,0,0,0.35)' }}
       >
         <ChevronRight size={18} style={{ transform: 'rotate(180deg)' }} />

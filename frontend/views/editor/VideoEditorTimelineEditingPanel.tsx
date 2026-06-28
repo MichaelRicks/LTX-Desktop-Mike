@@ -343,6 +343,10 @@ export function VideoEditorTimelineEditingPanel(props: VideoEditorTimelineEditin
     actions.insertAssetsToTimeline({ assets: [asset], trackIndex, startTime })
   }, [actions])
 
+  const addAssetToEditor = useCallback((asset: Asset) => {
+    actions.addAssetToEditor(asset)
+  }, [actions])
+
   const resolveClipPath = useCallback((clip: TimelineClip | null) => {
     return clip ? selectClipPathFromAssets(assets, clip) : ''
   }, [assets])
@@ -1099,7 +1103,7 @@ export function VideoEditorTimelineEditingPanel(props: VideoEditorTimelineEditin
     clips, setClips, tracks,
     selectedClipIds, setSelectedClipIds,
     currentTime, setCurrentTime, setIsPlaying,
-    snapEnabled, resolveClipPath, getMaxClipDuration, addClipToTimeline,
+    snapEnabled, resolveClipPath, getMaxClipDuration, addClipToTimeline, addAssetToEditor,
     assets, timelines, activeTimeline, currentProjectId,
     timelineRef, trackContainerRef,
     orderedTracks, getTrackHeight, trackTopPx, cutPoints,

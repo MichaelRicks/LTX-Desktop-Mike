@@ -125,7 +125,7 @@ function Dock({ onClose }: { onClose: () => void }) {
   const activeFiles = files.filter((f) => f.folder === active)
 
   return (
-    <div className="fixed top-0 left-0 z-[55] h-screen w-[340px] flex flex-col" style={{ background: C.panel, borderRight: `1px solid ${C.border}`, boxShadow: '8px 0 24px rgba(0,0,0,0.4)' }}>
+    <div className="fixed top-0 left-0 z-[75] h-screen w-[340px] flex flex-col" style={{ background: C.panel, borderRight: `1px solid ${C.border}`, boxShadow: '8px 0 24px rgba(0,0,0,0.4)' }}>
       <div className="flex items-center justify-between px-4 py-3 shrink-0" style={{ borderBottom: `1px solid ${C.border}` }}>
         <span className="flex items-center gap-2 text-sm font-semibold" style={{ color: C.text }}><FolderOpen size={15} style={{ color: C.blue }} />Downloads</span>
         <div className="flex items-center gap-1">
@@ -226,14 +226,14 @@ function Dock({ onClose }: { onClose: () => void }) {
 
       <button
         onClick={onClose} title="Close Downloads Browser"
-        className="fixed top-1/2 -translate-y-1/2 z-[56] flex items-center justify-center"
+        className="fixed top-1/2 -translate-y-1/2 z-[76] flex items-center justify-center"
         style={{ left: 340, width: 16, height: 84, background: C.blue, color: '#fff', borderRadius: '0 8px 8px 0', boxShadow: '3px 0 10px rgba(0,0,0,0.35)' }}
       >
         <ChevronLeft size={14} />
       </button>
 
       {moveTarget && (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center" style={{ background: 'rgba(0,0,0,0.55)' }} onClick={() => setMoveTarget(null)}>
+        <div className="fixed inset-0 z-[80] flex items-center justify-center" style={{ background: 'rgba(0,0,0,0.55)' }} onClick={() => setMoveTarget(null)}>
           <div
             className="rounded-lg p-4 w-[280px]" style={{ background: C.card, border: `1px solid ${C.borderLt}`, boxShadow: '0 20px 50px rgba(0,0,0,0.6)' }}
             onClick={(e) => e.stopPropagation()}

@@ -785,6 +785,7 @@ function VideoEditorWithStore({
                   regeneratingAssetId={regeneratingAssetId}
                   regenProgress={regenProgress}
                   regenStatusMessage={regenStatusMessage}
+                  currentProjectId={currentProjectId}
                 />
               </Panel>
               <Separator className="h-1 flex-shrink-0 cursor-row-resize bg-transparent hover:bg-blue-500/40 active:bg-blue-500/60 transition-colors relative z-10" />

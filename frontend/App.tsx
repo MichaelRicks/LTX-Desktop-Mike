@@ -20,7 +20,7 @@ import { Button } from './components/ui/button'
 import { PromptManagerPro } from './components/gpm/PromptManagerPro'
 import { DownloadsBrowser } from './components/gpm/DownloadsBrowser'
 import { useDownloadsBrowserOpen, getDownloadsBrowserOpen, setDownloadsBrowserOpen } from './components/gpm/downloads-browser-store'
-import { getPromptManagerProOpen, setPromptManagerProOpen } from './components/gpm/prompt-manager-pro-store'
+import { usePromptManagerProOpen, getPromptManagerProOpen, setPromptManagerProOpen } from './components/gpm/prompt-manager-pro-store'
 
 type SetupState = 'loading' | { needsSetup: boolean; needsLicense: boolean }
 type RequiredModelsGateState = 'checking' | 'missing' | 'ready'
@@ -30,6 +30,7 @@ type LtxUpgradeRecommendation = Extract<LtxRecommendation, { status: 'upgrade' }
 function AppContent() {
   const { currentView } = useView()
   const downloadsBrowserOpen = useDownloadsBrowserOpen()
+  const promptManagerProOpen = usePromptManagerProOpen()
 
   // Tab toggles both Prompt Manager Pro panels closed/open together — like
   // Photoshop/Premiere's "hide all panels" — restoring whichever side(s) were
@@ -549,8 +550,8 @@ function AppContent() {
   return (
     <div className="relative h-screen w-screen">
       <div
-        className="h-full w-full transition-[margin-left] duration-150"
-        style={{ marginLeft: downloadsBrowserOpen ? 340 : 0 }}
+        className="h-full w-full transition-[margin-left,margin-right] duration-150"
+        style={{ marginLeft: downloadsBrowserOpen ? 340 : 0, marginRight: promptManagerProOpen ? 396 : 0 }}
       >
         {renderView()}
       </div>

@@ -58,6 +58,7 @@ export interface VideoEditorSourceMonitorProps {
 
 export const VideoEditorSourceMonitor = React.forwardRef<VideoEditorSourceMonitorHandle, VideoEditorSourceMonitorProps>(function VideoEditorSourceMonitor({ currentProjectId = null }, ref) {
   const {
+    addAssetToEditor,
     closeSourceMonitor,
     insertSourceEdit,
     overwriteSourceEdit,
@@ -386,7 +387,11 @@ export const VideoEditorSourceMonitor = React.forwardRef<VideoEditorSourceMonito
         onDrop={(e) => {
           if (!isDroppedMediaEvent(e)) return
           e.preventDefault()
-          void readDroppedMediaAsset(e, currentProjectId).then((asset) => { if (asset) openAsset(asset) })
+          void readDroppedMediaAsset(e, currentProjectId).then((asset) => {
+            if (!asset) return
+            addAssetToEditor(asset)
+            openAsset(asset)
+          })
         }}
       >
         {sourceAsset ? (

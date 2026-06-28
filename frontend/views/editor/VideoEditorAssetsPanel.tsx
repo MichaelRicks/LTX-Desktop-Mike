@@ -17,6 +17,7 @@ import { pathToFileUrl } from '../../lib/file-url'
 import type { AssetListFilters } from './editor-state'
 import { equalAssetBins, selectAssetBins, selectAssets, selectVisibleAssets } from './editor-selectors'
 import { useEditorActions, useEditorStore } from './editor-store'
+import { isDroppedMediaEvent, readDroppedMediaAsset } from './dropped-media-asset'
 
 export interface VideoEditorAssetsPanelHandle {
   revealAsset: (assetId: string) => void
@@ -32,6 +33,7 @@ export interface VideoEditorAssetsPanelProps {
   regeneratingAssetId: string | null
   regenProgress: number
   regenStatusMessage: string
+  currentProjectId?: string | null
 }
 
 export const VideoEditorAssetsPanel = forwardRef<VideoEditorAssetsPanelHandle, VideoEditorAssetsPanelProps>(function VideoEditorAssetsPanel(props, ref) {
@@ -44,6 +46,7 @@ export const VideoEditorAssetsPanel = forwardRef<VideoEditorAssetsPanelHandle, V
     regeneratingAssetId,
     regenProgress,
     regenStatusMessage,
+    currentProjectId = null,
   } = props
   const actions = useEditorActions()
   const assets = useEditorStore(selectAssets)
@@ -714,6 +717,14 @@ export const VideoEditorAssetsPanel = forwardRef<VideoEditorAssetsPanelHandle, V
         <div
           className="flex-1 overflow-auto p-3 pt-0 relative select-none"
           ref={assetGridRef}
+          onDragOver={(e) => { if (isDroppedMediaEvent(e)) { e.preventDefault(); e.dataTransfer.dropEffect = 'copy' } }}
+          onDrop={(e) => {
+            if (!isDroppedMediaEvent(e)) return
+            e.preventDefault()
+            void readDroppedMediaAsset(e, currentProjectId).then((asset) => {
+              if (asset) actions.addAssetToEditor(asset)
+            })
+          }}
           onMouseDown={(e) => {
             if ((e.target as HTMLElement).closest('[data-asset-card]')) return
             if (e.button !== 0) return

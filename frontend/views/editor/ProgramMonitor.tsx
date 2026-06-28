@@ -429,6 +429,7 @@ export const ProgramMonitor = React.forwardRef<ProgramMonitorHandle, ProgramMoni
   currentProjectId = null,
 }: ProgramMonitorProps, ref) {
   const {
+    addAssetToEditor,
     clearClipSelection,
     clearTimelineMarks,
     insertAssetsToTimeline,
@@ -1160,7 +1161,9 @@ export const ProgramMonitor = React.forwardRef<ProgramMonitorHandle, ProgramMoni
             if (!isDroppedMediaEvent(e)) return
             e.preventDefault()
             void readDroppedMediaAsset(e, currentProjectId).then((asset) => {
-              if (asset) insertAssetsToTimeline({ assets: [asset], trackIndex: 0, startTime: currentTime })
+              if (!asset) return
+              addAssetToEditor(asset)
+              insertAssetsToTimeline({ assets: [asset], trackIndex: 0, startTime: currentTime })
             })
           }}
           onMouseDown={(e) => {
