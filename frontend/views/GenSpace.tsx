@@ -535,7 +535,7 @@ function PromptBar({
         {/* Input image drop zone — video mode only (I2V) */}
         {mode === 'video' && !isRetake && !isIcLora && (
           <div
-            className={`relative w-10 h-10 mx-2 mt-2 rounded-lg border-2 border-dashed transition-colors flex items-center justify-center flex-shrink-0 cursor-pointer ${
+            className={`relative w-20 h-20 mx-2 mt-2 rounded-lg border-2 border-dashed transition-colors flex items-center justify-center flex-shrink-0 cursor-pointer ${
               isDragOver ? 'border-blue-500 bg-blue-500/10' : 'border-zinc-700 hover:border-zinc-500'
             }`}
             onDragOver={(e) => { e.preventDefault(); setIsDragOver(true) }}
@@ -548,13 +548,13 @@ function PromptBar({
                 <img src={pathToFileUrl(inputImage)} alt="" className="w-full h-full object-cover rounded-md" />
                 <button
                   onClick={(e) => { e.stopPropagation(); onInputImageChange(null) }}
-                  className="absolute -top-1 -right-1 p-0.5 rounded-full bg-zinc-800 text-zinc-400 hover:text-white z-10"
+                  className="absolute -top-1 -right-1 p-1 rounded-full bg-zinc-800 text-zinc-400 hover:text-white z-10"
                 >
-                  <X className="h-3 w-3" />
+                  <X className="h-3.5 w-3.5" />
                 </button>
               </>
             ) : (
-              <Image className="h-4 w-4 text-zinc-500" />
+              <Image className="h-8 w-8 text-zinc-500" />
             )}
             <input
               ref={inputRef}
@@ -569,7 +569,7 @@ function PromptBar({
         {/* Audio drop zone — only in video mode */}
         {mode === 'video' && !isRetake && !isIcLora && (
           <div
-            className={`relative w-10 h-10 mt-2 rounded-lg border-2 border-dashed transition-colors flex items-center justify-center flex-shrink-0 cursor-pointer ${
+            className={`relative w-20 h-20 mt-2 rounded-lg border-2 border-dashed transition-colors flex items-center justify-center flex-shrink-0 cursor-pointer ${
               isAudioDragOver ? 'border-emerald-500 bg-emerald-500/10' : inputAudio ? 'border-emerald-600' : 'border-zinc-700 hover:border-zinc-500'
             }`}
             onDragOver={(e) => { e.preventDefault(); setIsAudioDragOver(true) }}
@@ -580,16 +580,16 @@ function PromptBar({
           >
             {inputAudio ? (
               <>
-                <Music className="h-4 w-4 text-emerald-400" />
+                <Music className="h-8 w-8 text-emerald-400" />
                 <button
                   onClick={(e) => { e.stopPropagation(); onInputAudioChange(null) }}
-                  className="absolute -top-1 -right-1 p-0.5 rounded-full bg-zinc-800 text-zinc-400 hover:text-white z-10"
+                  className="absolute -top-1 -right-1 p-1 rounded-full bg-zinc-800 text-zinc-400 hover:text-white z-10"
                 >
-                  <X className="h-3 w-3" />
+                  <X className="h-3.5 w-3.5" />
                 </button>
               </>
             ) : (
-              <Music className="h-4 w-4 text-zinc-500" />
+              <Music className="h-8 w-8 text-zinc-500" />
             )}
             <input
               ref={audioInputRef}

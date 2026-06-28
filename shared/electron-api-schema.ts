@@ -315,7 +315,7 @@ export const electronAPISchemas = {
     output: z.object({
       root: z.string(),
       folders: z.array(z.string()),
-      files: z.array(z.object({ folder: z.string(), name: z.string(), path: z.string(), isVideo: z.boolean() })),
+      files: z.array(z.object({ folder: z.string(), name: z.string(), path: z.string(), isVideo: z.boolean(), isAudio: z.boolean() })),
     }),
   },
   gpmLibCreateFolder: { input: z.object({ name: z.string() }), output: emptyResult },

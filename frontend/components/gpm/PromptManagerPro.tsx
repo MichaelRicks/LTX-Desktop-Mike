@@ -8,7 +8,7 @@
  */
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
-  Camera, ChevronRight, Copy, Download, Eraser, Folder, FolderPlus, Image as ImageIcon,
+  Camera, ChevronRight, ChevronsDownUp, ChevronsUpDown, Copy, Download, Eraser, Folder, FolderPlus, Image as ImageIcon,
   Layers, Maximize2, Minimize2, Pencil, Plus, RotateCcw, Save, Search, Send, Trash2, Upload, Wand2, X,
 } from 'lucide-react'
 import {
@@ -106,6 +106,15 @@ function Slider({
   )
 }
 
+/** A solid, thick triangle disclosure indicator — matches the Downloads Browser's folder accordion. */
+function Triangle({ open, color }: { open: boolean; color: string }) {
+  return (
+    <svg width="9" height="9" viewBox="0 0 10 10" style={{ color, transform: open ? 'rotate(90deg)' : 'none', transition: 'transform .12s', flexShrink: 0 }}>
+      <path d="M1 0 L9 5 L1 10 Z" fill="currentColor" />
+    </svg>
+  )
+}
+
 function Section({
   id, title, ctl, right, children,
 }: {
@@ -121,7 +130,7 @@ function Section({
         style={{ background: C.card, color: C.text }}
       >
         <span className="flex items-center gap-1.5">
-          <ChevronRight size={13} style={{ transform: open ? 'rotate(90deg)' : 'none', transition: 'transform .15s', color: C.muted }} />
+          <Triangle open={open} color={open ? C.blue : C.muted} />
           {title}
         </span>
         {right}
@@ -1346,11 +1355,11 @@ function Dock({ onClose }: { onClose: () => void }) {
             <Eraser size={12} />Clear
           </button>
           <button
-            onClick={toggleAll} title="Collapse / expand all sections"
-            className="text-[11px] flex items-center gap-1 px-2 py-1 rounded"
-            style={{ color: C.muted, background: C.card, border: `1px solid ${C.border}` }}
+            onClick={toggleAll} title={allOpen ? 'Collapse all sections' : 'Expand all sections'}
+            className="h-7 w-7 flex items-center justify-center rounded-md"
+            style={{ color: C.muted }}
           >
-            {allOpen ? '⊟' : '⊞'}
+            {allOpen ? <ChevronsDownUp size={14} /> : <ChevronsUpDown size={14} />}
           </button>
           <button
             onClick={() => setExpanded(true)} title="Enlarge panel for a bigger workspace (Esc to shrink)"

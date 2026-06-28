@@ -8,7 +8,7 @@
  * serves every thumbnail without React plumbing.
  */
 
-export interface PreviewMedia { src: string; isVideo: boolean; name?: string }
+export interface PreviewMedia { src: string; isVideo: boolean; isAudio?: boolean; name?: string }
 
 const DELAY_MS = 500
 const MAX = 480
@@ -109,7 +109,13 @@ export function openLightbox(media: PreviewMedia): void {
 
   const stop = (e: Event) => e.stopPropagation()
   const inner = 'max-width:95vw;max-height:92vh;border-radius:8px;box-shadow:0 20px 60px rgba(0,0,0,0.7);'
-  if (media.isVideo) {
+  if (media.isAudio) {
+    const a = document.createElement('audio')
+    a.src = media.src; a.controls = true; a.autoplay = true
+    a.style.cssText = 'width:min(80vw,480px);' + inner; a.onclick = stop
+    overlay.appendChild(a)
+    void a.play().catch(() => {})
+  } else if (media.isVideo) {
     const v = document.createElement('video')
     v.src = media.src; v.controls = true; v.autoplay = true; v.loop = true; v.playsInline = true
     v.style.cssText = inner; v.onclick = stop

@@ -9,7 +9,7 @@ import os from 'os'
 export const APP_FOLDER_NAME = app.isPackaged ? 'LTXDesktop' : 'LTXDesktopMikeDev'
 
 if (!app.isPackaged) {
-  app.setName('LTX Desktop Mike (Dev)')
+  app.setName('LTX Desktop Studio Pro')
 }
 
 function resolveUserDataPath(): string {

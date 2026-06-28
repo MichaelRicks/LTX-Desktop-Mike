@@ -10,12 +10,15 @@ import { handle } from './typed-handle'
 // Lives under the OS Downloads dir (an allowed root) so files are real and the
 // user can open the folder in their file manager.
 
-const MEDIA_EXT = new Set(['.png', '.jpg', '.jpeg', '.webp', '.gif', '.bmp', '.mp4', '.webm', '.mkv', '.mov', '.avi'])
 const VIDEO_EXT = new Set(['.mp4', '.webm', '.mkv', '.mov', '.avi'])
+const AUDIO_EXT = new Set(['.mp3', '.wav', '.ogg', '.aac', '.flac', '.m4a'])
+const IMAGE_EXT = new Set(['.png', '.jpg', '.jpeg', '.webp', '.gif', '.bmp'])
+const MEDIA_EXT = new Set([...IMAGE_EXT, ...VIDEO_EXT, ...AUDIO_EXT])
 const MIME_BY_EXT: Record<string, string> = {
   '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp',
   '.gif': 'image/gif', '.bmp': 'image/bmp',
   '.mp4': 'video/mp4', '.webm': 'video/webm', '.mkv': 'video/x-matroska', '.mov': 'video/quicktime', '.avi': 'video/x-msvideo',
+  '.mp3': 'audio/mpeg', '.wav': 'audio/wav', '.ogg': 'audio/ogg', '.aac': 'audio/aac', '.flac': 'audio/flac', '.m4a': 'audio/mp4',
 }
 
 function libRoot(): string {
@@ -56,14 +59,14 @@ export function registerLibraryHandlers(): void {
       fs.mkdirSync(path.join(root, 'Inbox'), { recursive: true })
       folders = ['Inbox']
     }
-    const files: Array<{ folder: string; name: string; path: string; isVideo: boolean }> = []
+    const files: Array<{ folder: string; name: string; path: string; isVideo: boolean; isAudio: boolean }> = []
     for (const folder of folders) {
       const fp = path.join(root, folder)
       for (const entry of fs.readdirSync(fp, { withFileTypes: true })) {
         if (!entry.isFile()) continue
         const ext = path.extname(entry.name).toLowerCase()
         if (!MEDIA_EXT.has(ext)) continue
-        files.push({ folder, name: entry.name, path: path.join(fp, entry.name), isVideo: VIDEO_EXT.has(ext) })
+        files.push({ folder, name: entry.name, path: path.join(fp, entry.name), isVideo: VIDEO_EXT.has(ext), isAudio: AUDIO_EXT.has(ext) })
       }
     }
     return { root, folders, files }

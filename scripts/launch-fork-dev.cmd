@@ -1,8 +1,8 @@
 @echo off
-title LTX Desktop Mike (Dev)
+title LTX Desktop Studio Pro
 cd /d "D:\Dev\LTX-Desktop"
 echo ============================================================
-echo   Launching LTX Desktop Mike (Dev fork)...
+echo   Launching LTX Desktop Studio Pro (Dev fork)...
 echo   First launch takes ~15-30s (Vite + Electron + backend).
 echo   The app window will open shortly. Keep this window open;
 echo   closing it stops the app.
@@ -11,5 +11,5 @@ echo.
 set "PATH=C:\Program Files\nodejs;%PATH%"
 "C:\Program Files\nodejs\node.exe" "D:\Dev\LTX-Desktop\node_modules\vite\bin\vite.js"
 echo.
-echo (LTX Desktop Mike has stopped. Press any key to close.)
+echo (LTX Desktop Studio Pro has stopped. Press any key to close.)
 pause >nul
