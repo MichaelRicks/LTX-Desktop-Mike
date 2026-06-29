@@ -161,6 +161,34 @@ export const PERF_FAMILIES: PerfFamily[] = [
     { name: "Piqued Curiosity", va: { v: 0.3, a: 0.4 }, facs: ["AU1", "AU2"], anat: "brows raised with one slightly higher, eyes widening and fixing on the object of interest, lips parted faintly, head tilting", perf: "a slow lean in, a narrowing focus, an unconscious step closer, breath light and attentive" },
     { name: "Intense Fascination", va: { v: 0.5, a: 0.7 }, facs: ["AU1", "AU2", "AU5", "AU25"], anat: "brows high, eyes wide and bright and locked on, mouth slightly open, head extended forward", perf: "the body drawn fully toward the subject, breath quickening, complete absorption, hands reaching or hovering as if to touch" },
   ] },
+  { family: "Flirtation", subtext: "inviting without quite saying so", waypoints: [
+    { name: "Subtle Interest", va: { v: 0.4, a: 0.4 }, facs: ["AU12", "AU43", "AU64"], anat: "one corner of the mouth turned up slightly, eyelids lowered into a soft half-lidded gaze, chin dipped with eyes glancing up, faint smile held back", perf: "slow blink, gaze lingering then dropping away, head tilted, unhurried breath, a held quality as if savoring the moment" },
+    { name: "Open Flirtation", va: { v: 0.6, a: 0.6 }, facs: ["AU6", "AU12", "AU43", "AU61"], anat: "warm asymmetric smile with cheeks raised, eyelids lowered seductively, eyes bright and locked on the other with a sideways glance, lips slightly parted", perf: "playful head tilt, a glance away and back, lip possibly bitten lightly, body angled toward the other, relaxed inviting posture" },
+  ] },
+  { family: "Coyness", subtext: "enjoying being looked at while pretending not to", waypoints: [
+    { name: "Shy Coy", va: { v: 0.4, a: 0.3 }, facs: ["AU12", "AU64", "AU54"], anat: "small suppressed smile with lips pressed together, eyes cast down and to the side, chin tucked slightly, cheeks lifted faintly", perf: "gaze avoiding then flicking back, slight shoulder turn inward, a held breath of self-consciousness, fingers possibly near the face" },
+    { name: "Playful Coy", va: { v: 0.6, a: 0.5 }, facs: ["AU6", "AU12", "AU46", "AU64"], anat: "barely contained grin breaking through pressed lips, eyes glancing up and away with a knowing sparkle, one shoulder raised, head dipped and turned", perf: "suppressed laugh, quick glance back to gauge reaction, body swaying slightly, the smile escaping despite effort to hold it" },
+  ] },
+  { family: "Sarcasm", subtext: "saying one thing and meaning the opposite, daring you to notice", waypoints: [
+    { name: "Dry Mockery", va: { v: -0.2, a: 0.3 }, facs: ["AU2", "AU14", "AU64"], anat: "one eyebrow raised flatly, one corner of the mouth tightened and pulled to the side, eyelids half-lowered in a deadpan gaze, head still", perf: "minimal expression held deliberately flat, slow blink, a beat of silence, the faintest exhale through the nose" },
+    { name: "Open Mockery", va: { v: -0.4, a: 0.5 }, facs: ["AU1", "AU2", "AU12", "AU14"], anat: "eyebrows raised in mock surprise, an exaggerated lopsided half-smile, eyes wide with theatrical insincerity, head tilted in feigned interest", perf: "performed enthusiasm that doesn't reach the eyes, slow nod of fake agreement, a smirk breaking through, gaze rolling slightly" },
+  ] },
+  { family: "Suspicion", subtext: "actively building a case against what you're seeing", waypoints: [
+    { name: "Skepticism", va: { v: -0.2, a: 0.4 }, facs: ["AU2", "AU7", "AU14"], anat: "one eyebrow raised noticeably higher than the other, opposite eye slightly tightened, one mouth corner pulled subtly to the side and tightened, head angled slightly back", perf: "slow blink, head tilt away from subject, deliberate breath, gaze narrowed and assessing" },
+    { name: "Suspicion", va: { v: -0.4, a: 0.6 }, facs: ["AU4", "AU7", "AU14", "AU24"], anat: "brows lowered and slightly together, lids tightened into a narrowed assessing gaze, mouth corners drawn in tight with dimplers active, lips pressed", perf: "stillness with watchful micro-tracking, breath held in upper chest, body angled away, head subtly cocked" },
+  ] },
+  { family: "Vulnerability", subtext: "letting yourself be seen without defenses", waypoints: [
+    { name: "Yearning", va: { v: -0.1, a: 0.4 }, facs: ["AU1", "AU43", "AU12", "AU17"], anat: "inner brows raised softly, upper lids slightly heavy, faint upturn at mouth corners, lower lip just full, gaze direct and unguarded", perf: "slowed breath, slight forward lean, stillness in the body, eyes searching the other's face" },
+    { name: "Open Vulnerability", va: { v: -0.3, a: 0.5 }, facs: ["AU1", "AU2", "AU5", "AU17"], anat: "inner brows raised and drawn slightly together, eyes wide and shining, chin tightened with lower lip pushed up, mouth slightly parted", perf: "breath audible and uneven, throat working with swallow, head tilted slightly down, hands likely open or reaching" },
+  ] },
+  { family: "Jealousy", subtext: "watching someone have the thing you wanted", waypoints: [
+    { name: "Quiet Envy", va: { v: -0.4, a: 0.4 }, facs: ["AU4", "AU7", "AU14", "AU24"], anat: "brows subtly lowered, eyes narrowed and tracking sideways, a forced thin smile pulled tight with dimplers, lips pressed, gaze flicking toward the source and away", perf: "a smile that doesn't hold, watchful sidelong glances, a tight swallow, body angled slightly away, tension held in the jaw" },
+    { name: "Bitter Jealousy", va: { v: -0.6, a: 0.6 }, facs: ["AU4", "AU7", "AU10", "AU23", "AU24"], anat: "brows pulled down and together, eyes hard and fixed on the source, upper lip faintly raised, lips pressed thin and tight, jaw set with simmering resentment", perf: "stillness with a coiled tension, staring then looking away sharply, a slow controlled breath, the forced pleasantness gone, fingers possibly tightening" },
+  ] },
+  { family: "Embarrassment", subtext: "wishing the ground would open up", waypoints: [
+    { name: "Mild Embarrassment", va: { v: -0.3, a: 0.5 }, facs: ["AU12", "AU24", "AU64", "AU54"], anat: "an awkward suppressed smile with lips pressed, eyes cast downward and away, head dipped, a faint wince at the mouth", perf: "nervous quick smile, gaze unable to settle, hand possibly touching neck or face, a small uncomfortable laugh, shoulders drawing in" },
+    { name: "Mortification", va: { v: -0.6, a: 0.7 }, facs: ["AU7", "AU24", "AU54", "AU64"], anat: "face tightening with a pained grimace-smile, eyes squeezed partly shut or covered, head ducked low, cheeks visibly warm, brow furrowed in distress", perf: "hand rising to cover part of the face, head turning away, body shrinking, a strangled embarrassed laugh, gaze hunting for escape" },
+  ] },
 ];
 
 /**
@@ -193,6 +221,13 @@ export const PERF_DEFAULT_DIALOGUE: Record<string, string> = {
   Relief: 'Oh thank god. Thank god.',
   Nostalgia: 'We were really something back then.',
   Curiosity: 'Wait... what is that?',
+  Flirtation: "You're trouble, aren't you.",
+  Coyness: 'Maybe. Maybe not.',
+  Sarcasm: 'Oh, this is going great.',
+  Suspicion: 'How did you say you knew him, again?',
+  Vulnerability: "I don't know how to ask for this.",
+  Jealousy: "No, it's fine. I'm happy for you.",
+  Embarrassment: 'Can we just— forget I said that?',
 };
 
 /** Default dialogue for a family index (empty string if none). */

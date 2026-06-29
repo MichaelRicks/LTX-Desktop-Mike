@@ -171,6 +171,18 @@ function getTopVisibleClipAtTime(mediaClips: TimelineClip[], tracks: Track[], ti
   return best?.clip ?? null
 }
 
+/** Among visible-track clips, the one ending last (by startTime + duration). */
+function getLastEndingVisibleClip(mediaClips: TimelineClip[], tracks: Track[]): TimelineClip | null {
+  let best: TimelineClip | null = null
+  for (const clip of mediaClips) {
+    if (tracks[clip.trackIndex]?.enabled === false) continue
+    if (!best || clip.startTime + clip.duration > best.startTime + best.duration) {
+      best = clip
+    }
+  }
+  return best
+}
+
 function getDissolveAtTime(mediaClips: TimelineClip[], tracks: Track[], time: number): { pair: DissolvePair; progress: number } | null {
   for (const clipA of mediaClips) {
     if (tracks[clipA.trackIndex]?.enabled === false) continue
@@ -335,12 +347,24 @@ function getActiveVideoContributors(
 }
 
 function deriveFrameRenderState(cache: FrameRenderCache, tracks: Track[], time: number): FrameRenderState {
-  const activeClip = getTopVisibleClipAtTime(cache.mediaClips, tracks, time)
-  const dissolve = getDissolveAtTime(cache.mediaClips, tracks, time)
-  const compositingStack = getCompositingStack(cache.mediaClips, tracks, activeClip, time)
+  let activeClip = getTopVisibleClipAtTime(cache.mediaClips, tracks, time)
+  let effectiveTime = time
+
+  // Playhead is past the end of every clip (not a gap mid-timeline) — hold
+  // the last frame of whichever clip ends latest instead of going black.
+  if (!activeClip) {
+    const lastClip = getLastEndingVisibleClip(cache.mediaClips, tracks)
+    if (lastClip && time >= lastClip.startTime + lastClip.duration) {
+      activeClip = lastClip
+      effectiveTime = lastClip.startTime + lastClip.duration - 1 / 240
+    }
+  }
+
+  const dissolve = getDissolveAtTime(cache.mediaClips, tracks, effectiveTime)
+  const compositingStack = getCompositingStack(cache.mediaClips, tracks, activeClip, effectiveTime)
 
   return {
-    atTime: time,
+    atTime: effectiveTime,
     activeClip,
     crossDissolve: dissolve?.pair ?? null,
     crossDissolveProgress: dissolve?.progress ?? 0,
@@ -350,7 +374,7 @@ function deriveFrameRenderState(cache: FrameRenderCache, tracks: Track[], time: 
     activeLetterbox: getActiveLetterbox(cache.adjustmentClips, tracks, time),
     activeAdjustmentEffects: [],
     audioOnlyClips: cache.audioClips.filter(clip => time >= clip.startTime && time < clip.startTime + clip.duration),
-    activeVideoContributors: getActiveVideoContributors(activeClip, dissolve?.pair ?? null, dissolve?.progress ?? 0, compositingStack, time),
+    activeVideoContributors: getActiveVideoContributors(activeClip, dissolve?.pair ?? null, dissolve?.progress ?? 0, compositingStack, effectiveTime),
   }
 }
 

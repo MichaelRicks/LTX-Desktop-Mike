@@ -114,12 +114,13 @@ export const trackSchema = z.object({
   subtitleStyle: subtitleStyleSchema.partial().optional(),
 })
 
+// New timelines start with just one video + one audio track (pre-selected as
+// the drop target via sourcePatched) — most projects never need more, and
+// starting with extras pushed the first clip down where it required vertical
+// scrolling to even see. Users can add more tracks with one click as needed.
 export const DEFAULT_TRACKS = trackSchema.array().parse([
   { id: 'track-v1', name: 'V1', muted: false, locked: false, sourcePatched: true, kind: 'video' },
-  { id: 'track-v2', name: 'V2', muted: false, locked: false, sourcePatched: false, kind: 'video' },
-  { id: 'track-v3', name: 'V3', muted: false, locked: false, sourcePatched: false, kind: 'video' },
   { id: 'track-a1', name: 'A1', muted: false, locked: false, sourcePatched: true, kind: 'audio' },
-  { id: 'track-a2', name: 'A2', muted: false, locked: false, sourcePatched: false, kind: 'audio' },
 ])
 
 export const subtitleClipSchema = z.object({
@@ -291,7 +292,7 @@ export const timelineClipSchema = z.object({
   speed: z.number().default(1),
   reversed: z.boolean().default(false),
   muted: z.boolean().default(false),
-  volume: z.number().default(100),
+  volume: z.number().default(1),
   trackIndex: z.number(),
   asset: assetSchema.nullable(),
   importedName: z.string().optional(),

@@ -696,7 +696,7 @@ export function ClipPropertiesPanel(props: ClipPropertiesPanelProps) {
             <input
               type="range"
               min={0}
-              max={1}
+              max={2}
               step={0.1}
               value={effectiveMuted ? 0 : effectiveVolume}
               onChange={(e) => setClipAudioLevel(selectedClip.id, parseFloat(e.target.value))}
@@ -705,7 +705,7 @@ export function ClipPropertiesPanel(props: ClipPropertiesPanelProps) {
             <div className="flex justify-between text-[10px] text-zinc-500 mt-1">
               <span>0%</span>
               <span className="text-white">{effectiveMuted ? '0' : Math.round(effectiveVolume * 100)}%</span>
-              <span>100%</span>
+              <span>200%</span>
             </div>
           </div>
         )}

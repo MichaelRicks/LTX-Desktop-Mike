@@ -818,7 +818,7 @@ export function importParsedTimeline(state: EditorState, parsed: ParsedTimeline)
       speed: parsedClip.speed || 1,
       reversed: parsedClip.reversed || false,
       muted: parsedClip.muted || false,
-      volume: parsedClip.volume !== undefined ? Math.min(1, Math.max(0, parsedClip.volume)) : 1,
+      volume: parsedClip.volume !== undefined ? Math.min(2, Math.max(0, parsedClip.volume)) : 1,
       trackIndex: Math.min(parsedClip.trackIndex, totalTracks - 1),
       asset,
       importedName: parsedClip.name,
@@ -1238,7 +1238,7 @@ function resolveClipAudioTargetId(state: EditorState, clipId: string): string | 
 export function setClipAudioLevel(state: EditorState, clipId: string, volume: number): EditorState {
   const targetClipId = resolveClipAudioTargetId(state, clipId)
   if (!targetClipId) return state
-  const clampedVolume = Math.max(0, Math.min(1, volume))
+  const clampedVolume = Math.max(0, Math.min(2, volume))
   return updateClip(state, targetClipId, { volume: clampedVolume, muted: false })
 }
 

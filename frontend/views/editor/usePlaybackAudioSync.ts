@@ -21,6 +21,7 @@ type AudioEl = HTMLAudioElement & {
   __lastPlayRetry?: number
   __intendedPath?: string
   __awaitingCanplay?: boolean
+  __gainNode?: GainNode
 }
 
 const PLAYING_LOOKAHEAD_SECONDS = 5
@@ -62,6 +63,35 @@ export function usePlaybackAudioSync(params: UsePlaybackAudioSyncParams) {
   const getEditorState = useEditorGetState()
 
   const audioElementsRef = useRef<Map<string, AudioEl>>(new Map())
+  const audioContextRef = useRef<AudioContext | null>(null)
+
+  // Volume can be boosted above 100% (gain > 1), which HTMLMediaElement.volume
+  // doesn't support (browsers clamp it to 1.0) — route audio through a Web
+  // Audio GainNode instead, which has no such ceiling. el.volume stays at 1
+  // (unity) once routed; the GainNode carries the actual clip.volume value.
+  const applyVolume = (el: AudioEl, volume: number): void => {
+    const AudioContextCtor = window.AudioContext
+      ?? (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext
+    if (!AudioContextCtor) {
+      el.volume = Math.min(1, volume)
+      return
+    }
+    let ctx = audioContextRef.current
+    if (!ctx) {
+      ctx = new AudioContextCtor()
+      audioContextRef.current = ctx
+    }
+    let node = el.__gainNode
+    if (!node) {
+      const source = ctx.createMediaElementSource(el)
+      node = ctx.createGain()
+      source.connect(node)
+      node.connect(ctx.destination)
+      el.__gainNode = node
+    }
+    el.volume = 1
+    node.gain.value = volume
+  }
 
   useEffect(() => {
     if (!isPlaying) return
@@ -166,7 +196,7 @@ export function usePlaybackAudioSync(params: UsePlaybackAudioSyncParams) {
           const track = currentTracks[clip.trackIndex]
           const isSoloMuted = anySoloed && !track?.solo
           el.muted = clip.muted || track?.muted || isSoloMuted || false
-          el.volume = clip.volume
+          applyVolume(el, clip.volume)
 
           if (!el.__audioPlaying || isNewElement) {
             const target = computeTarget(el, atTime)
@@ -307,7 +337,7 @@ export function usePlaybackAudioSync(params: UsePlaybackAudioSyncParams) {
       const track = tracks[clip.trackIndex]
       const isSoloMuted = anySoloed && !track?.solo
       el.muted = clip.muted || track?.muted || isSoloMuted || false
-      el.volume = clip.volume
+      applyVolume(el, clip.volume)
 
       if (el.readyState < 2) continue
 
@@ -339,6 +369,8 @@ export function usePlaybackAudioSync(params: UsePlaybackAudioSyncParams) {
         el.src = ''
       }
       audioElementsRef.current.clear()
+      void audioContextRef.current?.close()
+      audioContextRef.current = null
     }
   }, [])
 }

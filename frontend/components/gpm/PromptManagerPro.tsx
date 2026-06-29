@@ -1426,7 +1426,10 @@ function Dock({ onClose }: { onClose: () => void }) {
           )
         })}
         <button
-          onClick={() => setGpmTab('performance')}
+          onClick={() => {
+            setGpmTab('performance')
+            setSectionsOpen((s) => ({ ...s, 'perf-controls': true }))
+          }}
           className="col-span-3 rounded-md py-2 text-xs font-semibold transition-colors"
           style={{
             background: gpmTab === 'performance' ? C.blue : C.card,
