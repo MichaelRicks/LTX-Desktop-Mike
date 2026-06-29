@@ -4,9 +4,9 @@ import type { Asset } from '../../types/project-model'
 import { formatTime } from './video-editor-utils'
 import { Tooltip } from '../../components/ui/tooltip'
 import { pathToFileUrl } from '../../lib/file-url'
-import { selectHasSourceAsset } from './editor-selectors'
+import { selectAssets, selectHasSourceAsset } from './editor-selectors'
 import { useEditorActions, useEditorStore } from './editor-store'
-import { isDroppedMediaEvent, readDroppedMediaAsset } from './dropped-media-asset'
+import { isDroppedMediaEvent, isNativeAssetDragEvent, readDroppedAsset, readDroppedMediaAsset } from './dropped-media-asset'
 
 export type SourceKeyboardAction =
   | 'transport.playPause'
@@ -67,6 +67,7 @@ export const VideoEditorSourceMonitor = React.forwardRef<VideoEditorSourceMonito
     stopShuttle,
   } = useEditorActions()
   const hasSourceAsset = useEditorStore(selectHasSourceAsset)
+  const assets = useEditorStore(selectAssets)
   const [sourceAsset, setSourceAsset] = useState<Asset | null>(null)
   const [sourceTime, setSourceTime] = useState(0)
   const [sourceIsPlaying, setSourceIsPlaying] = useState(false)
@@ -383,8 +384,14 @@ export const VideoEditorSourceMonitor = React.forwardRef<VideoEditorSourceMonito
 
       <div
         className="flex-1 relative overflow-hidden bg-black flex items-center justify-center min-h-0"
-        onDragOver={(e) => { if (isDroppedMediaEvent(e)) { e.preventDefault(); e.dataTransfer.dropEffect = 'copy' } }}
+        onDragOver={(e) => { if (isDroppedMediaEvent(e) || isNativeAssetDragEvent(e)) { e.preventDefault(); e.dataTransfer.dropEffect = 'copy' } }}
         onDrop={(e) => {
+          if (isNativeAssetDragEvent(e)) {
+            e.preventDefault()
+            const asset = readDroppedAsset(e, assets)
+            if (asset) openAsset(asset)
+            return
+          }
           if (!isDroppedMediaEvent(e)) return
           e.preventDefault()
           void readDroppedMediaAsset(e, currentProjectId).then((asset) => {
@@ -436,7 +443,7 @@ export const VideoEditorSourceMonitor = React.forwardRef<VideoEditorSourceMonito
         ) : (
           <div className="text-center text-zinc-600">
             <Video className="h-10 w-10 mx-auto mb-2" />
-            <p className="text-xs">Double-click an asset to load it here</p>
+            <p className="text-xs">Double-click or drag an asset here</p>
           </div>
         )}
       </div>

@@ -57,6 +57,30 @@ export function isDroppedMediaEvent(e: React.DragEvent): boolean {
   return e.dataTransfer.types.includes(FILE_DND) || e.dataTransfer.types.includes(GPM_IMAGE_DND_TYPE)
 }
 
+/** True when the drag carries a native in-app asset (dragged from the Assets panel grid). */
+export function isNativeAssetDragEvent(e: React.DragEvent): boolean {
+  return e.dataTransfer.types.includes('asset') || e.dataTransfer.types.includes('assetId') || e.dataTransfer.types.includes('assetIds')
+}
+
+/** Resolves a native in-app asset drag (from the Assets panel grid) to the already-registered Asset. */
+export function readDroppedAsset(e: React.DragEvent, assets: Asset[]): Asset | null {
+  const assetIdsJson = e.dataTransfer.getData('assetIds')
+  if (assetIdsJson) {
+    try {
+      const ids: string[] = JSON.parse(assetIdsJson)
+      const found = ids.map((id) => assets.find((a) => a.id === id)).filter(Boolean) as Asset[]
+      if (found.length > 0) return found[0]
+    } catch { /* ignore parse errors */ }
+  }
+  const assetData = e.dataTransfer.getData('asset')
+  if (assetData) {
+    try { return JSON.parse(assetData) as Asset } catch { /* ignore parse errors */ }
+  }
+  const assetId = e.dataTransfer.getData('assetId')
+  if (assetId) return assets.find((a) => a.id === assetId) ?? null
+  return null
+}
+
 /** Reads a Downloads Browser / Images tab drop payload and resolves it to a full Asset, or null if neither type is present. */
 export function readDroppedMediaAsset(e: React.DragEvent, currentProjectId: string | null): Promise<Asset | null> {
   const dlData = e.dataTransfer.getData(FILE_DND)

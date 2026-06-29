@@ -12,6 +12,7 @@
 export const GPM_IMAGE_DND_TYPE = 'application/x-gpm-image'
 
 export interface GpmDndImage {
+  id?: string
   name: string
   dataUrl: string
 }

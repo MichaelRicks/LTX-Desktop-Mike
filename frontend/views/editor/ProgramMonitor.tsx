@@ -27,7 +27,7 @@ import {
   selectTracks,
 } from './editor-selectors'
 import { useEditorActions, useEditorStore } from './editor-store'
-import { isDroppedMediaEvent, readDroppedMediaAsset } from './dropped-media-asset'
+import { isDroppedMediaEvent, isNativeAssetDragEvent, readDroppedAsset, readDroppedMediaAsset } from './dropped-media-asset'
 
 type MonitorRenderMode = 'playback' | 'scrub'
 type SyncTarget = 'active' | 'incoming' | 'compositing'
@@ -1156,8 +1156,14 @@ export const ProgramMonitor = React.forwardRef<ProgramMonitorHandle, ProgramMoni
           ref={previewContainerRef}
           className={`flex-1 relative overflow-hidden min-h-0 min-w-0 ${isFullscreen ? 'bg-black' : ''}`}
           style={{ backgroundColor: isFullscreen ? '#000' : '#333', ...(previewZoom !== 'fit' ? { cursor: 'grab' } : {}) }}
-          onDragOver={(e) => { if (isDroppedMediaEvent(e)) { e.preventDefault(); e.dataTransfer.dropEffect = 'copy' } }}
+          onDragOver={(e) => { if (isDroppedMediaEvent(e) || isNativeAssetDragEvent(e)) { e.preventDefault(); e.dataTransfer.dropEffect = 'copy' } }}
           onDrop={(e) => {
+            if (isNativeAssetDragEvent(e)) {
+              e.preventDefault()
+              const asset = readDroppedAsset(e, assets)
+              if (asset) insertAssetsToTimeline({ assets: [asset], trackIndex: 0, startTime: currentTime })
+              return
+            }
             if (!isDroppedMediaEvent(e)) return
             e.preventDefault()
             void readDroppedMediaAsset(e, currentProjectId).then((asset) => {

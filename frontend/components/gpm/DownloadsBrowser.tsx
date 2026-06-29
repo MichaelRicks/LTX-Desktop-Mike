@@ -12,6 +12,7 @@ import { pathToFileUrl } from '../../lib/file-url'
 import { useProjects } from '../../contexts/ProjectContext'
 import { MediaThumb } from './MediaThumb'
 import { useDownloadsBrowserOpen, setDownloadsBrowserOpen } from './downloads-browser-store'
+import { GPM_IMAGE_DND_TYPE, saveDataUrlToTempFile, type GpmDndImage } from './gpm-image-file'
 
 const C = {
   panel: '#0e0e12', card: '#16161b', elev: '#1c1c22',
@@ -226,26 +227,37 @@ function Dock({ onClose }: { onClose: () => void }) {
           const folderFiles = filterFiles(files.filter((x) => x.folder === f))
           const isOpen = openFolders.has(f)
           return (
-            <div key={f}>
+            <div
+              key={f}
+              onDragOver={(e) => {
+                if (!e.dataTransfer.types.includes(FOLDER_DND) && !e.dataTransfer.types.includes(FILE_DND) && !e.dataTransfer.types.includes(GPM_IMAGE_DND_TYPE)) return
+                e.preventDefault()
+                if (dragFolder.current && dragFolder.current !== f) {
+                  const r = e.currentTarget.getBoundingClientRect()
+                  const before = e.clientY - r.top < r.height / 2
+                  setDropLine({ target: f, before })
+                }
+              }}
+              onDragLeave={() => setDropLine((d) => (d?.target === f ? null : d))}
+              onDrop={(e) => {
+                e.preventDefault()
+                if (e.dataTransfer.types.includes(FILE_DND)) { const d = JSON.parse(e.dataTransfer.getData(FILE_DND)) as LibFile; void moveFile(d, f) }
+                else if (e.dataTransfer.types.includes(GPM_IMAGE_DND_TYPE)) {
+                  const raw = e.dataTransfer.getData(GPM_IMAGE_DND_TYPE)
+                  if (raw && api) {
+                    const { name, dataUrl } = JSON.parse(raw) as GpmDndImage
+                    void saveDataUrlToTempFile(dataUrl, name)
+                      .then((path) => api.gpmLibAddFiles({ folder: f, srcPaths: [path] }))
+                      .then((r) => { if (r.success) { flash(`Added to ${f}`); void refresh() } else flash(r.error) })
+                  }
+                }
+                else if (dragFolder.current) onFolderDrop(f, dropLine?.before ?? true)
+              }}
+            >
               <div
                 draggable
                 onDragStart={(e) => { dragFolder.current = f; e.dataTransfer.setData(FOLDER_DND, f); e.dataTransfer.effectAllowed = 'move' }}
                 onDragEnd={() => { dragFolder.current = null; setDropLine(null) }}
-                onDragOver={(e) => {
-                  if (!e.dataTransfer.types.includes(FOLDER_DND) && !e.dataTransfer.types.includes(FILE_DND)) return
-                  e.preventDefault()
-                  if (dragFolder.current && dragFolder.current !== f) {
-                    const r = e.currentTarget.getBoundingClientRect()
-                    const before = e.clientY - r.top < r.height / 2
-                    setDropLine({ target: f, before })
-                  }
-                }}
-                onDragLeave={() => setDropLine((d) => (d?.target === f ? null : d))}
-                onDrop={(e) => {
-                  e.preventDefault()
-                  if (e.dataTransfer.types.includes(FILE_DND)) { const d = JSON.parse(e.dataTransfer.getData(FILE_DND)) as LibFile; void moveFile(d, f) }
-                  else if (dragFolder.current) onFolderDrop(f, dropLine?.before ?? true)
-                }}
                 onClick={() => toggleFolder(f)}
                 className="relative flex items-center gap-1.5 px-3 py-2.5 cursor-pointer group"
                 style={{ background: isOpen ? 'rgba(31,143,255,0.12)' : 'transparent', borderLeft: `2px solid ${isOpen ? C.blue : 'transparent'}`, borderBottom: `1px solid ${C.border}` }}

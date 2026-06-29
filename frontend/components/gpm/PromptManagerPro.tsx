@@ -8,7 +8,7 @@
  */
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
-  Camera, ChevronRight, ChevronsDownUp, ChevronsUpDown, Copy, Download, Eraser, Folder, FolderPlus, Image as ImageIcon,
+  Camera, ChevronRight, ChevronsDownUp, ChevronsUpDown, Copy, Download, Eraser, FolderPlus, Image as ImageIcon,
   Layers, Maximize2, Minimize2, Pencil, Plus, RotateCcw, Save, Search, Send, Trash2, Upload, Wand2, X,
 } from 'lucide-react'
 import {
@@ -26,7 +26,7 @@ import {
   type GpmWorkflow, loadWorkflows, saveWorkflows,
   type GpmPanorama, loadPanoramas, putPanorama, deletePanorama, MAX_PANORAMAS,
 } from './gpm-storage'
-import { saveDataUrlToTempFile, GPM_IMAGE_DND_TYPE } from './gpm-image-file'
+import { saveDataUrlToTempFile, GPM_IMAGE_DND_TYPE, type GpmDndImage } from './gpm-image-file'
 import { FILE_DND, type LibFile } from './DownloadsBrowser'
 import { usePromptManagerProOpen, setPromptManagerProOpen } from './prompt-manager-pro-store'
 import { MediaThumb } from './MediaThumb'
@@ -553,6 +553,32 @@ function WorkflowPanel({
   }
   const unbindImage = (slotId: string) => upSlot(slotId, { imgId: undefined, imgName: undefined, filled: false })
 
+  // Drag a reference image straight onto a slot — from the Images tab (already
+  // in the library, so just bind by id) or the Downloads Browser (a real file,
+  // so add it to the library first, mirroring ImagesPanel's addFromLibFile).
+  const onSlotDrop = (e: React.DragEvent, slotId: string) => {
+    e.preventDefault()
+    const gpmRaw = e.dataTransfer.getData(GPM_IMAGE_DND_TYPE)
+    if (gpmRaw) {
+      const d = JSON.parse(gpmRaw) as GpmDndImage
+      if (d.id && imgById[d.id]) { bindImage(slotId, imgById[d.id]); return }
+      const img: GpmImage = { id: gpmId(), name: d.name, folderId: null, dataUrl: d.dataUrl, addedAt: Date.now(), isVideo: false }
+      void putImage(img).then(() => { setLibrary((prev) => [img, ...prev]); bindImage(slotId, img) })
+      return
+    }
+    const fileRaw = e.dataTransfer.getData(FILE_DND)
+    if (fileRaw) {
+      const f = JSON.parse(fileRaw) as LibFile
+      const api = window.electronAPI
+      if (!api) return
+      void api.gpmLibReadAsDataUrl({ path: f.path }).then((r) => {
+        if (!r.success) return
+        const img: GpmImage = { id: gpmId(), name: f.name, folderId: null, dataUrl: r.dataUrl, addedAt: Date.now(), isVideo: f.isVideo }
+        void putImage(img).then(() => { setLibrary((prev) => [img, ...prev]); bindImage(slotId, img) })
+      })
+    }
+  }
+
   // Saved workflows (persisted in IndexedDB; round-trips in the backup).
   const [saved, setSaved] = useState<GpmWorkflow[]>([])
   const reloadSaved = () => { void loadWorkflows().then(setSaved) }
@@ -608,10 +634,14 @@ function WorkflowPanel({
         <div className="space-y-2">
           {wf.slots.map((s, i) => (
             <div key={s.id} className="rounded-lg p-2 flex gap-2 items-center" style={{ background: C.elev, border: `1px solid ${C.border}` }}>
-              <div className="relative w-28 shrink-0">
+              <div
+                className="relative w-28 shrink-0"
+                onDragOver={(e) => { if (e.dataTransfer.types.includes(GPM_IMAGE_DND_TYPE) || e.dataTransfer.types.includes(FILE_DND)) e.preventDefault() }}
+                onDrop={(e) => onSlotDrop(e, s.id)}
+              >
                 <button
                   onClick={() => setPickerSlot(s.id)}
-                  title={s.imgName ? `Bound: ${s.imgName} — click to change` : 'Bind a reference image'}
+                  title={s.imgName ? `Bound: ${s.imgName} — click to change (or drag an image here)` : 'Bind a reference image (click, or drag one here)'}
                   className="w-full rounded flex items-center justify-center overflow-hidden text-[8px] text-center"
                   style={{ aspectRatio: '16/9', background: s.imgId ? '#000' : 'transparent', border: `1px dashed ${s.imgId ? C.border : C.borderLt}`, color: C.faint }}
                 >
@@ -901,39 +931,40 @@ function PlatesPanel({ onUse, flash, activeId, setActiveId, sceneLens, setSceneL
 
       {active && <SceneViewer key={active.id} pano={active} onClose={() => setActiveId(null)} onPlate={onPlate} lens={sceneLens} setLens={setSceneLens} aimRef={sceneAimRef} />}
 
-      <div className="flex items-center justify-between mb-2">
-        <Label>Panoramas</Label>
-        <span className="text-[10px] tabular-nums" style={{ color: C.faint }}>{panos.length}/{MAX_PANORAMAS}</span>
-      </div>
-      <button onClick={() => fileRef.current?.click()} className="w-full flex items-center justify-center gap-1.5 rounded-md px-3 py-2 text-xs font-semibold mb-2" style={{ background: C.blue, color: '#fff' }}>
-        <Upload size={13} />Import Panorama
-      </button>
-      <div
-        onDragOver={(e) => e.preventDefault()} onDrop={onDrop}
-        className="rounded-md py-4 px-3 text-center text-[11px] mb-3"
-        style={{ border: `1px dashed ${C.borderLt}`, color: C.faint }}
-      >
-        Drop an image here (or from the Images tab) to save as a panorama
-      </div>
+      <div onDragOver={(e) => e.preventDefault()} onDrop={onDrop}>
+        <div className="flex items-center justify-between mb-2">
+          <Label>Panoramas</Label>
+          <span className="text-[10px] tabular-nums" style={{ color: C.faint }}>{panos.length}/{MAX_PANORAMAS}</span>
+        </div>
+        <button onClick={() => fileRef.current?.click()} className="w-full flex items-center justify-center gap-1.5 rounded-md px-3 py-2 text-xs font-semibold mb-2" style={{ background: C.blue, color: '#fff' }}>
+          <Upload size={13} />Import Panorama
+        </button>
+        <div
+          className="rounded-md py-4 px-3 text-center text-[11px] mb-3"
+          style={{ border: `1px dashed ${C.borderLt}`, color: C.faint }}
+        >
+          Drop an image here (or from the Images tab) to save as a panorama
+        </div>
 
-      {panos.length === 0
-        ? <p className="text-[11px] text-center py-4" style={{ color: C.faint }}>No panoramas yet — import one to begin.</p>
-        : (
-          <div className="space-y-2">
-            {panos.map((p) => (
-              <div key={p.id} className="rounded-md overflow-hidden relative group" style={{ border: `1px solid ${p.id === activeId ? C.blue : C.border}`, background: '#000' }} title={p.name}>
-                <button onClick={() => openScene(p.id)} className="block w-full" title="Open in 3D scene">
-                  <img src={p.dataUrl} alt={p.name} loading="lazy" style={{ width: '100%', aspectRatio: '2/1', objectFit: 'cover', display: 'block' }} />
-                </button>
-                <div className="absolute bottom-0 left-0 right-0 px-2 py-1 text-[10px] truncate pointer-events-none" style={{ background: 'rgba(0,0,0,0.6)', color: C.text }}>{p.name}</div>
-                <div className="absolute top-1 right-1 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                  <button onClick={() => openScene(p.id)} title="Open in 3D scene" className="h-5 px-1.5 flex items-center justify-center rounded text-[9px] font-semibold" style={{ background: C.blue, color: '#fff' }}>3D</button>
-                  <button onClick={() => remove(p.id)} title="Delete" className="h-5 w-5 flex items-center justify-center rounded" style={{ background: 'rgba(0,0,0,0.6)', color: '#fff' }}><Trash2 size={11} /></button>
+        {panos.length === 0
+          ? <p className="text-[11px] text-center py-4" style={{ color: C.faint }}>No panoramas yet — import one to begin.</p>
+          : (
+            <div className="space-y-2">
+              {panos.map((p) => (
+                <div key={p.id} className="rounded-md overflow-hidden relative group" style={{ border: `1px solid ${p.id === activeId ? C.blue : C.border}`, background: '#000' }} title={p.name}>
+                  <button onClick={() => openScene(p.id)} className="block w-full" title="Open in 3D scene">
+                    <img src={p.dataUrl} alt={p.name} loading="lazy" style={{ width: '100%', aspectRatio: '2/1', objectFit: 'cover', display: 'block' }} />
+                  </button>
+                  <div className="absolute bottom-0 left-0 right-0 px-2 py-1 text-[10px] truncate pointer-events-none" style={{ background: 'rgba(0,0,0,0.6)', color: C.text }}>{p.name}</div>
+                  <div className="absolute top-1 right-1 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                    <button onClick={() => openScene(p.id)} title="Open in 3D scene" className="h-5 px-1.5 flex items-center justify-center rounded text-[9px] font-semibold" style={{ background: C.blue, color: '#fff' }}>3D</button>
+                    <button onClick={() => remove(p.id)} title="Delete" className="h-5 w-5 flex items-center justify-center rounded" style={{ background: 'rgba(0,0,0,0.6)', color: '#fff' }}><Trash2 size={11} /></button>
+                  </div>
                 </div>
-              </div>
-            ))}
-          </div>
-        )}
+              ))}
+            </div>
+          )}
+      </div>
       <input ref={fileRef} type="file" accept="image/*" multiple className="hidden" onChange={(e) => { const fs = Array.from(e.target.files ?? []); e.target.value = ''; void addFiles(fs) }} />
     </div>
   )
@@ -1152,7 +1183,7 @@ function ImagesPanel({ ctl, onCopy, onUse, flash }: { ctl: SectionCtl; onCopy: (
           className="rounded-md" style={{ border: `1px solid ${C.border}` }}
           draggable
           onDragStart={(e) => {
-            e.dataTransfer.setData(GPM_IMAGE_DND_TYPE, JSON.stringify({ name: im.name, dataUrl: im.dataUrl }))
+            e.dataTransfer.setData(GPM_IMAGE_DND_TYPE, JSON.stringify({ id: im.id, name: im.name, dataUrl: im.dataUrl }))
             e.dataTransfer.effectAllowed = 'copy'
           }}
         >
@@ -1196,7 +1227,7 @@ function ImagesPanel({ ctl, onCopy, onUse, flash }: { ctl: SectionCtl; onCopy: (
           >
           <Section
             id={`if-${f.id}`} ctl={ctl}
-            title={<span className="flex items-center gap-1.5"><Folder size={12} style={{ color: C.muted }} />{f.name} ({items.length})</span>}
+            title={<span className="flex items-center gap-1.5">{f.name} ({items.length})</span>}
             right={
               <span className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
                 <Plus size={13} style={{ color: C.blue, cursor: 'pointer' }} onClick={() => pickFor(f.id)} />
@@ -1304,8 +1335,14 @@ function Dock({ onClose }: { onClose: () => void }) {
   ]
   const ALL_TABS: Array<[GpmTab, string]> = [...TABS, ['performance', 'Performance Studio']]
 
-  // Enlarge the active tab into a centered modal workspace (Esc to shrink).
+  // Enlarge a tab into a floating workspace that sits in the middle of the screen,
+  // *without* covering the Downloads Browser (left) or this dock's own tab strip
+  // (right) — so the user can keep dragging images out of the Images tab into
+  // either of those while the enlarged workspace is open. The enlarged tab is
+  // tracked independently of the docked `gpmTab` so switching the dock's own tab
+  // (e.g. to Images, to grab an image to drag) doesn't change what's enlarged.
   const [expanded, setExpanded] = useState(false)
+  const [expandedTab, setExpandedTab] = useState<GpmTab>('performance')
   useEffect(() => {
     if (!expanded) return
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setExpanded(false) }
@@ -1313,18 +1350,19 @@ function Dock({ onClose }: { onClose: () => void }) {
     return () => window.removeEventListener('keydown', onKey)
   }, [expanded])
 
-  const activeLabel = ALL_TABS.find(([id]) => id === gpmTab)?.[1] ?? ''
-  const activePanel = (
+  const renderPanel = (tab: GpmTab) => (
     <>
-      {gpmTab === 'performance' && <PerformancePanel perf={perf} setPerf={setPerf} ctl={ctl} onCopy={copyText} onInject={injectIntoPrompt} />}
-      {gpmTab === 'shot' && <ShotPanel shot={shot} setShot={setShot} ctl={ctl} onCopy={copyText} onInject={injectIntoPrompt} onUseImage={sendImageToGenSpace} flash={flash} srcImage={shotSrcImage} setSrcImage={setShotSrcImage} />}
-      {gpmTab === 'camera' && <CameraPanel search={search} setSearch={setSearch} camCat={camCat} setCamCat={setCamCat} onInject={injectIntoPrompt} flash={flash} />}
-      {gpmTab === 'workflow' && <WorkflowPanel wf={wf} setWf={setWf} perfText={perfText} ctl={ctl} onCopy={copyText} onInject={injectIntoPrompt} onUseImage={sendImageToGenSpace} flash={flash} />}
-      {gpmTab === 'prompts' && <PromptsPanel ctl={ctl} onCopy={copyText} onInject={injectIntoPrompt} flash={flash} />}
-      {gpmTab === 'images' && <ImagesPanel ctl={ctl} onCopy={copyText} onUse={sendImageToGenSpace} flash={flash} />}
-      {gpmTab === 'plates' && <PlatesPanel onUse={sendImageToGenSpace} flash={flash} activeId={platesActiveId} setActiveId={setPlatesActiveId} sceneLens={sceneLens} setSceneLens={setSceneLens} sceneAimRef={sceneAimRef} />}
+      {tab === 'performance' && <PerformancePanel perf={perf} setPerf={setPerf} ctl={ctl} onCopy={copyText} onInject={injectIntoPrompt} />}
+      {tab === 'shot' && <ShotPanel shot={shot} setShot={setShot} ctl={ctl} onCopy={copyText} onInject={injectIntoPrompt} onUseImage={sendImageToGenSpace} flash={flash} srcImage={shotSrcImage} setSrcImage={setShotSrcImage} />}
+      {tab === 'camera' && <CameraPanel search={search} setSearch={setSearch} camCat={camCat} setCamCat={setCamCat} onInject={injectIntoPrompt} flash={flash} />}
+      {tab === 'workflow' && <WorkflowPanel wf={wf} setWf={setWf} perfText={perfText} ctl={ctl} onCopy={copyText} onInject={injectIntoPrompt} onUseImage={sendImageToGenSpace} flash={flash} />}
+      {tab === 'prompts' && <PromptsPanel ctl={ctl} onCopy={copyText} onInject={injectIntoPrompt} flash={flash} />}
+      {tab === 'images' && <ImagesPanel ctl={ctl} onCopy={copyText} onUse={sendImageToGenSpace} flash={flash} />}
+      {tab === 'plates' && <PlatesPanel onUse={sendImageToGenSpace} flash={flash} activeId={platesActiveId} setActiveId={setPlatesActiveId} sceneLens={sceneLens} setSceneLens={setSceneLens} sceneAimRef={sceneAimRef} />}
     </>
   )
+  const activePanel = renderPanel(gpmTab)
+  const expandedLabel = ALL_TABS.find(([id]) => id === expandedTab)?.[1] ?? ''
 
   return (
     <div
@@ -1362,7 +1400,7 @@ function Dock({ onClose }: { onClose: () => void }) {
             {allOpen ? <ChevronsDownUp size={14} /> : <ChevronsUpDown size={14} />}
           </button>
           <button
-            onClick={() => setExpanded(true)} title="Enlarge panel for a bigger workspace (Esc to shrink)"
+            onClick={() => { setExpandedTab(gpmTab); setExpanded(true) }} title="Enlarge panel for a bigger workspace (Esc to shrink)"
             className="flex items-center gap-1 px-2.5 py-1.5 rounded-md text-[11px] font-semibold"
             style={{ color: '#fff', background: C.blue }}
           >
@@ -1401,49 +1439,45 @@ function Dock({ onClose }: { onClose: () => void }) {
       </div>
 
       <div className="flex-1 overflow-y-auto p-4">
-        {!expanded && activePanel}
+        {activePanel}
       </div>
 
       {expanded && (
         <div
-          className="fixed inset-0 z-[80] flex items-center justify-center p-8"
-          style={{ background: 'rgba(0,0,0,0.6)' }}
-          onClick={() => setExpanded(false)}
+          className="fixed z-[80] rounded-xl overflow-hidden flex flex-col"
+          style={{
+            top: 56, bottom: 56, left: 356, right: 412,
+            background: C.panel, border: `2px solid ${C.blue}`, boxShadow: '0 30px 80px rgba(0,0,0,0.6)',
+          }}
         >
-          <div
-            className="w-full max-w-3xl rounded-xl overflow-hidden flex flex-col"
-            style={{ maxHeight: '86vh', background: C.panel, border: `2px solid ${C.blue}`, boxShadow: '0 30px 80px rgba(0,0,0,0.6)' }}
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="flex items-center justify-between px-4 py-3 shrink-0" style={{ borderBottom: `1px solid ${C.border}` }}>
-              <span className="flex items-center gap-2 text-sm font-semibold" style={{ color: C.text }}>
-                <Wand2 size={15} style={{ color: C.blue }} />{activeLabel}
-              </span>
-              <button
-                onClick={() => setExpanded(false)}
-                className="flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-semibold"
-                style={{ background: C.blue, color: '#fff' }}
-              >
-                <Minimize2 size={13} />Shrink
-              </button>
-            </div>
-            <div className="px-4 py-2 flex flex-wrap gap-1.5 shrink-0" style={{ borderBottom: `1px solid ${C.border}` }}>
-              {ALL_TABS.map(([id, lbl]) => {
-                const active = gpmTab === id
-                return (
-                  <button
-                    key={id} onClick={() => setGpmTab(id)}
-                    className="rounded-md px-2.5 py-1 text-[11px] font-medium transition-colors"
-                    style={{ background: active ? C.blue : C.card, color: active ? '#fff' : C.muted, border: `1px solid ${active ? C.blue : C.border}` }}
-                  >
-                    {lbl}
-                  </button>
-                )
-              })}
-            </div>
-            <div className="overflow-y-auto p-5">
-              {activePanel}
-            </div>
+          <div className="flex items-center justify-between px-4 py-3 shrink-0" style={{ borderBottom: `1px solid ${C.border}` }}>
+            <span className="flex items-center gap-2 text-sm font-semibold" style={{ color: C.text }}>
+              <Wand2 size={15} style={{ color: C.blue }} />{expandedLabel}
+            </span>
+            <button
+              onClick={() => setExpanded(false)}
+              className="flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-semibold"
+              style={{ background: C.blue, color: '#fff' }}
+            >
+              <Minimize2 size={13} />Shrink
+            </button>
+          </div>
+          <div className="px-4 py-2 flex flex-wrap gap-1.5 shrink-0" style={{ borderBottom: `1px solid ${C.border}` }}>
+            {ALL_TABS.map(([id, lbl]) => {
+              const active = expandedTab === id
+              return (
+                <button
+                  key={id} onClick={() => setExpandedTab(id)}
+                  className="rounded-md px-2.5 py-1 text-[11px] font-medium transition-colors"
+                  style={{ background: active ? C.blue : C.card, color: active ? '#fff' : C.muted, border: `1px solid ${active ? C.blue : C.border}` }}
+                >
+                  {lbl}
+                </button>
+              )
+            })}
+          </div>
+          <div className="overflow-y-auto p-5">
+            {renderPanel(expandedTab)}
           </div>
         </div>
       )}
