@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
-import { Plus, Folder, MoreVertical, Trash2, Pencil } from 'lucide-react'
+import { useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react'
+import { Plus, Folder, MoreVertical, Trash2, Pencil, Upload } from 'lucide-react'
 import { useProjects } from '../contexts/ProjectContext'
 import { useView } from '../contexts/ViewContext'
 import { LtxLogo } from '../components/LtxLogo'
@@ -123,20 +123,48 @@ function ProjectCard({ project, onOpen, onDelete, onRename }: {
 }
 
 export function Home() {
-  const { projectIds, getProject, createProject, deleteProject, renameProject } = useProjects()
+  const { projectIds, getProject, createProject, importProject, deleteProject, renameProject } = useProjects()
   const { openProject } = useView()
   const { migrationStatus, migrateProjects } = useProjectReferencesMigration()
   const [isCreating, setIsCreating] = useState(false)
   const [newProjectName, setNewProjectName] = useState('')
   const [renamingId, setRenamingId] = useState<string | null>(null)
   const [renameValue, setRenameValue] = useState('')
+  const [importError, setImportError] = useState<string | null>(null)
+  const importFileRef = useRef<HTMLInputElement | null>(null)
   const migrationStartedRef = useRef(false)
+
+  const handleImportFile = async (e: ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    e.target.value = ''
+    if (!file) return
+    try {
+      const data = JSON.parse(await file.text())
+      const project = importProject(data)
+      setImportError(null)
+      openProject(project.id)
+    } catch (error) {
+      setImportError(`Couldn't import "${file.name}": ${error instanceof Error ? error.message : 'invalid project file'}`)
+    }
+  }
 
   useEffect(() => {
     if (migrationStatus.status !== 'needed' || migrationStartedRef.current) return
     migrationStartedRef.current = true
     void migrateProjects()
   }, [migrateProjects, migrationStatus.status])
+
+  // File menu's "New Project" / "Import Project..." land here too (only take
+  // effect while Home is the visible screen, same as the buttons below).
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const action = (e as CustomEvent).detail
+      if (action === 'new-project') setIsCreating(true)
+      else if (action === 'import-project') importFileRef.current?.click()
+    }
+    window.addEventListener('ltx:menu-action', handler)
+    return () => window.removeEventListener('ltx:menu-action', handler)
+  }, [])
 
   const projects = useMemo(() => (
     projectIds
@@ -221,7 +249,7 @@ export function Home() {
           )}
         </nav>
         
-        <div className="p-4 border-t border-zinc-800">
+        <div className="p-4 border-t border-zinc-800 space-y-2">
           <button
             onClick={() => setIsCreating(true)}
             className="w-full px-3 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-sm font-medium flex items-center justify-center gap-2 transition-colors"
@@ -229,6 +257,16 @@ export function Home() {
             <Plus className="h-4 w-4" />
             New Project
           </button>
+          <button
+            onClick={() => importFileRef.current?.click()}
+            title="Import a project file exported from this or another computer"
+            className="w-full px-3 py-2 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-sm font-medium flex items-center justify-center gap-2 transition-colors"
+          >
+            <Upload className="h-4 w-4" />
+            Import Project...
+          </button>
+          <input ref={importFileRef} type="file" accept=".json,application/json" className="hidden" onChange={(e) => void handleImportFile(e)} />
+          {importError && <p className="text-[11px] text-red-400">{importError}</p>}
         </div>
       </aside>
       

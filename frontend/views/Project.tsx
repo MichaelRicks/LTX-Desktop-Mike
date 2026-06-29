@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import { ArrowLeft, Sparkles, Film } from 'lucide-react'
+import { ArrowLeft, Sparkles, Film, Save, Download } from 'lucide-react'
 import { useProjects } from '../contexts/ProjectContext'
 import { useView } from '../contexts/ViewContext'
 import { LtxLogo } from '../components/LtxLogo'
@@ -12,11 +12,19 @@ import {
   runVisualAssetMetadataMigration,
 } from '../lib/project-asset-metadata-migration'
 
+/** If the Video Editor is mounted, ask it to flush any pending (debounced)
+ * autosave immediately so a manual "Save Project" is guaranteed to capture
+ * the latest timeline state, not just whatever was last auto-saved. */
+function flushEditorAutosave(): void {
+  window.dispatchEvent(new Event('ltx:flush-editor'))
+}
+
 export function Project() {
   const {
     activeProject,
     currentTab,
     setProject,
+    getProject,
     setCurrentTab,
     updateAsset,
     pendingRetakeUpdate,
@@ -27,6 +35,11 @@ export function Project() {
   const { goHome } = useView()
   const [assetMetadataMigrationProgress, setAssetMetadataMigrationProgress] = useState({ running: false, total: 0, completed: 0 })
   const [upgradePassProjectId, setUpgradePassProjectId] = useState<string | null>(null)
+  const [toast, setToast] = useState<string | null>(null)
+  const flashToast = useCallback((message: string) => {
+    setToast(message)
+    setTimeout(() => setToast(null), 2200)
+  }, [])
   const activeProjectId = activeProject?.id ?? null
 
   // Gen Space stays mounted across tab switches so an in-progress generation
@@ -46,6 +59,43 @@ export function Project() {
     if (!activeProjectId) return
     setProject(activeProjectId, project)
   }, [activeProjectId, setProject])
+
+  const handleManualSave = useCallback(() => {
+    if (!activeProjectId) return
+    flushEditorAutosave()
+    flashToast('Project saved')
+  }, [activeProjectId, flashToast])
+
+  const handleExportProject = useCallback(async () => {
+    if (!activeProjectId) return
+    const api = window.electronAPI
+    if (!api) return
+    flushEditorAutosave()
+    const project = getProject(activeProjectId)
+    if (!project) return
+
+    const safeName = project.name.replace(/[^a-zA-Z0-9._ -]/g, '_').trim() || 'project'
+    const filePath = await api.showSaveDialog({
+      title: 'Export Project',
+      defaultPath: `${safeName}.ltxproj.json`,
+      filters: [{ name: 'LTX Project', extensions: ['json'] }],
+    })
+    if (!filePath) return
+
+    const result = await api.saveFile({ filePath, data: JSON.stringify(project, null, 2) })
+    flashToast(result.success ? 'Project exported' : `Export failed: ${result.error}`)
+  }, [activeProjectId, getProject, flashToast])
+
+  // File menu's "Save Project" / "Export Project..." land here too.
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const action = (e as CustomEvent).detail
+      if (action === 'save-project') handleManualSave()
+      else if (action === 'export-project') void handleExportProject()
+    }
+    window.addEventListener('ltx:menu-action', handler)
+    return () => window.removeEventListener('ltx:menu-action', handler)
+  }, [handleManualSave, handleExportProject])
 
   useEffect(() => {
     if (!activeProjectId || !activeProjectAssets || !needsAssetMetadataMigration) return
@@ -166,10 +216,32 @@ export function Project() {
           ))}
         </div>
         
-        {/* Right spacer - equal to left to keep tabs centered */}
-        <div className="flex-1" />
+        {/* Right - manual save/export, balances the left side to keep tabs centered.
+            pr-20 clears the global Logs/Settings icons fixed at the window's top-right. */}
+        <div className="flex-1 flex items-center justify-end gap-2 pr-20">
+          <button
+            onClick={handleManualSave}
+            title="Save the project now (it also autosaves continuously)"
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium text-zinc-400 hover:text-white hover:bg-zinc-800 transition-colors"
+          >
+            <Save className="h-4 w-4" />Save
+          </button>
+          <button
+            onClick={() => void handleExportProject()}
+            title="Export this project to a file (for backup or moving to another computer)"
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium text-zinc-400 hover:text-white hover:bg-zinc-800 transition-colors"
+          >
+            <Download className="h-4 w-4" />Export
+          </button>
+        </div>
       </header>
-      
+
+      {toast && (
+        <div className="absolute top-14 right-4 z-50 px-4 py-2 rounded-lg text-sm bg-zinc-800 border border-zinc-700 text-white shadow-xl">
+          {toast}
+        </div>
+      )}
+
       <main className="flex-1 overflow-hidden relative">
         <div className={`absolute inset-0 ${currentTab === 'gen-space' ? '' : 'hidden'}`}>
           <GenSpace />

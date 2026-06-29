@@ -459,6 +459,14 @@ function VideoEditorWithStore({
   const getMinZoomRef = useRef(getMinZoom)
   getMinZoomRef.current = getMinZoom
   
+  const flushAutosave = useCallback(() => {
+    if (autoSaveTimerRef.current) {
+      clearTimeout(autoSaveTimerRef.current)
+      autoSaveTimerRef.current = null
+    }
+    saveProject(updatedProject(currentProjectRef.current, editorModelRef.current))
+  }, [saveProject])
+
   const hasMountedRef = useRef(false)
   useEffect(() => {
     if (!hasMountedRef.current) {
@@ -466,22 +474,42 @@ function VideoEditorWithStore({
       return
     }
     if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current)
-    autoSaveTimerRef.current = setTimeout(() => {
-      saveProject(updatedProject(currentProjectRef.current, editorModelRef.current))
-    }, AUTOSAVE_DELAY)
+    autoSaveTimerRef.current = setTimeout(flushAutosave, AUTOSAVE_DELAY)
 
     return () => {
       if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current)
     }
-  }, [editorModel, saveProject])
+  }, [editorModel, flushAutosave])
 
   useEffect(() => {
+    return () => flushAutosave()
+  }, [flushAutosave])
+
+  // Belt-and-suspenders against losing the trailing debounce window: flush
+  // immediately on window/app close (covers an abrupt Electron quit, where
+  // React's unmount cleanup above may not get to run in time) and whenever a
+  // manual "Save Project" is requested elsewhere in the app.
+  useEffect(() => {
+    window.addEventListener('beforeunload', flushAutosave)
+    window.addEventListener('ltx:flush-editor', flushAutosave)
     return () => {
-      if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current)
-      saveProject(updatedProject(currentProjectRef.current, editorModelRef.current))
+      window.removeEventListener('beforeunload', flushAutosave)
+      window.removeEventListener('ltx:flush-editor', flushAutosave)
     }
-  }, [saveProject])
-  
+  }, [flushAutosave])
+
+  // Pull in assets added elsewhere (e.g. a Gen Space generation completed while
+  // the editor sat open in the background) so they show up in the Assets panel
+  // immediately, not just on next reopen. The editor's own model only gets a
+  // snapshot of `currentProject.assets` at mount, so without this any asset
+  // added after that point would stay invisible to the editor until something
+  // here pulls it in.
+  useEffect(() => {
+    const knownIds = new Set(editorModel.assets.map(asset => asset.id))
+    const newAssets = currentProject.assets.filter(asset => !knownIds.has(asset.id))
+    if (newAssets.length > 0) actions.addAssetsToEditor(newAssets)
+  }, [currentProject.assets, editorModel.assets, actions])
+
   // --- Core timeline logic ---
 
   const deleteAssetActionRef = useRef<() => void>(() => {})

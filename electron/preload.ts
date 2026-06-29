@@ -25,6 +25,14 @@ api.onBackendHealthStatus = (cb: (data: BackendHealthStatus) => void) => {
   }
 }
 
+api.onMenuAction = (cb: (action: string) => void) => {
+  const listener = (_: unknown, action: string) => cb(action)
+  ipcRenderer.on('menu-action', listener)
+  return () => {
+    ipcRenderer.removeListener('menu-action', listener)
+  }
+}
+
 api.getPathForFile = (file: File) => webUtils.getPathForFile(file)
 
 api.platform = process.platform

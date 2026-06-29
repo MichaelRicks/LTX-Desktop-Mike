@@ -18,6 +18,7 @@ interface ProjectContextType {
   getProject: (id: string) => Project | null
   setProject: (id: string, project: Project) => void
   createProject: (name: string) => Project
+  importProject: (projectData: unknown) => Project
   deleteProject: (id: string) => void
   renameProject: (id: string, name: string) => void
   activateProject: (id: string) => void
@@ -163,6 +164,26 @@ export function ProjectProvider({ children }: { children: React.ReactNode }) {
     })
 
     const persistedProject = writeProject(newProject.id, newProject)
+    const nextProjectIds = [persistedProject.id, ...readProjectIds().filter(id => id !== persistedProject.id)]
+    writeProjectIds(nextProjectIds)
+    setProjectIds(nextProjectIds)
+    bumpProjectRevision()
+    return persistedProject
+  }, [bumpProjectRevision])
+
+  // Register an exported project file (see Project.tsx's "Export Project...")
+  // as a new project. Always assigns a fresh id so re-importing the same file,
+  // or importing on a machine that already has a project with that id, never
+  // collides with or overwrites an existing project.
+  const importProject = useCallback((projectData: unknown): Project => {
+    const normalized = normalizeProject(projectData)
+    const importedProject = normalizeProject({
+      ...normalized,
+      id: `project-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+      updatedAt: Date.now(),
+    })
+
+    const persistedProject = writeProject(importedProject.id, importedProject)
     const nextProjectIds = [persistedProject.id, ...readProjectIds().filter(id => id !== persistedProject.id)]
     writeProjectIds(nextProjectIds)
     setProjectIds(nextProjectIds)
@@ -322,6 +343,7 @@ export function ProjectProvider({ children }: { children: React.ReactNode }) {
       getProject,
       setProject,
       createProject,
+      importProject,
       deleteProject,
       renameProject,
       activateProject,

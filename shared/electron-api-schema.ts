@@ -350,6 +350,7 @@ export type ElectronAPI = InvokeAPI & {
   onPythonSetupProgress: (cb: (data: unknown) => void) => void
   removePythonSetupProgress: () => void
   onBackendHealthStatus: (cb: (data: BackendHealthStatus) => void) => (() => void)
+  onMenuAction: (cb: (action: string) => void) => (() => void)
   getPathForFile: (file: File) => string
   platform: string
   hfGatingEnabled: boolean

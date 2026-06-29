@@ -100,6 +100,16 @@ function AppContent() {
     return () => window.removeEventListener('open-settings', handler)
   }, [])
 
+  // Forward the native File menu's Project actions (Save/Export/Import/New)
+  // into the renderer as a window event, the same way other cross-component
+  // signals here are handled — Home.tsx/Project.tsx listen for the actions
+  // relevant to whichever of them is currently mounted.
+  useEffect(() => {
+    return window.electronAPI?.onMenuAction((action) => {
+      window.dispatchEvent(new CustomEvent('ltx:menu-action', { detail: action }))
+    })
+  }, [])
+
   useEffect(() => {
     const handler = (e: Event) => {
       const detail = (e as CustomEvent).detail ?? {}
