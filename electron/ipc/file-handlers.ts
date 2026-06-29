@@ -193,6 +193,14 @@ export function registerFileHandlers(): void {
     return true
   })
 
+  handle('openTwitterCompose', async ({ text }) => {
+    const { shell } = await import('electron')
+    const url = new URL('https://twitter.com/intent/tweet')
+    if (text) url.searchParams.set('text', text)
+    await shell.openExternal(url.toString())
+    return true
+  })
+
   handle('openParentFolderOfFile', async ({ filePath }) => {
     const { shell } = await import('electron')
     const normalizedPath = validatePath(filePath, getAllowedRoots())

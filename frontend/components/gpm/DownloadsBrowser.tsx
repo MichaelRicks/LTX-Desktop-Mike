@@ -7,7 +7,7 @@
  * there's no directory-handle permission dance — it's the real filesystem.
  */
 import { useEffect, useRef, useState } from 'react'
-import { ChevronLeft, ChevronsDownUp, FolderPlus, FolderOpen, GripVertical, Pencil, RefreshCw, Send, Trash2, Upload, X } from 'lucide-react'
+import { ChevronLeft, ChevronsDownUp, FolderInput, FolderPlus, FolderOpen, GripVertical, Pencil, RefreshCw, RotateCcw, Send, Trash2, Upload, X } from 'lucide-react'
 import { pathToFileUrl } from '../../lib/file-url'
 import { useProjects } from '../../contexts/ProjectContext'
 import { MediaThumb } from './MediaThumb'
@@ -55,6 +55,8 @@ function Dock({ onClose }: { onClose: () => void }) {
   const [moveDest, setMoveDest] = useState('')
   const [dropLine, setDropLine] = useState<{ target: string; before: boolean } | null>(null)
   const [typeFilter, setTypeFilter] = useState<TypeFilter>('all')
+  const [rootPath, setRootPath] = useState('')
+  const [rootIsDefault, setRootIsDefault] = useState(true)
   const dragFolder = useRef<string | null>(null)
   const flash = (m: string) => { setToast(m); setTimeout(() => setToast(null), 1600) }
 
@@ -66,8 +68,26 @@ function Dock({ onClose }: { onClose: () => void }) {
     setFolders(ordered)
     setFiles(d.files)
     setOpenFolders((prev) => new Set([...prev].filter((f) => ordered.includes(f))))
+    const r = await api.gpmLibGetRoot()
+    setRootPath(r.root); setRootIsDefault(r.isDefault)
   }
   useEffect(() => { void refresh() }, [])
+
+  const chooseFolder = async () => {
+    if (!api) return
+    const r = await api.gpmLibChooseRoot()
+    if (!r.root) return
+    setOpenFolders(new Set())
+    flash(`Library set to ${r.root}`)
+    await refresh()
+  }
+  const resetFolder = async () => {
+    if (!api) return
+    await api.gpmLibResetRoot()
+    setOpenFolders(new Set())
+    flash('Library reset to default')
+    await refresh()
+  }
 
   const toggleFolder = (name: string) => {
     setOpenFolders((prev) => {
@@ -169,6 +189,16 @@ function Dock({ onClose }: { onClose: () => void }) {
           <button onClick={() => void refresh()} title="Refresh" className="h-7 w-7 flex items-center justify-center rounded-md" style={{ color: C.muted }}><RefreshCw size={14} /></button>
           <button onClick={onClose} title="Close" className="h-7 w-7 flex items-center justify-center rounded-md" style={{ color: C.muted }}><X size={16} /></button>
         </div>
+      </div>
+
+      <div className="flex items-center gap-2 px-3 py-2 shrink-0" style={{ borderBottom: `1px solid ${C.border}` }}>
+        <span className="flex-1 text-[10px] truncate" title={rootPath} style={{ color: C.faint }}>{rootPath}</span>
+        {!rootIsDefault && (
+          <button onClick={() => void resetFolder()} title="Reset to default Downloads folder" className="h-6 w-6 flex items-center justify-center rounded-md shrink-0" style={{ color: C.muted }}><RotateCcw size={12} /></button>
+        )}
+        <button onClick={() => void chooseFolder()} title="Choose a different folder for the Downloads Browser" className="flex items-center gap-1 rounded-md px-2 py-1 text-[10px] font-medium shrink-0" style={{ background: C.elev, color: C.text, border: `1px solid ${C.border}` }}>
+          <FolderInput size={11} />Set Folder
+        </button>
       </div>
 
       <div className="flex gap-2 px-3 py-2 shrink-0" style={{ borderBottom: `1px solid ${C.border}` }}>

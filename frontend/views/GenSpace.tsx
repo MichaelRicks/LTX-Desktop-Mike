@@ -92,6 +92,15 @@ function AssetCard({
     a.click()
   }
 
+  // "Lightweight" post-to-X: no API keys/OAuth — opens X's compose page with
+  // the prompt pre-filled as a caption, and reveals the file in Explorer so
+  // the user can drag it straight into the compose box to attach it.
+  const handlePostToX = (e: React.MouseEvent) => {
+    e.stopPropagation()
+    void window.electronAPI?.showItemInFolder({ filePath: asset.path })
+    void window.electronAPI?.openTwitterCompose({ text: asset.prompt })
+  }
+
   return (
     <div
       className="relative group cursor-pointer rounded-xl overflow-hidden bg-zinc-900"
@@ -193,6 +202,17 @@ function AssetCard({
           </div>
           
           <div className="flex items-center gap-1.5">
+            {asset.type === 'video' && (
+              <button
+                onClick={handlePostToX}
+                title="Post to X — opens compose with your caption, reveals the file to drag in"
+                className="p-1.5 rounded-lg bg-black/40 backdrop-blur-md text-white hover:bg-black/60 transition-colors"
+              >
+                <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="currentColor">
+                  <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z" />
+                </svg>
+              </button>
+            )}
             <button
               onClick={handleDownload}
               className="p-1.5 rounded-lg bg-black/40 backdrop-blur-md text-white hover:bg-black/60 transition-colors"

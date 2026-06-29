@@ -28,6 +28,15 @@ export function Project() {
   const [assetMetadataMigrationProgress, setAssetMetadataMigrationProgress] = useState({ running: false, total: 0, completed: 0 })
   const [upgradePassProjectId, setUpgradePassProjectId] = useState<string | null>(null)
   const activeProjectId = activeProject?.id ?? null
+
+  // Gen Space stays mounted across tab switches so an in-progress generation
+  // (prompt, progress, result) survives jumping to the Video Editor and back —
+  // previously the tab switch unmounted it and silently dropped the work.
+  // The Video Editor mounts on first visit and then also stays alive.
+  const [editorMounted, setEditorMounted] = useState(currentTab === 'video-editor')
+  useEffect(() => {
+    if (currentTab === 'video-editor') setEditorMounted(true)
+  }, [currentTab])
   const activeProjectAssets = activeProject?.assets ?? null
   const needsAssetMetadataMigration = activeProjectAssets
     ? hasVisualAssetMetadataForMigration(activeProjectAssets)
@@ -162,16 +171,19 @@ export function Project() {
       </header>
       
       <main className="flex-1 overflow-hidden relative">
-        {currentTab === 'gen-space' ? (
+        <div className={`absolute inset-0 ${currentTab === 'gen-space' ? '' : 'hidden'}`}>
           <GenSpace />
-        ) : (
-          <VideoEditor
-            key={activeProject.id}
-            currentProject={activeProject}
-            saveProject={handleSaveActiveProject}
-            pendingRetakeUpdate={pendingRetakeUpdate}
-            pendingIcLoraUpdate={pendingIcLoraUpdate}
-          />
+        </div>
+        {editorMounted && (
+          <div className={`absolute inset-0 ${currentTab === 'video-editor' ? '' : 'hidden'}`}>
+            <VideoEditor
+              key={activeProject.id}
+              currentProject={activeProject}
+              saveProject={handleSaveActiveProject}
+              pendingRetakeUpdate={pendingRetakeUpdate}
+              pendingIcLoraUpdate={pendingIcLoraUpdate}
+            />
+          </div>
         )}
       </main>
     </div>

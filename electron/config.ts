@@ -2,6 +2,7 @@ import { app } from 'electron'
 import path from 'path'
 import os from 'os'
 import { getProjectAssetsPath } from './app-state'
+import { resolveLibraryRoot } from './gpm-library-root'
 
 export const isDev = !app.isPackaged
 
@@ -26,5 +27,6 @@ export function getAllowedRoots(): string[] {
     roots.push(process.resourcesPath)
   }
   roots.push(getProjectAssetsPath())
+  roots.push(resolveLibraryRoot())
   return roots
 }

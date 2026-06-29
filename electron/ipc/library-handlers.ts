@@ -1,10 +1,12 @@
-import { app, shell } from 'electron'
+import { dialog, shell } from 'electron'
 import path from 'path'
 import fs from 'fs'
 import { getAllowedRoots } from '../config'
+import { getMainWindow } from '../window'
 import { validatePath } from '../path-validation'
 import { logger } from '../logger'
 import { handle } from './typed-handle'
+import { defaultLibraryRoot, resolveLibraryRoot, setLibraryRootOverride } from '../gpm-library-root'
 
 // Real-filesystem media library for the Prompt Manager Pro "Downloads Browser".
 // Lives under the OS Downloads dir (an allowed root) so files are real and the
@@ -22,7 +24,7 @@ const MIME_BY_EXT: Record<string, string> = {
 }
 
 function libRoot(): string {
-  const root = path.join(app.getPath('downloads'), 'PromptManagerPro')
+  const root = resolveLibraryRoot()
   fs.mkdirSync(root, { recursive: true })
   return root
 }
@@ -133,5 +135,24 @@ export function registerLibraryHandlers(): void {
     } catch (e) {
       return { success: false as const, error: e instanceof Error ? e.message : 'read failed' }
     }
+  })
+
+  handle('gpmLibGetRoot', () => ({ root: libRoot(), isDefault: resolveLibraryRoot() === defaultLibraryRoot() }))
+
+  handle('gpmLibChooseRoot', async () => {
+    const win = getMainWindow()
+    const result = win
+      ? await dialog.showOpenDialog(win, { title: 'Choose Downloads Browser folder', properties: ['openDirectory', 'createDirectory'] })
+      : await dialog.showOpenDialog({ title: 'Choose Downloads Browser folder', properties: ['openDirectory', 'createDirectory'] })
+    if (result.canceled || result.filePaths.length === 0) return { root: null }
+    const chosen = result.filePaths[0]
+    setLibraryRootOverride(chosen)
+    fs.mkdirSync(chosen, { recursive: true })
+    return { root: chosen }
+  })
+
+  handle('gpmLibResetRoot', () => {
+    setLibraryRootOverride(null)
+    return { root: libRoot() }
   })
 }

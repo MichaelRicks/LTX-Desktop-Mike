@@ -130,6 +130,10 @@ export const electronAPISchemas = {
     }),
     output: z.boolean(),
   },
+  openTwitterCompose: {
+    input: z.object({ text: z.string().optional() }),
+    output: z.boolean(),
+  },
   openParentFolderOfFile: {
     input: z.object({ filePath: z.string() }),
     output: z.void(),
@@ -329,6 +333,9 @@ export const electronAPISchemas = {
     input: z.object({ path: z.string() }),
     output: ipcResult({ dataUrl: z.string() }),
   },
+  gpmLibGetRoot: { input: z.object({}), output: z.object({ root: z.string(), isDefault: z.boolean() }) },
+  gpmLibChooseRoot: { input: z.object({}), output: z.object({ root: z.string().nullable() }) },
+  gpmLibResetRoot: { input: z.object({}), output: z.object({ root: z.string() }) },
 } as const
 
 type Schemas = typeof electronAPISchemas
