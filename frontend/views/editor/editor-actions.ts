@@ -451,6 +451,17 @@ function getNextAdjustmentLayerName(assets: Asset[]): string {
   return count > 0 ? `Adjustment Layer ${count + 1}` : 'Adjustment Layer'
 }
 
+function getNextTimelineName(timelines: Timeline[]): string {
+  const existingNames = new Set(timelines.map(timeline => timeline.name))
+  let n = timelines.length + 1
+  let candidate = `Timeline ${n}`
+  while (existingNames.has(candidate)) {
+    n += 1
+    candidate = `Timeline ${n}`
+  }
+  return candidate
+}
+
 function createAdjustmentAsset(name = 'Adjustment Layer'): Asset {
   return {
     id: makeId('asset-adjustment'),
@@ -650,7 +661,7 @@ export function switchActiveTimeline(state: EditorState, timelineId: string | nu
 }
 
 export function createTimeline(state: EditorState, name?: string): EditorState {
-  const timeline = createDefaultTimeline(name)
+  const timeline = createDefaultTimeline(name ?? getNextTimelineName(state.editorModel.timelines))
   return {
     ...updateEditorModel(state, editorModel => ({
       ...editorModel,

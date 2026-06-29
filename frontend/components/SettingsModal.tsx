@@ -1075,7 +1075,7 @@ export function SettingsModal({ isOpen, onClose, initialTab }: SettingsModalProp
                 <div className="space-y-6">
                   {/* App Identity */}
                   <div className="text-center space-y-2">
-                    <h3 className="text-lg font-bold text-white">LTX Desktop</h3>
+                    <h3 className="text-lg font-bold text-white">LTX Desktop Studio Pro</h3>
                     <p className="text-sm text-zinc-400">Version {appVersion || '...'}</p>
                     <p className="text-xs text-zinc-500">AI-Powered Video Editor</p>
                   </div>

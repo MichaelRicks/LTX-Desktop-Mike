@@ -1372,7 +1372,7 @@ function Dock({ onClose }: { onClose: () => void }) {
       {/* Side tab on the left edge (centered) to collapse the panel. */}
       <button
         onClick={onClose}
-        title="Close Prompt Manager Pro"
+        title="Close Desktop Studio Pro"
         className="absolute top-1/2 -translate-y-1/2 -left-6 flex items-center justify-center"
         style={{ width: 24, height: 84, background: C.blue, color: '#fff', borderRadius: '8px 0 0 8px', boxShadow: '-3px 0 10px rgba(0,0,0,0.35)' }}
       >
@@ -1381,7 +1381,7 @@ function Dock({ onClose }: { onClose: () => void }) {
 
       <div className="flex items-center justify-between px-4 py-3 shrink-0" style={{ borderBottom: `1px solid ${C.border}` }}>
         <span className="flex items-center gap-2 text-sm font-semibold" style={{ color: C.text }}>
-          <Wand2 size={15} style={{ color: C.blue }} />Prompt Manager Pro
+          <Wand2 size={15} style={{ color: C.blue }} />Desktop Studio Pro
         </span>
         <div className="flex items-center gap-2">
           <button
@@ -1500,7 +1500,7 @@ export function PromptManagerPro() {
   if (!open) {
     return (
       <button
-        onClick={() => setPromptManagerProOpen(true)} title="Open Prompt Manager Pro"
+        onClick={() => setPromptManagerProOpen(true)} title="Open Desktop Studio Pro"
         className="fixed top-1/2 -translate-y-1/2 right-0 z-[75] flex items-center justify-center"
         style={{ width: 24, height: 84, background: C.blue, color: '#fff', borderRadius: '8px 0 0 8px', boxShadow: '-3px 0 10px rgba(0,0,0,0.35)' }}
       >

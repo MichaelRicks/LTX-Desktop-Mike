@@ -177,8 +177,24 @@ export function ProjectProvider({ children }: { children: React.ReactNode }) {
   // collides with or overwrites an existing project.
   const importProject = useCallback((projectData: unknown): Project => {
     const normalized = normalizeProject(projectData)
+
+    const existingNames = new Set(
+      readProjectIds().map(id => readProject(id)?.name).filter((name): name is string => !!name)
+    )
+    let importedName = normalized.name
+    if (existingNames.has(importedName)) {
+      let suffix = 1
+      let candidate = `${importedName} (Imported)`
+      while (existingNames.has(candidate)) {
+        suffix += 1
+        candidate = `${importedName} (Imported ${suffix})`
+      }
+      importedName = candidate
+    }
+
     const importedProject = normalizeProject({
       ...normalized,
+      name: importedName,
       id: `project-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
       updatedAt: Date.now(),
     })

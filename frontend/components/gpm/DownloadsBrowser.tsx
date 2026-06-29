@@ -183,7 +183,7 @@ function Dock({ onClose }: { onClose: () => void }) {
   return (
     <div className="fixed top-0 left-0 z-[75] h-screen w-[340px] flex flex-col" style={{ background: C.panel, borderRight: `1px solid ${C.border}`, boxShadow: '8px 0 24px rgba(0,0,0,0.4)' }}>
       <div className="flex items-center justify-between px-4 py-3 shrink-0" style={{ borderBottom: `1px solid ${C.border}` }}>
-        <span className="flex items-center gap-2 text-sm font-semibold" style={{ color: C.text }}><FolderOpen size={15} style={{ color: C.blue }} />Downloads</span>
+        <span className="flex items-center gap-2 text-sm font-semibold" style={{ color: C.text }}><FolderOpen size={15} style={{ color: C.blue }} />Studio Assets</span>
         <div className="flex items-center gap-1">
           <button onClick={collapseAll} title="Collapse all folders" className="h-7 w-7 flex items-center justify-center rounded-md" style={{ color: C.muted }}><ChevronsDownUp size={14} /></button>
           <button onClick={() => void api?.gpmLibReveal({ folder: [...openFolders][0] })} title="Open folder in Explorer" className="h-7 w-7 flex items-center justify-center rounded-md" style={{ color: C.muted }}><FolderOpen size={14} /></button>
@@ -197,7 +197,7 @@ function Dock({ onClose }: { onClose: () => void }) {
         {!rootIsDefault && (
           <button onClick={() => void resetFolder()} title="Reset to default Downloads folder" className="h-6 w-6 flex items-center justify-center rounded-md shrink-0" style={{ color: C.muted }}><RotateCcw size={12} /></button>
         )}
-        <button onClick={() => void chooseFolder()} title="Choose a different folder for the Downloads Browser" className="flex items-center gap-1 rounded-md px-2 py-1 text-[10px] font-medium shrink-0" style={{ background: C.elev, color: C.text, border: `1px solid ${C.border}` }}>
+        <button onClick={() => void chooseFolder()} title="Choose a different folder for the Studio Assets panel" className="flex items-center gap-1 rounded-md px-2 py-1 text-[10px] font-medium shrink-0" style={{ background: C.elev, color: C.text, border: `1px solid ${C.border}` }}>
           <FolderInput size={11} />Set Folder
         </button>
       </div>
@@ -318,7 +318,7 @@ function Dock({ onClose }: { onClose: () => void }) {
       {toast && <div className="absolute left-1/2 bottom-4 -translate-x-1/2 px-3 py-2 rounded-lg text-xs" style={{ background: C.elev, border: `1px solid ${C.borderLt}`, color: C.text }}>{toast}</div>}
 
       <button
-        onClick={onClose} title="Close Downloads Browser"
+        onClick={onClose} title="Close Studio Assets"
         className="fixed top-1/2 -translate-y-1/2 z-[76] flex items-center justify-center"
         style={{ left: 340, width: 16, height: 84, background: C.blue, color: '#fff', borderRadius: '0 8px 8px 0', boxShadow: '3px 0 10px rgba(0,0,0,0.35)' }}
       >
@@ -356,7 +356,7 @@ export function DownloadsBrowser() {
   const open = useDownloadsBrowserOpen()
   if (!open) {
     return (
-      <button onClick={() => setDownloadsBrowserOpen(true)} title="Open Downloads Browser" className="fixed top-1/2 -translate-y-1/2 left-0 flex items-center justify-center" style={{ width: 24, height: 84, background: C.blue, color: '#fff', borderRadius: '0 8px 8px 0', boxShadow: '3px 0 10px rgba(0,0,0,0.35)' }}>
+      <button onClick={() => setDownloadsBrowserOpen(true)} title="Open Studio Assets" className="fixed top-1/2 -translate-y-1/2 left-0 flex items-center justify-center" style={{ width: 24, height: 84, background: C.blue, color: '#fff', borderRadius: '0 8px 8px 0', boxShadow: '3px 0 10px rgba(0,0,0,0.35)' }}>
         <ChevronLeft size={18} style={{ transform: 'rotate(180deg)' }} />
       </button>
     )

@@ -1,6 +1,6 @@
-import { app, Menu, type BrowserWindow, type MenuItemConstructorOptions } from 'electron'
+import { app, Menu, shell, type BrowserWindow, type MenuItemConstructorOptions } from 'electron'
 
-export type MenuAction = 'new-project' | 'save-project' | 'export-project' | 'import-project'
+export type MenuAction = 'new-project' | 'save-project' | 'export-project' | 'import-project' | 'show-keyboard-shortcuts'
 
 function sendMenuAction(window: BrowserWindow, action: MenuAction): void {
   window.webContents.send('menu-action', action)
@@ -33,6 +33,9 @@ export function createAppMenu(window: BrowserWindow): void {
       role: 'help',
       submenu: [
         { label: `${app.getName()} ${app.getVersion()}`, enabled: false },
+        { type: 'separator' },
+        { label: 'Documentation', click: () => shell.openExternal('https://github.com/Lightricks/LTX-Desktop') },
+        { label: 'Keyboard Shortcuts', click: () => sendMenuAction(window, 'show-keyboard-shortcuts') },
       ],
     },
   ]

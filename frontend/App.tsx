@@ -3,7 +3,7 @@ import { Loader2, AlertCircle, Settings, FileText } from 'lucide-react'
 import { ApiClient, type ApiSuccessOf } from './lib/api-client'
 import { ProjectProvider } from './contexts/ProjectContext'
 import { ViewProvider, useView } from './contexts/ViewContext'
-import { KeyboardShortcutsProvider } from './contexts/KeyboardShortcutsContext'
+import { KeyboardShortcutsProvider, useKeyboardShortcuts } from './contexts/KeyboardShortcutsContext'
 import { AppSettingsProvider, useAppSettings } from './contexts/AppSettingsContext'
 import { KeyboardShortcutsModal } from './components/KeyboardShortcutsModal'
 import { useBackend } from './hooks/use-backend'
@@ -31,6 +31,7 @@ function AppContent() {
   const { currentView } = useView()
   const downloadsBrowserOpen = useDownloadsBrowserOpen()
   const promptManagerProOpen = usePromptManagerProOpen()
+  const { setEditorOpen: setKbEditorOpen } = useKeyboardShortcuts()
 
   // Tab toggles both Prompt Manager Pro panels closed/open together — like
   // Photoshop/Premiere's "hide all panels" — restoring whichever side(s) were
@@ -106,9 +107,13 @@ function AppContent() {
   // relevant to whichever of them is currently mounted.
   useEffect(() => {
     return window.electronAPI?.onMenuAction((action) => {
+      if (action === 'show-keyboard-shortcuts') {
+        setKbEditorOpen(true)
+        return
+      }
       window.dispatchEvent(new CustomEvent('ltx:menu-action', { detail: action }))
     })
-  }, [])
+  }, [setKbEditorOpen])
 
   useEffect(() => {
     const handler = (e: Event) => {
@@ -508,7 +513,7 @@ function AppContent() {
         <div className="h-screen bg-background flex items-center justify-center">
           <div className="text-center">
             <Loader2 className="h-12 w-12 text-primary animate-spin mx-auto mb-4" />
-            <h2 className="text-xl font-semibold text-foreground mb-2">Starting LTX Desktop...</h2>
+            <h2 className="text-xl font-semibold text-foreground mb-2">Starting LTX Desktop Studio Pro...</h2>
             <p className="text-muted-foreground">Initializing the inference engine</p>
           </div>
         </div>
@@ -560,8 +565,11 @@ function AppContent() {
   return (
     <div className="relative h-screen w-screen">
       <div
-        className="h-full w-full transition-[margin-left,margin-right] duration-150"
-        style={{ marginLeft: downloadsBrowserOpen ? 340 : 0, marginRight: promptManagerProOpen ? 396 : 0 }}
+        className="h-full transition-[margin-left,width] duration-150"
+        style={{
+          marginLeft: downloadsBrowserOpen ? 340 : 0,
+          width: `calc(100% - ${downloadsBrowserOpen ? 340 : 0}px - ${promptManagerProOpen ? 396 : 0}px)`,
+        }}
       >
         {renderView()}
       </div>

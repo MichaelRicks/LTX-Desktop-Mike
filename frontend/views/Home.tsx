@@ -285,7 +285,7 @@ export function Home() {
           {/* Dark overlay for text readability */}
           <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-black/30 to-black/10" />
           <div className="absolute bottom-6 left-8 z-10">
-            <h1 className="text-3xl font-bold text-white mb-2 drop-shadow-lg">LTX Desktop</h1>
+            <h1 className="text-3xl font-bold text-white mb-2 drop-shadow-lg">LTX Desktop Studio Pro</h1>
             <p className="text-zinc-200 drop-shadow-md">Create and manage your video projects</p>
           </div>
         </div>
