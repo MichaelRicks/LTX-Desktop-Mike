@@ -1,5 +1,5 @@
 import type { Project, Timeline } from '../../types/project-model'
-import type { EditorModel } from './editor-state'
+import type { EditorModel, TimelineInOutRange } from './editor-state'
 import { DEFAULT_TRACKS } from '../../types/project-model'
 import { migrateClip, migrateTracks } from './video-editor-utils'
 
@@ -26,7 +26,11 @@ export function getEditorModel(project: Project): EditorModel {
   }
 }
 
-export function updatedProject(fromProject: Project, editorModel: EditorModel): Project {
+export function updatedProject(
+  fromProject: Project,
+  editorModel: EditorModel,
+  timelineInOutMap: Record<string, TimelineInOutRange> = {},
+): Project {
   // The editor's asset list is a snapshot taken when it first mounted (or last
   // synced) — it doesn't know about assets added elsewhere since then (e.g. a
   // Gen Space generation completed while the editor sat open in the background,
@@ -44,11 +48,20 @@ export function updatedProject(fromProject: Project, editorModel: EditorModel): 
   // shared id (it owns rename/delete for bins it created itself).
   const bins = { ...fromProject.bins, ...editorModel.bins }
 
+  // In/out marks live in transient session state while editing (see
+  // createInitialEditorState), not on editorModel.timelines — fold the
+  // current values back onto each timeline so they persist with the project.
+  const timelines = editorModel.timelines.map(timeline => ({
+    ...timeline,
+    inPoint: timelineInOutMap[timeline.id]?.inPoint ?? null,
+    outPoint: timelineInOutMap[timeline.id]?.outPoint ?? null,
+  }))
+
   return {
     ...fromProject,
     assets: [...externallyAddedAssets, ...editorModel.assets],
     bins,
-    timelines: editorModel.timelines,
+    timelines,
     activeTimelineId: editorModel.activeTimelineId ?? editorModel.timelines[0]?.id,
     updatedAt: Date.now(),
   }

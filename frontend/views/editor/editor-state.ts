@@ -241,6 +241,19 @@ export function createInitialEditorState(
   editorModel: EditorModel,
   layout: EditorLayout = DEFAULT_LAYOUT,
 ): EditorState {
+  // In/out marks are persisted per-timeline on the project (Timeline.inPoint/
+  // outPoint) but kept in transient session state while editing — same reason
+  // undo/redo skips them: they're playback marks, not document content. Seed
+  // the in-memory map from whatever was last saved so reopening a project
+  // restores them instead of resetting to none.
+  const timelineInOutMap: Record<string, TimelineInOutRange> = {}
+  for (const timeline of editorModel.timelines) {
+    timelineInOutMap[timeline.id] = {
+      inPoint: timeline.inPoint ?? null,
+      outPoint: timeline.outPoint ?? null,
+    }
+  }
+
   return {
     editorModel,
     session: {
@@ -255,7 +268,7 @@ export function createInitialEditorState(
         isPlaying: false,
         shuttleSpeed: 0,
         playingInOut: false,
-        timelineInOutMap: {},
+        timelineInOutMap,
       },
       tools: {
         zoom: 1,

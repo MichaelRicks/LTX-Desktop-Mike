@@ -2619,7 +2619,7 @@ export function deriveProjectPatch(state: EditorState): EditorModel {
 }
 
 export function commitToProject(state: EditorState, baseProject: Project): Project {
-  return updatedProject(baseProject, state.editorModel)
+  return updatedProject(baseProject, state.editorModel, state.session.transport.timelineInOutMap)
 }
 
 export function setDirty(state: EditorState, dirty: boolean): EditorState {

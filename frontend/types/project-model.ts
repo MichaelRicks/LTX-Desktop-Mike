@@ -318,6 +318,8 @@ export const timelineSchema = z.object({
   tracks: z.array(trackSchema),
   clips: z.array(timelineClipSchema),
   subtitles: z.array(subtitleClipSchema).default([]),
+  inPoint: z.number().nullable().optional(),
+  outPoint: z.number().nullable().optional(),
 })
 
 export const assetBinsSchema = z.record(z.string(), z.string())

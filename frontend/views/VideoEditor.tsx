@@ -464,8 +464,12 @@ function VideoEditorWithStore({
       clearTimeout(autoSaveTimerRef.current)
       autoSaveTimerRef.current = null
     }
-    saveProject(updatedProject(currentProjectRef.current, editorModelRef.current))
-  }, [saveProject])
+    saveProject(updatedProject(
+      currentProjectRef.current,
+      editorModelRef.current,
+      getEditorState().session.transport.timelineInOutMap,
+    ))
+  }, [saveProject, getEditorState])
 
   const hasMountedRef = useRef(false)
   useEffect(() => {
