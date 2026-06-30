@@ -37,10 +37,17 @@ export function updatedProject(fromProject: Project, editorModel: EditorModel): 
   const editorAssetIds = new Set(editorModel.assets.map(asset => asset.id))
   const externallyAddedAssets = fromProject.assets.filter(asset => !editorAssetIds.has(asset.id))
 
+  // Same staleness risk applies to the bin/tag name map: Gen Space's tagging
+  // UI can create folders while the editor sits mounted in the background, so
+  // overwriting wholesale with the editor's snapshot would silently erase
+  // those folder names. Union instead, with the editor's copy winning on a
+  // shared id (it owns rename/delete for bins it created itself).
+  const bins = { ...fromProject.bins, ...editorModel.bins }
+
   return {
     ...fromProject,
     assets: [...externallyAddedAssets, ...editorModel.assets],
-    bins: editorModel.bins,
+    bins,
     timelines: editorModel.timelines,
     activeTimelineId: editorModel.activeTimelineId ?? editorModel.timelines[0]?.id,
     updatedAt: Date.now(),
