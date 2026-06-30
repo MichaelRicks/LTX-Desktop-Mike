@@ -233,15 +233,26 @@ export function registerFileHandlers(): void {
 
   handle('showSaveDialog', async ({ title, defaultPath, filters }) => {
     const mainWindow = getMainWindow()
-    if (!mainWindow) return null
-    const result = await dialog.showSaveDialog(mainWindow, {
-      title: title || 'Save File',
-      defaultPath,
-      filters: filters || [],
-    })
-    if (result.canceled || !result.filePath) return null
-    approvePath(result.filePath)
-    return result.filePath
+    if (!mainWindow) {
+      // Indistinguishable from "user cancelled" to the renderer (the IPC
+      // contract returns null either way), but this case is a real bug, not
+      // a cancellation — log it so it's diagnosable instead of silent.
+      logger.error('showSaveDialog: no main window available')
+      return null
+    }
+    try {
+      const result = await dialog.showSaveDialog(mainWindow, {
+        title: title || 'Save File',
+        defaultPath,
+        filters: filters || [],
+      })
+      if (result.canceled || !result.filePath) return null
+      approvePath(result.filePath)
+      return result.filePath
+    } catch (error) {
+      logger.error(`showSaveDialog failed: ${error}`)
+      return null
+    }
   })
 
   handle('saveFile', async ({ filePath, data, encoding }) => {

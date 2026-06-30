@@ -69,21 +69,28 @@ export function Project() {
   const handleExportProject = useCallback(async () => {
     if (!activeProjectId) return
     const api = window.electronAPI
-    if (!api) return
+    if (!api) {
+      flashToast('Export failed: native app features are unavailable in this window')
+      return
+    }
     flushEditorAutosave()
     const project = getProject(activeProjectId)
     if (!project) return
 
-    const safeName = project.name.replace(/[^a-zA-Z0-9._ -]/g, '_').trim() || 'project'
-    const filePath = await api.showSaveDialog({
-      title: 'Export Project',
-      defaultPath: `${safeName}.ltxproj.json`,
-      filters: [{ name: 'LTX Project', extensions: ['json'] }],
-    })
-    if (!filePath) return
+    try {
+      const safeName = project.name.replace(/[^a-zA-Z0-9._ -]/g, '_').trim() || 'project'
+      const filePath = await api.showSaveDialog({
+        title: 'Export Project',
+        defaultPath: `${safeName}.ltxproj.json`,
+        filters: [{ name: 'LTX Project', extensions: ['json'] }],
+      })
+      if (!filePath) return // user cancelled the dialog — not an error
 
-    const result = await api.saveFile({ filePath, data: JSON.stringify(project, null, 2) })
-    flashToast(result.success ? 'Project exported' : `Export failed: ${result.error}`)
+      const result = await api.saveFile({ filePath, data: JSON.stringify(project, null, 2) })
+      flashToast(result.success ? 'Project exported' : `Export failed: ${result.error}`)
+    } catch (error) {
+      flashToast(`Export failed: ${error instanceof Error ? error.message : String(error)}`)
+    }
   }, [activeProjectId, getProject, flashToast])
 
   // File menu's "Save Project" / "Export Project..." land here too.
