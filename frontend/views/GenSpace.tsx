@@ -1,9 +1,10 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
+import { createPortal } from 'react-dom'
 import {
   Trash2, Download, Image, Video, X,
   Heart, Film, Volume2, VolumeX, Sparkles,
   Clock, Monitor, ChevronUp, Scissors, Music,
-  ChevronLeft, ChevronRight, Copy, Check
+  ChevronLeft, ChevronRight, Copy, Check, Tag
 } from 'lucide-react'
 import { useProjects } from '../contexts/ProjectContext'
 import type { GenSpaceRetakeSource } from '../contexts/ProjectContext'
@@ -32,6 +33,10 @@ import { RetakePanel } from '../components/RetakePanel'
 import { ICLoraPanel, CONDITIONING_TYPES } from '../components/ICLoraPanel'
 import { FreeApiKeyBubble } from '../components/FreeApiKeyBubble'
 
+// Sentinel binFilter value meaning "show every asset" (vs. a real binId, or
+// null for the default untagged-only view).
+const ALL_BINS_FILTER = '__all__'
+
 // Asset card with hover overlays
 function AssetCard({
   asset,
@@ -41,7 +46,10 @@ function AssetCard({
   onCreateVideo,
   onRetake,
   onIcLora,
-  onToggleFavorite
+  onToggleFavorite,
+  bins,
+  onTag,
+  onRequestNewTag,
 }: {
   asset: Asset
   onDelete: () => void
@@ -51,6 +59,9 @@ function AssetCard({
   onRetake?: (asset: Asset) => void
   onIcLora?: (asset: Asset) => void
   onToggleFavorite?: () => void
+  bins: Record<string, string>
+  onTag: (binId: string | null) => void
+  onRequestNewTag: () => void
 }) {
   const hoverVideoRef = useRef<HTMLVideoElement>(null)
   const [isHovered, setIsHovered] = useState(false)
@@ -219,6 +230,27 @@ function AssetCard({
             >
               <Download className="h-3.5 w-3.5" />
             </button>
+            <div onClick={(e) => e.stopPropagation()}>
+              <SettingsDropdown
+                title="Tag"
+                value={asset.binId ?? ''}
+                onChange={(value) => {
+                  if (value === '__new__') {
+                    onRequestNewTag()
+                  } else if (value === '__none__') {
+                    onTag(null)
+                  } else {
+                    onTag(value)
+                  }
+                }}
+                trigger={<Tag className={`h-3.5 w-3.5 ${asset.binId ? 'text-blue-300' : 'text-white'}`} />}
+                options={[
+                  ...(asset.binId ? [{ value: '__none__', label: 'Remove from folder' }] : []),
+                  ...Object.entries(bins).map(([binId, name]) => ({ value: binId, label: name })),
+                  { value: '__new__', label: '+ New Tag…' },
+                ]}
+              />
+            </div>
             {/* Tools button hidden for now */}
           </div>
         </div>
@@ -294,67 +326,92 @@ function SettingsDropdown({
   title: string
 }) {
   const [isOpen, setIsOpen] = useState(false)
-  const dropdownRef = useRef<HTMLDivElement>(null)
-  
+  const [panelPos, setPanelPos] = useState<{ left: number; bottom: number } | null>(null)
+  const triggerRef = useRef<HTMLButtonElement>(null)
+  const panelRef = useRef<HTMLDivElement>(null)
+
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
-      if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
-        setIsOpen(false)
-      }
+      const target = e.target as Node
+      if (triggerRef.current?.contains(target)) return
+      if (panelRef.current?.contains(target)) return
+      setIsOpen(false)
     }
     if (isOpen) {
       document.addEventListener('mousedown', handleClickOutside)
     }
     return () => document.removeEventListener('mousedown', handleClickOutside)
   }, [isOpen])
-  
+
+  const handleToggle = () => {
+    if (!isOpen && triggerRef.current) {
+      const rect = triggerRef.current.getBoundingClientRect()
+      setPanelPos({
+        left: Math.min(rect.left, window.innerWidth - 180),
+        bottom: window.innerHeight - rect.top + 8,
+      })
+    }
+    setIsOpen(!isOpen)
+  }
+
+  // Rendered via a portal into document.body — AssetCard (and other callers)
+  // clip overflow for rounded thumbnails, which would otherwise clip this
+  // popup invisible since position:absolute is still contained by an
+  // overflow-hidden ancestor.
+  const panel = isOpen && panelPos && createPortal(
+    <div
+      ref={panelRef}
+      style={{ position: 'fixed', left: panelPos.left, bottom: panelPos.bottom }}
+      className="bg-zinc-800 border border-zinc-700 rounded-md p-2 min-w-[160px] shadow-xl z-[9999]"
+    >
+      <div className="text-[10px] text-zinc-500 uppercase tracking-wider mb-2">{title}</div>
+      <div className="space-y-1">
+        {options.map(option => (
+          <div key={option.value} className="relative group/option">
+            <button
+              onClick={() => { if (!option.disabled) { onChange(option.value); setIsOpen(false) } }}
+              className={`w-full flex items-center justify-between px-2 py-2 rounded-md transition-colors text-left ${
+                option.disabled
+                  ? 'cursor-not-allowed'
+                  : value === option.value ? 'bg-white/20 hover:bg-white/25' : 'hover:bg-zinc-700'
+              }`}
+            >
+              <span className={`flex items-center gap-2.5 text-sm ${
+                option.disabled
+                  ? 'text-zinc-600'
+                  : value === option.value ? 'text-white' : 'text-zinc-400'
+              }`}>
+                {option.icon && <span className="flex-shrink-0">{option.icon}</span>}
+                {option.label}
+              </span>
+              {value === option.value && !option.disabled && (
+                <svg className="w-5 h-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                </svg>
+              )}
+            </button>
+            {option.disabled && option.tooltip && (
+              <div className="absolute left-full ml-2 top-1/2 -translate-y-1/2 px-2 py-1 bg-zinc-700 rounded text-xs text-zinc-300 whitespace-nowrap opacity-0 group-hover/option:opacity-100 pointer-events-none z-[10000] transition-opacity">
+                {option.tooltip}
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+    </div>,
+    document.body,
+  )
+
   return (
-    <div ref={dropdownRef} className="relative">
-      <button 
-        onClick={() => setIsOpen(!isOpen)}
+    <div className="relative">
+      <button
+        ref={triggerRef}
+        onClick={handleToggle}
         className={`flex shrink-0 items-center gap-1 whitespace-nowrap px-2 py-1.5 rounded-md transition-colors ${isOpen ? 'bg-zinc-700 hover:bg-zinc-700' : 'hover:bg-zinc-800'}`}
       >
         {trigger}
       </button>
-      
-      {isOpen && (
-        <div className="absolute bottom-full left-0 mb-2 bg-zinc-800 border border-zinc-700 rounded-md p-2 min-w-[160px] shadow-xl z-[9999]">
-          <div className="text-[10px] text-zinc-500 uppercase tracking-wider mb-2">{title}</div>
-          <div className="space-y-1">
-            {options.map(option => (
-              <div key={option.value} className="relative group/option">
-                <button
-                  onClick={() => { if (!option.disabled) { onChange(option.value); setIsOpen(false) } }}
-                  className={`w-full flex items-center justify-between px-2 py-2 rounded-md transition-colors text-left ${
-                    option.disabled
-                      ? 'cursor-not-allowed'
-                      : value === option.value ? 'bg-white/20 hover:bg-white/25' : 'hover:bg-zinc-700'
-                  }`}
-                >
-                  <span className={`flex items-center gap-2.5 text-sm ${
-                    option.disabled 
-                      ? 'text-zinc-600' 
-                      : value === option.value ? 'text-white' : 'text-zinc-400'
-                  }`}>
-                    {option.icon && <span className="flex-shrink-0">{option.icon}</span>}
-                    {option.label}
-                  </span>
-                  {value === option.value && !option.disabled && (
-                    <svg className="w-5 h-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                    </svg>
-                  )}
-                </button>
-                {option.disabled && option.tooltip && (
-                  <div className="absolute left-full ml-2 top-1/2 -translate-y-1/2 px-2 py-1 bg-zinc-700 rounded text-xs text-zinc-300 whitespace-nowrap opacity-0 group-hover/option:opacity-100 pointer-events-none z-[10000] transition-opacity">
-                    {option.tooltip}
-                  </div>
-                )}
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
+      {panel}
     </div>
   )
 }
@@ -934,7 +991,10 @@ export function GenSpace() {
     addAsset,
     addTakeToAsset,
     deleteAsset,
+    updateAsset,
     toggleFavorite,
+    createBin,
+    deleteBin,
     genSpaceEditImagePath,
     setGenSpaceEditImagePath,
     setGenSpaceEditMode,
@@ -967,6 +1027,13 @@ export function GenSpace() {
   const [selectedAsset, setSelectedAsset] = useState<Asset | null>(null)
   const [copiedPrompt, setCopiedPrompt] = useState(false)
   const [showFavorites, setShowFavorites] = useState(false)
+  // null = default view (untagged only); ALL_BINS_FILTER = every asset; otherwise a specific binId.
+  const [binFilter, setBinFilter] = useState<string | null>(null)
+  // Electron's renderer doesn't implement window.prompt(), so new tag/folder
+  // names go through this small modal instead. '__bar__' = creating from the
+  // chip bar (no asset assignment); an assetId = creating + assigning to it.
+  const [creatingTagFor, setCreatingTagFor] = useState<'__bar__' | string | null>(null)
+  const [newTagName, setNewTagName] = useState('')
   const [gallerySize, setGallerySize] = useState<GallerySize>('medium')
   const [showSizeMenu, setShowSizeMenu] = useState(false)
   const sizeMenuRef = useRef<HTMLDivElement>(null)
@@ -1606,7 +1673,13 @@ export function GenSpace() {
     return () => document.removeEventListener('mousedown', handleClickOutside)
   }, [showSizeMenu])
 
-  const filteredAssets = showFavorites ? assets.filter(a => a.favorite) : assets
+  const bins = activeProject?.bins ?? {}
+  const filteredAssets = assets.filter(a => {
+    if (showFavorites && !a.favorite) return false
+    if (binFilter === ALL_BINS_FILTER) return true
+    if (binFilter === null) return !a.binId
+    return a.binId === binFilter
+  })
   const favoriteCount = assets.filter(a => a.favorite).length
   const isLibraryMode = mode === 'video' || mode === 'image'
 
@@ -1663,9 +1736,80 @@ export function GenSpace() {
         </div>
       )}
 
+      {/* Empty bin filter (untagged view or a specific folder with nothing in it) */}
+      {isLibraryMode && !showFavorites && filteredAssets.length === 0 && assets.length > 0 && (
+        <div className="absolute inset-0 flex flex-col items-center justify-center text-center pointer-events-none">
+          <Tag className="h-12 w-12 text-zinc-700 mb-4" />
+          <h3 className="text-lg font-semibold text-white mb-2">
+            {binFilter === null ? 'Everything is tagged' : 'Nothing in this tag yet'}
+          </h3>
+          <p className="text-zinc-500 text-sm">
+            {binFilter === null
+              ? 'Click "All" above to see every asset.'
+              : 'Use the tag icon on an asset to file it here.'}
+          </p>
+        </div>
+      )}
+
       {/* Assets area — full width, no background, above the prompt bar */}
       {isLibraryMode && (assets.length > 0 || isGenerating) && (
         <div className="absolute inset-x-0 top-0 bottom-[160px] flex flex-col px-4 pt-4">
+          {/* Tag/folder chip bar */}
+          <div className="flex items-center gap-1.5 pb-2 overflow-x-auto">
+            <button
+              onClick={() => setBinFilter(null)}
+              className={`shrink-0 px-3 py-1 rounded-full text-xs font-medium transition-colors ${
+                binFilter === null
+                  ? 'bg-white/20 text-white'
+                  : 'text-zinc-400 hover:text-white hover:bg-zinc-800'
+              }`}
+            >
+              Untagged
+            </button>
+            <button
+              onClick={() => setBinFilter(ALL_BINS_FILTER)}
+              className={`shrink-0 px-3 py-1 rounded-full text-xs font-medium transition-colors ${
+                binFilter === ALL_BINS_FILTER
+                  ? 'bg-white/20 text-white'
+                  : 'text-zinc-400 hover:text-white hover:bg-zinc-800'
+              }`}
+            >
+              All
+            </button>
+            {Object.entries(bins).map(([binId, binName]) => (
+              <div
+                key={binId}
+                className={`shrink-0 flex items-center gap-1 pl-3 pr-1.5 py-1 rounded-full text-xs font-medium transition-colors ${
+                  binFilter === binId
+                    ? 'bg-blue-500/30 text-blue-200 border border-blue-500/40'
+                    : 'text-zinc-400 hover:text-white hover:bg-zinc-800 border border-transparent'
+                }`}
+              >
+                <button onClick={() => setBinFilter(binId)}>{binName}</button>
+                {binFilter === binId && (
+                  <button
+                    title="Delete this tag/folder"
+                    onClick={() => {
+                      if (!currentProjectId) return
+                      if (!window.confirm(`Delete the "${binName}" tag? Assets in it will become untagged again.`)) return
+                      deleteBin(currentProjectId, binId)
+                      setBinFilter(null)
+                    }}
+                    className="rounded-full p-0.5 hover:bg-white/20"
+                  >
+                    <X className="h-3 w-3" />
+                  </button>
+                )}
+              </div>
+            ))}
+            <button
+              onClick={() => setCreatingTagFor('__bar__')}
+              className="shrink-0 flex items-center gap-1 px-3 py-1 rounded-full text-xs font-medium text-zinc-500 hover:text-white hover:bg-zinc-800 transition-colors"
+            >
+              + New Tag
+            </button>
+          </div>
+
           {/* Top bar */}
           <div className="flex items-center justify-end pb-2 gap-2">
             <button
@@ -1762,6 +1906,9 @@ export function GenSpace() {
                   onRetake={handleRetake}
                   onIcLora={!forceApiGenerations ? handleIcLora : undefined}
                   onToggleFavorite={() => currentProjectId && toggleFavorite(currentProjectId, asset.id)}
+                  bins={bins}
+                  onTag={(binId) => currentProjectId && updateAsset(currentProjectId, asset.id, { binId: binId ?? undefined })}
+                  onRequestNewTag={() => setCreatingTagFor(asset.id)}
                 />
               ))}
             </div>
@@ -1920,6 +2067,63 @@ export function GenSpace() {
               <p className="text-zinc-500 text-sm mt-1">
                 {selectedAsset.resolution} • {selectedAsset.duration ? `${selectedAsset.duration}s` : 'Image'}
               </p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {creatingTagFor !== null && (
+        <div
+          className="fixed inset-0 z-[80] flex items-center justify-center bg-black/55"
+          onClick={() => { setCreatingTagFor(null); setNewTagName('') }}
+        >
+          <div
+            className="bg-zinc-900 border border-zinc-700 rounded-lg p-4 w-[280px]"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <p className="text-sm font-semibold text-white mb-2">New tag/folder</p>
+            <input
+              autoFocus
+              value={newTagName}
+              onChange={(e) => setNewTagName(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault()
+                  const name = newTagName.trim()
+                  if (!name || !currentProjectId) return
+                  const binId = createBin(currentProjectId, name)
+                  if (creatingTagFor !== '__bar__') updateAsset(currentProjectId, creatingTagFor, { binId })
+                  setCreatingTagFor(null)
+                  setNewTagName('')
+                } else if (e.key === 'Escape') {
+                  setCreatingTagFor(null)
+                  setNewTagName('')
+                }
+              }}
+              placeholder="Tag name…"
+              className="w-full rounded-md px-2 py-1.5 text-sm bg-zinc-800 text-white border border-zinc-700 outline-none focus:border-blue-500"
+            />
+            <div className="flex justify-end gap-2 mt-3">
+              <button
+                onClick={() => { setCreatingTagFor(null); setNewTagName('') }}
+                className="rounded-md px-3 py-1.5 text-xs font-medium bg-zinc-800 text-white border border-zinc-700"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => {
+                  const name = newTagName.trim()
+                  if (!name || !currentProjectId) return
+                  const binId = createBin(currentProjectId, name)
+                  if (creatingTagFor !== '__bar__') updateAsset(currentProjectId, creatingTagFor, { binId })
+                  setCreatingTagFor(null)
+                  setNewTagName('')
+                }}
+                disabled={!newTagName.trim()}
+                className="rounded-md px-3 py-1.5 text-xs font-medium bg-blue-600 text-white disabled:opacity-40"
+              >
+                Create
+              </button>
             </div>
           </div>
         </div>

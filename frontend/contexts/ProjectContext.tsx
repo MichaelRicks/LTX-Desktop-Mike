@@ -33,6 +33,10 @@ interface ProjectContextType {
   setAssetActiveTake: (projectId: string, assetId: string, takeIndex: number) => void
   toggleFavorite: (projectId: string, assetId: string) => void
 
+  createBin: (projectId: string, name: string) => string
+  renameBin: (projectId: string, binId: string, name: string) => void
+  deleteBin: (projectId: string, binId: string) => void
+
   genSpaceEditImagePath: string | null
   setGenSpaceEditImagePath: (path: string | null) => void
   genSpaceEditMode: 'image' | 'video' | null
@@ -350,6 +354,39 @@ export function ProjectProvider({ children }: { children: React.ReactNode }) {
     }))
   }, [mutateProject])
 
+  const createBin = useCallback((projectId: string, name: string): string => {
+    const binId = `bin-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`
+    mutateProject(projectId, project => ({
+      ...project,
+      bins: { ...project.bins, [binId]: name },
+      updatedAt: Date.now(),
+    }))
+    return binId
+  }, [mutateProject])
+
+  const renameBin = useCallback((projectId: string, binId: string, name: string) => {
+    mutateProject(projectId, project => ({
+      ...project,
+      bins: { ...project.bins, [binId]: name },
+      updatedAt: Date.now(),
+    }))
+  }, [mutateProject])
+
+  const deleteBin = useCallback((projectId: string, binId: string) => {
+    mutateProject(projectId, project => {
+      const nextBins = { ...project.bins }
+      delete nextBins[binId]
+      return {
+        ...project,
+        bins: nextBins,
+        assets: project.assets.map(asset => (
+          asset.binId === binId ? { ...asset, binId: undefined } : asset
+        )),
+        updatedAt: Date.now(),
+      }
+    })
+  }, [mutateProject])
+
   return (
     <ProjectContext.Provider value={{
       currentTab,
@@ -372,6 +409,9 @@ export function ProjectProvider({ children }: { children: React.ReactNode }) {
       deleteTakeFromAsset,
       setAssetActiveTake,
       toggleFavorite,
+      createBin,
+      renameBin,
+      deleteBin,
       genSpaceEditImagePath,
       setGenSpaceEditImagePath,
       genSpaceEditMode,
