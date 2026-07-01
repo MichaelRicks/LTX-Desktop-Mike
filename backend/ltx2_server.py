@@ -139,7 +139,8 @@ def _resolve_app_data_dir() -> Path:
 
 APP_DATA_DIR = _resolve_app_data_dir()
 
-DEFAULT_MODELS_DIR = APP_DATA_DIR / "models"
+_env_models_dir = os.environ.get("LTX_MODELS_DIR")
+DEFAULT_MODELS_DIR = Path(_env_models_dir) if _env_models_dir else (APP_DATA_DIR / "models")
 DEFAULT_MODELS_DIR.mkdir(parents=True, exist_ok=True)
 
 PROJECT_ROOT = Path(__file__).parent.parent

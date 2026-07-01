@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from collections.abc import Callable
 from functools import wraps
 from pathlib import Path
@@ -40,7 +41,17 @@ class StateHandlerBase:
 
     @property
     def models_dir(self) -> Path:
-        """Effective models dir: custom from settings, or startup default."""
+        """Effective models dir: env override, then custom from settings, then startup default.
+
+        LTX_MODELS_DIR takes priority over the persisted setting because the
+        settings.json round-trip (app boot -> frontend sync -> save-on-exit)
+        has proven unreliable for this field in practice — an explicit env
+        var set by the launcher is a hard guarantee that doesn't depend on
+        that sync path working correctly.
+        """
+        env_override = os.environ.get("LTX_MODELS_DIR")
+        if env_override:
+            return Path(env_override)
         custom = self._state.app_settings.models_dir
         return Path(custom) if custom else self._config.default_models_dir
 
