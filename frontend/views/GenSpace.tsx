@@ -168,7 +168,7 @@ function AssetCard({
         isHovered ? 'opacity-100' : 'opacity-0'
       }`}>
         {/* Top buttons */}
-        <div className="absolute top-2 left-2 right-2 flex items-center justify-between">
+        <div className="absolute top-2 left-2 right-2 flex items-center justify-between flex-wrap gap-y-1.5">
           <div className="flex items-center gap-1.5">
             <button
               onClick={(e) => { e.stopPropagation(); onToggleFavorite?.() }}
@@ -972,9 +972,9 @@ type GallerySize = 'small' | 'medium' | 'large'
 // grid-cols) so thumbnails stay a constant size when side panels open/close —
 // only the column count adapts to the available width.
 const gallerySizeClasses: Record<GallerySize, string> = {
-  small: 'grid-cols-[repeat(auto-fill,minmax(150px,1fr))]',
-  medium: 'grid-cols-[repeat(auto-fill,minmax(220px,1fr))]',
-  large: 'grid-cols-[repeat(auto-fill,minmax(340px,1fr))]',
+  small: 'grid-cols-[repeat(auto-fill,minmax(200px,1fr))]',
+  medium: 'grid-cols-[repeat(auto-fill,minmax(280px,1fr))]',
+  large: 'grid-cols-[repeat(auto-fill,minmax(380px,1fr))]',
 }
 
 const DEFAULT_VIDEO_SETTINGS = {
