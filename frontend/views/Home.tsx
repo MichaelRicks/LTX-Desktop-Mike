@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react'
-import { Plus, Folder, MoreVertical, Trash2, Pencil, Upload } from 'lucide-react'
+import { Plus, Folder, MoreVertical, Trash2, Pencil, Upload, Copy } from 'lucide-react'
 import { useProjects } from '../contexts/ProjectContext'
 import { useView } from '../contexts/ViewContext'
 import { LtxLogo } from '../components/LtxLogo'
@@ -19,11 +19,12 @@ function formatDate(timestamp: number): string {
   })
 }
 
-function ProjectCard({ project, onOpen, onDelete, onRename }: {
+function ProjectCard({ project, onOpen, onDelete, onRename, onDuplicate }: {
   project: Project
   onOpen: () => void
   onDelete: () => void
   onRename: () => void
+  onDuplicate: () => void
 }) {
   const [showMenu, setShowMenu] = useState(false)
   const [imgError, setImgError] = useState(false)
@@ -110,6 +111,13 @@ function ProjectCard({ project, onOpen, onDelete, onRename }: {
             Rename
           </button>
           <button
+            onClick={() => { onDuplicate(); setShowMenu(false) }}
+            className="w-full px-3 py-2 text-left text-sm text-zinc-300 hover:bg-zinc-700 flex items-center gap-2"
+          >
+            <Copy className="h-4 w-4" />
+            Duplicate
+          </button>
+          <button
             onClick={() => { onDelete(); setShowMenu(false) }}
             className="w-full px-3 py-2 text-left text-sm text-red-400 hover:bg-zinc-700 flex items-center gap-2"
           >
@@ -123,7 +131,7 @@ function ProjectCard({ project, onOpen, onDelete, onRename }: {
 }
 
 export function Home() {
-  const { projectIds, getProject, createProject, importProject, deleteProject, renameProject } = useProjects()
+  const { projectIds, getProject, createProject, importProject, duplicateProject, deleteProject, renameProject } = useProjects()
   const { openProject } = useView()
   const { migrationStatus, migrateProjects } = useProjectReferencesMigration()
   const [isCreating, setIsCreating] = useState(false)
@@ -322,6 +330,7 @@ export function Home() {
                     }
                   }}
                   onRename={() => handleRenameProject(project.id, project.name)}
+                  onDuplicate={() => duplicateProject(project.id)}
                 />
               ))}
             </div>

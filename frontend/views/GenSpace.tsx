@@ -968,10 +968,13 @@ function GridLargeIcon({ className }: { className?: string }) {
 
 type GallerySize = 'small' | 'medium' | 'large'
 
+// Auto-fill with a fixed min thumbnail width (rather than viewport-breakpoint
+// grid-cols) so thumbnails stay a constant size when side panels open/close —
+// only the column count adapts to the available width.
 const gallerySizeClasses: Record<GallerySize, string> = {
-  small: 'grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 2xl:grid-cols-7',
-  medium: 'grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5',
-  large: 'grid-cols-1 sm:grid-cols-1 md:grid-cols-2 lg:grid-cols-2 xl:grid-cols-3',
+  small: 'grid-cols-[repeat(auto-fill,minmax(150px,1fr))]',
+  medium: 'grid-cols-[repeat(auto-fill,minmax(220px,1fr))]',
+  large: 'grid-cols-[repeat(auto-fill,minmax(340px,1fr))]',
 }
 
 const DEFAULT_VIDEO_SETTINGS = {

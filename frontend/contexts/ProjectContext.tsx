@@ -19,6 +19,7 @@ interface ProjectContextType {
   setProject: (id: string, project: Project) => void
   createProject: (name: string) => Project
   importProject: (projectData: unknown) => Project
+  duplicateProject: (id: string) => Project | null
   deleteProject: (id: string) => void
   renameProject: (id: string, name: string) => void
   activateProject: (id: string) => void
@@ -211,6 +212,39 @@ export function ProjectProvider({ children }: { children: React.ReactNode }) {
     return persistedProject
   }, [bumpProjectRevision])
 
+  // Duplicate a project for incremental work. Assets keep their original
+  // `path`/`bigThumbnailPath`/`smallThumbnailPath` references rather than
+  // copying files on disk, mirroring how importProject already works.
+  const duplicateProject = useCallback((id: string): Project | null => {
+    const source = readProject(id)
+    if (!source) return null
+
+    const existingNames = new Set(
+      readProjectIds().map(projectId => readProject(projectId)?.name).filter((name): name is string => !!name)
+    )
+    let duplicateName = `${source.name} (Copy)`
+    let suffix = 1
+    while (existingNames.has(duplicateName)) {
+      suffix += 1
+      duplicateName = `${source.name} (Copy ${suffix})`
+    }
+
+    const duplicatedProject = normalizeProject({
+      ...source,
+      name: duplicateName,
+      id: `project-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    })
+
+    const persistedProject = writeProject(duplicatedProject.id, duplicatedProject)
+    const nextProjectIds = [persistedProject.id, ...readProjectIds().filter(projectId => projectId !== persistedProject.id)]
+    writeProjectIds(nextProjectIds)
+    setProjectIds(nextProjectIds)
+    bumpProjectRevision()
+    return persistedProject
+  }, [bumpProjectRevision])
+
   const deleteProject = useCallback((id: string) => {
     const nextProjectIds = readProjectIds().filter(projectId => projectId !== id)
     writeProjectIds(nextProjectIds)
@@ -397,6 +431,7 @@ export function ProjectProvider({ children }: { children: React.ReactNode }) {
       setProject,
       createProject,
       importProject,
+      duplicateProject,
       deleteProject,
       renameProject,
       activateProject,
