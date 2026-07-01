@@ -4,7 +4,7 @@ import {
   Trash2, Download, Image, Video, X,
   Heart, Film, Volume2, VolumeX, Sparkles,
   Clock, Monitor, ChevronUp, Scissors, Music,
-  ChevronLeft, ChevronRight, Copy, Check, Tag
+  ChevronLeft, ChevronRight, Copy, Check, Tag, Eraser
 } from 'lucide-react'
 import { useProjects } from '../contexts/ProjectContext'
 import type { GenSpaceRetakeSource } from '../contexts/ProjectContext'
@@ -1014,6 +1014,7 @@ export function GenSpace() {
     genSpaceInputImagePath,
     setGenSpaceInputImagePath,
     genSpacePromptClearNonce,
+    clearGenSpacePrompt,
   } = useProjects()
   const currentProjectId = activeProject?.id ?? null
   const { shouldVideoGenerateWithLtxApi, forceApiGenerations, settings: appSettings } = useAppSettings()
@@ -1815,6 +1816,15 @@ export function GenSpace() {
 
           {/* Top bar */}
           <div className="flex items-center justify-end pb-2 gap-2">
+            <button
+              onClick={clearGenSpacePrompt}
+              title="Clear the prompt box"
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium bg-blue-600 hover:bg-blue-500 text-white transition-colors"
+            >
+              <Eraser className="h-4 w-4" />
+              Clear Prompt
+            </button>
+
             <button
               onClick={() => setShowFavorites(!showFavorites)}
               className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${

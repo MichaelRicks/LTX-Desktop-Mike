@@ -32,14 +32,18 @@ export function updatedProject(
   timelineInOutMap: Record<string, TimelineInOutRange> = {},
 ): Project {
   // The editor's asset list is a snapshot taken when it first mounted (or last
-  // synced) — it doesn't know about assets added elsewhere since then (e.g. a
-  // Gen Space generation completed while the editor sat open in the background,
-  // kept alive by the cross-tab "stay mounted" behavior). Autosaving the editor's
-  // stale snapshot as-is would silently erase those newer assets from the
-  // project, so merge in anything present on the live project but missing from
-  // the editor's snapshot rather than overwriting wholesale.
+  // synced) — it doesn't know about assets added or deleted elsewhere since
+  // then (e.g. a Gen Space generation completed, or an asset was deleted from
+  // Gen Space, while the editor sat open in the background, kept alive by the
+  // cross-tab "stay mounted" behavior). Merge in anything present on the live
+  // project but missing from the editor's snapshot (externally added), and
+  // drop anything in the editor's snapshot that's no longer on the live
+  // project (externally deleted) — otherwise autosaving the editor's stale
+  // snapshot would silently erase newer assets, or resurrect deleted ones.
   const editorAssetIds = new Set(editorModel.assets.map(asset => asset.id))
+  const fromProjectAssetIds = new Set(fromProject.assets.map(asset => asset.id))
   const externallyAddedAssets = fromProject.assets.filter(asset => !editorAssetIds.has(asset.id))
+  const survivingEditorAssets = editorModel.assets.filter(asset => fromProjectAssetIds.has(asset.id))
 
   // Same staleness risk applies to the bin/tag name map: Gen Space's tagging
   // UI can create folders while the editor sits mounted in the background, so
@@ -59,7 +63,7 @@ export function updatedProject(
 
   return {
     ...fromProject,
-    assets: [...externallyAddedAssets, ...editorModel.assets],
+    assets: [...externallyAddedAssets, ...survivingEditorAssets],
     bins,
     timelines,
     activeTimelineId: editorModel.activeTimelineId ?? editorModel.timelines[0]?.id,
