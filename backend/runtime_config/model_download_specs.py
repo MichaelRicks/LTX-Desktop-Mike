@@ -151,6 +151,14 @@ def get_model_cp_spec(cp_id: ModelCheckpointID) -> ModelCheckpointSpec:
                 repo_id="Tongyi-MAI/Z-Image-Turbo",
                 description="Z-Image-Turbo model for text-to-image generation",
             )
+        case "krea-2-turbo":
+            return ModelCheckpointSpec(
+                relative_path=Path("Krea-2-Turbo"),
+                expected_size_bytes=35_700_000_000,
+                is_folder=True,
+                repo_id="krea/Krea-2-Turbo",
+                description="Krea 2 Turbo model for text-to-image generation",
+            )
         case _:
             assert_never(cp_id)
 

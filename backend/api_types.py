@@ -17,7 +17,9 @@ ModelCheckpointID = Literal[
     "dw-ll-ucoco-384-bs5",
     "gemma-3-12b-it-qat-q4_0-unquantized",
     "z-image-turbo",
+    "krea-2-turbo",
 ]
+ImageGenerationModelCheckpointID = Literal["z-image-turbo", "krea-2-turbo"]
 LTXLocalModelId = Literal["ltx-2.3-22b-distilled"]
 
 
@@ -324,6 +326,7 @@ class GenerateImageRequest(BaseModel):
     model_config = ConfigDict(strict=True)
 
     prompt: NonEmptyPrompt
+    model: ImageGenerationModelCheckpointID = "z-image-turbo"
     width: int = Field(default=1024, ge=16)
     height: int = Field(default=1024, ge=16)
     numSteps: int = Field(default=4, ge=1)

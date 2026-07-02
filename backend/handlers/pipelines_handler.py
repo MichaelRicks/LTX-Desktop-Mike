@@ -3,15 +3,15 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Mapping
 from threading import RLock
 from typing import TYPE_CHECKING
 
 from _routes._errors import HTTPError
-from api_types import LTXLocalModelId
+from api_types import ImageGenerationModelCheckpointID, LTXLocalModelId
 from handlers.base import StateHandlerBase
 from handlers.text_handler import TextHandler
 from runtime_config.model_download_specs import (
-    IMG_GEN_MODEL_CP_ID,
     get_downloaded_ltx_model_id,
     get_existing_cp_path,
     get_ltx_model_spec,
@@ -55,7 +55,7 @@ class PipelinesHandler(StateHandlerBase):
         text_handler: TextHandler,
         gpu_cleaner: GpuCleaner,
         fast_video_pipeline_class: type[FastVideoPipeline],
-        image_generation_pipeline_class: type[ImageGenerationPipeline],
+        image_generation_pipeline_classes: Mapping[ImageGenerationModelCheckpointID, type[ImageGenerationPipeline]],
         ic_lora_pipeline_class: type[IcLoraPipeline],
         depth_processor_pipeline_class: type[DepthProcessorPipeline],
         pose_processor_pipeline_class: type[PoseProcessorPipeline],
@@ -67,7 +67,8 @@ class PipelinesHandler(StateHandlerBase):
         self._text_handler = text_handler
         self._gpu_cleaner = gpu_cleaner
         self._fast_video_pipeline_class = fast_video_pipeline_class
-        self._image_generation_pipeline_class = image_generation_pipeline_class
+        self._image_generation_pipeline_classes = image_generation_pipeline_classes
+        self._active_image_generation_cp_id: ImageGenerationModelCheckpointID | None = None
         self._ic_lora_pipeline_class = ic_lora_pipeline_class
         self._depth_processor_pipeline_class = depth_processor_pipeline_class
         self._pose_processor_pipeline_class = pose_processor_pipeline_class
@@ -182,27 +183,39 @@ class PipelinesHandler(StateHandlerBase):
             self.state.cpu_slot = CpuSlot(active_pipeline=image_generation_pipeline)
             self._assert_invariants()
 
-    def load_image_generation_pipeline_to_gpu(self) -> ImageGenerationPipeline:
+    def load_image_generation_pipeline_to_gpu(
+        self, cp_id: ImageGenerationModelCheckpointID
+    ) -> ImageGenerationPipeline:
         with self._lock:
             if self.state.gpu_slot is not None:
                 active = self.state.gpu_slot.active_pipeline
                 if isinstance(active, ImageGenerationPipeline):
-                    return active
-                self._ensure_no_running_generation()
+                    if self._active_image_generation_cp_id == cp_id:
+                        return active
+                    self._ensure_no_running_generation()
+                    # Wrong model loaded — drop it rather than reuse, so we never
+                    # silently generate with a different checkpoint than requested.
+                    self.state.gpu_slot = None
+                else:
+                    self._ensure_no_running_generation()
 
         image_generation_pipeline: ImageGenerationPipeline | None = None
 
         with self._lock:
             match self.state.cpu_slot:
-                case CpuSlot(active_pipeline=stored):
+                case CpuSlot(active_pipeline=stored) if self._active_image_generation_cp_id == cp_id:
                     image_generation_pipeline = stored
                     self.state.cpu_slot = None
+                case CpuSlot():
+                    # Parked pipeline is for a different model — discard it too.
+                    self.state.cpu_slot = None
                 case _:
-                    image_generation_pipeline = None
+                    pass
 
         if image_generation_pipeline is None:
-            zit_path = get_existing_cp_path(self.models_dir, IMG_GEN_MODEL_CP_ID)
-            image_generation_pipeline = self._image_generation_pipeline_class.create(str(zit_path), self._runtime_device)
+            pipeline_class = self._image_generation_pipeline_classes[cp_id]
+            model_path = get_existing_cp_path(self.models_dir, cp_id)
+            image_generation_pipeline = pipeline_class.create(str(model_path), self._runtime_device)
         else:
             image_generation_pipeline.to(self._runtime_device)
 
@@ -210,6 +223,7 @@ class PipelinesHandler(StateHandlerBase):
 
         with self._lock:
             self.state.gpu_slot = GpuSlot(active_pipeline=image_generation_pipeline)
+            self._active_image_generation_cp_id = cp_id
             self._assert_invariants()
 
         return image_generation_pipeline

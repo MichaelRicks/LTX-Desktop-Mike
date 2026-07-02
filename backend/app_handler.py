@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import threading
+from collections.abc import Mapping
 from dataclasses import dataclass
 
+from api_types import ImageGenerationModelCheckpointID
 from state.app_settings import AppSettings
 from handlers import (
     DownloadHandler,
@@ -61,7 +63,7 @@ class AppHandler:
         ltx_api_client: LTXAPIClient,
         zit_api_client: ZitAPIClient,
         fast_video_pipeline_class: type[FastVideoPipeline],
-        image_generation_pipeline_class: type[ImageGenerationPipeline],
+        image_generation_pipeline_classes: Mapping[ImageGenerationModelCheckpointID, type[ImageGenerationPipeline]],
         ic_lora_pipeline_class: type[IcLoraPipeline],
         depth_processor_pipeline_class: type[DepthProcessorPipeline],
         pose_processor_pipeline_class: type[PoseProcessorPipeline],
@@ -80,7 +82,7 @@ class AppHandler:
         self.ltx_api_client = ltx_api_client
         self.zit_api_client = zit_api_client
         self.fast_video_pipeline_class = fast_video_pipeline_class
-        self.image_generation_pipeline_class = image_generation_pipeline_class
+        self.image_generation_pipeline_classes = image_generation_pipeline_classes
         self.ic_lora_pipeline_class = ic_lora_pipeline_class
         self.depth_processor_pipeline_class = depth_processor_pipeline_class
         self.pose_processor_pipeline_class = pose_processor_pipeline_class
@@ -141,7 +143,7 @@ class AppHandler:
             text_handler=self.text,
             gpu_cleaner=gpu_cleaner,
             fast_video_pipeline_class=fast_video_pipeline_class,
-            image_generation_pipeline_class=image_generation_pipeline_class,
+            image_generation_pipeline_classes=image_generation_pipeline_classes,
             ic_lora_pipeline_class=ic_lora_pipeline_class,
             depth_processor_pipeline_class=depth_processor_pipeline_class,
             pose_processor_pipeline_class=pose_processor_pipeline_class,
@@ -230,7 +232,7 @@ class ServiceBundle:
     ltx_api_client: LTXAPIClient
     zit_api_client: ZitAPIClient
     fast_video_pipeline_class: type[FastVideoPipeline]
-    image_generation_pipeline_class: type[ImageGenerationPipeline]
+    image_generation_pipeline_classes: Mapping[ImageGenerationModelCheckpointID, type[ImageGenerationPipeline]]
     ic_lora_pipeline_class: type[IcLoraPipeline]
     depth_processor_pipeline_class: type[DepthProcessorPipeline]
     pose_processor_pipeline_class: type[PoseProcessorPipeline]
@@ -248,6 +250,7 @@ def build_default_service_bundle(config: RuntimeConfig) -> ServiceBundle:
     from services.a2v_pipeline.ltx_a2v_pipeline import LTXa2vPipeline
     from services.depth_processor_pipeline.midas_dpt_pipeline import MidasDPTPipeline
     from services.ic_lora_pipeline.ltx_ic_lora_pipeline import LTXIcLoraPipeline
+    from services.image_generation_pipeline.krea2_image_generation_pipeline import Krea2ImageGenerationPipeline
     from services.image_generation_pipeline.zit_image_generation_pipeline import ZitImageGenerationPipeline
     from services.ltx_api_client.ltx_api_client_impl import LTXAPIClientImpl
     from services.model_downloader.hugging_face_downloader import HuggingFaceDownloader
@@ -274,7 +277,10 @@ def build_default_service_bundle(config: RuntimeConfig) -> ServiceBundle:
         ltx_api_client=LTXAPIClientImpl(http=http, ltx_api_base_url=config.ltx_api_base_url),
         zit_api_client=ZitAPIClientImpl(http=http),
         fast_video_pipeline_class=LTXFastVideoPipeline,
-        image_generation_pipeline_class=ZitImageGenerationPipeline,
+        image_generation_pipeline_classes={
+            "z-image-turbo": ZitImageGenerationPipeline,
+            "krea-2-turbo": Krea2ImageGenerationPipeline,
+        },
         ic_lora_pipeline_class=LTXIcLoraPipeline,
         depth_processor_pipeline_class=MidasDPTPipeline,
         pose_processor_pipeline_class=DWPosePipeline,
@@ -303,7 +309,7 @@ def build_initial_state(
         ltx_api_client=bundle.ltx_api_client,
         zit_api_client=bundle.zit_api_client,
         fast_video_pipeline_class=bundle.fast_video_pipeline_class,
-        image_generation_pipeline_class=bundle.image_generation_pipeline_class,
+        image_generation_pipeline_classes=bundle.image_generation_pipeline_classes,
         ic_lora_pipeline_class=bundle.ic_lora_pipeline_class,
         depth_processor_pipeline_class=bundle.depth_processor_pipeline_class,
         pose_processor_pipeline_class=bundle.pose_processor_pipeline_class,

@@ -16,6 +16,7 @@ from api_types import (
     GenerateImageCompleteResponse,
     GenerateImageRequest,
     GenerateImageResponse,
+    ImageGenerationModelCheckpointID,
 )
 from handlers.base import StateHandlerBase
 from handlers.generation_handler import GenerationHandler
@@ -63,6 +64,8 @@ class ImageGenerationHandler(StateHandlerBase):
             seed = int(time.time()) % 2147483647
 
         if self.config.force_api_generations:
+            if req.model == "krea-2-turbo":
+                raise HTTPError(400, "KREA_2_IS_SELF_HOSTED_ONLY")
             return self._generate_via_api(
                 prompt=req.prompt,
                 width=width,
@@ -73,9 +76,10 @@ class ImageGenerationHandler(StateHandlerBase):
             )
 
         try:
-            self._pipelines.load_image_generation_pipeline_to_gpu()
+            self._pipelines.load_image_generation_pipeline_to_gpu(req.model)
             self._generation.start_generation(generation_id)
             output_paths = self.generate_image(
+                model=req.model,
                 prompt=req.prompt,
                 width=width,
                 height=height,
@@ -94,6 +98,7 @@ class ImageGenerationHandler(StateHandlerBase):
 
     def generate_image(
         self,
+        model: ImageGenerationModelCheckpointID,
         prompt: str,
         width: int,
         height: int,
@@ -105,7 +110,7 @@ class ImageGenerationHandler(StateHandlerBase):
             raise RuntimeError("Generation was cancelled")
 
         self._generation.update_progress("loading_model", 5, 0, num_inference_steps)
-        image_generation_pipeline = self._pipelines.load_image_generation_pipeline_to_gpu()
+        image_generation_pipeline = self._pipelines.load_image_generation_pipeline_to_gpu(model)
         self._generation.update_progress("inference", 15, 0, num_inference_steps)
 
         if seed is None:

@@ -180,7 +180,10 @@ class TestModelsDirAdminGuard:
             ltx_api_client=fake_services.ltx_api_client,
             zit_api_client=fake_services.zit_api_client,
             fast_video_pipeline_class=type(fake_services.fast_video_pipeline),
-            image_generation_pipeline_class=type(fake_services.image_generation_pipeline),
+            image_generation_pipeline_classes={
+                "z-image-turbo": type(fake_services.image_generation_pipeline),
+                "krea-2-turbo": type(fake_services.image_generation_pipeline),
+            },
             ic_lora_pipeline_class=type(fake_services.ic_lora_pipeline),
             depth_processor_pipeline_class=type(fake_services.depth_processor_pipeline),
             pose_processor_pipeline_class=type(fake_services.pose_processor_pipeline),
@@ -206,7 +209,10 @@ class TestSettingsPersistence:
             ltx_api_client=fake_services.ltx_api_client,
             zit_api_client=fake_services.zit_api_client,
             fast_video_pipeline_class=type(fake_services.fast_video_pipeline),
-            image_generation_pipeline_class=type(fake_services.image_generation_pipeline),
+            image_generation_pipeline_classes={
+                "z-image-turbo": type(fake_services.image_generation_pipeline),
+                "krea-2-turbo": type(fake_services.image_generation_pipeline),
+            },
             ic_lora_pipeline_class=type(fake_services.ic_lora_pipeline),
             depth_processor_pipeline_class=type(fake_services.depth_processor_pipeline),
             pose_processor_pipeline_class=type(fake_services.pose_processor_pipeline),
