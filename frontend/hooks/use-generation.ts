@@ -309,6 +309,7 @@ export function useGeneration(): UseGenerationReturn {
 
       const dims = getImageDimensions(settings)
       const numSteps = settings.imageSteps || 4
+      const modelLabel = settings.imageModel === 'krea-2-turbo' ? 'Krea 2 Turbo' : 'Z-Image Turbo'
 
       // Poll for progress
       const pollProgress = async () => {
@@ -322,7 +323,7 @@ export function useGeneration(): UseGenerationReturn {
           ...prev,
           progress: data.progress,
           statusMessage: data.phase === 'loading_model'
-            ? 'Loading Z-Image Turbo model...'
+            ? `Loading ${modelLabel} model...`
             : data.phase === 'inference'
               ? numImages > 1
                 ? `Generating image ${currentImage + 1}/${totalImages}...`
@@ -337,6 +338,7 @@ export function useGeneration(): UseGenerationReturn {
 
       const imageRequest: GenerateImageRequest = {
         prompt: finalPrompt,
+        model: settings.imageModel ?? 'z-image-turbo',
         width: dims.width,
         height: dims.height,
         numSteps,

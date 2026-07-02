@@ -490,6 +490,7 @@ function PromptBar({
     fps: number
     aspectRatio: string
     imageResolution: string
+    imageModel: string
     variations: number
     audio?: boolean
   }
@@ -768,12 +769,26 @@ function PromptBar({
           </>
         ) : mode === 'image' ? (
           <>
-            {/* Model indicator */}
-            <div className="flex items-center gap-1.5 px-2 py-1 rounded-md bg-zinc-800/50">
-              <ZitIcon className="h-3.5 w-3.5" />
-              <span className="text-zinc-300 font-medium">Z-Image Turbo</span>
-            </div>
-            
+            {/* Model dropdown */}
+            <SettingsDropdown
+              title="MODEL"
+              value={settings.imageModel}
+              onChange={(v) => onSettingsChange({ ...settings, imageModel: v })}
+              options={[
+                { value: 'z-image-turbo', label: 'Z-Image Turbo' },
+                { value: 'krea-2-turbo', label: 'Krea 2 Turbo' },
+              ]}
+              trigger={
+                <>
+                  {settings.imageModel === 'krea-2-turbo' ? <Sparkles className="h-3.5 w-3.5" /> : <ZitIcon className="h-3.5 w-3.5" />}
+                  <span className="text-zinc-300 font-medium">
+                    {settings.imageModel === 'krea-2-turbo' ? 'Krea 2 Turbo' : 'Z-Image Turbo'}
+                  </span>
+                  <ChevronUp className="h-3 w-3 text-zinc-500" />
+                </>
+              }
+            />
+
             {/* Resolution dropdown */}
             <SettingsDropdown
               title="IMAGE RESOLUTION"
@@ -984,6 +999,7 @@ const DEFAULT_VIDEO_SETTINGS = {
   fps: 24,
   aspectRatio: '16:9',
   imageResolution: '1080p',
+  imageModel: 'z-image-turbo',
   variations: 1,
   audio: true,
 }
@@ -1572,7 +1588,8 @@ export function GenSpace() {
           cameraMotion: 'none',
           imageResolution: settings.imageResolution,
           imageAspectRatio: settings.aspectRatio,
-          imageSteps: 4,
+          imageSteps: settings.imageModel === 'krea-2-turbo' ? 8 : 4,
+          imageModel: settings.imageModel as 'z-image-turbo' | 'krea-2-turbo',
           variations: settings.variations,
         }
       )

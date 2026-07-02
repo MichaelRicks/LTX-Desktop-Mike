@@ -21,6 +21,7 @@ export interface GenerationSettings {
   imageResolution: string
   imageAspectRatio: string
   imageSteps: number
+  imageModel?: 'z-image-turbo' | 'krea-2-turbo'
   variations?: number  // Number of image variations to generate
 }
 

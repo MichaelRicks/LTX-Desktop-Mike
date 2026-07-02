@@ -185,7 +185,8 @@
                 "yolox-l-torchscript",
                 "dw-ll-ucoco-384-bs5",
                 "gemma-3-12b-it-qat-q4_0-unquantized",
-                "z-image-turbo"
+                "z-image-turbo",
+                "krea-2-turbo"
               ],
               "type": "string"
             },
@@ -262,7 +263,8 @@
                 "yolox-l-torchscript",
                 "dw-ll-ucoco-384-bs5",
                 "gemma-3-12b-it-qat-q4_0-unquantized",
-                "z-image-turbo"
+                "z-image-turbo",
+                "krea-2-turbo"
               ],
               "type": "string"
             },
@@ -280,7 +282,8 @@
                 "yolox-l-torchscript",
                 "dw-ll-ucoco-384-bs5",
                 "gemma-3-12b-it-qat-q4_0-unquantized",
-                "z-image-turbo"
+                "z-image-turbo",
+                "krea-2-turbo"
               ],
               "type": "string"
             },
@@ -299,7 +302,8 @@
                   "yolox-l-torchscript",
                   "dw-ll-ucoco-384-bs5",
                   "gemma-3-12b-it-qat-q4_0-unquantized",
-                  "z-image-turbo"
+                  "z-image-turbo",
+                  "krea-2-turbo"
                 ],
                 "type": "string"
               },
@@ -396,6 +400,15 @@
             "minimum": 16.0,
             "title": "Height",
             "type": "integer"
+          },
+          "model": {
+            "default": "z-image-turbo",
+            "enum": [
+              "z-image-turbo",
+              "krea-2-turbo"
+            ],
+            "title": "Model",
+            "type": "string"
           },
           "numImages": {
             "default": 1,
@@ -1050,7 +1063,8 @@
                   "yolox-l-torchscript",
                   "dw-ll-ucoco-384-bs5",
                   "gemma-3-12b-it-qat-q4_0-unquantized",
-                  "z-image-turbo"
+                  "z-image-turbo",
+                  "krea-2-turbo"
                 ],
                 "type": "string"
               },
@@ -1183,7 +1197,8 @@
                 "yolox-l-torchscript",
                 "dw-ll-ucoco-384-bs5",
                 "gemma-3-12b-it-qat-q4_0-unquantized",
-                "z-image-turbo"
+                "z-image-turbo",
+                "krea-2-turbo"
               ],
               "type": "string"
             },
@@ -1215,7 +1230,8 @@
                 "yolox-l-torchscript",
                 "dw-ll-ucoco-384-bs5",
                 "gemma-3-12b-it-qat-q4_0-unquantized",
-                "z-image-turbo"
+                "z-image-turbo",
+                "krea-2-turbo"
               ],
               "type": "string"
             },
@@ -1274,7 +1290,8 @@
                 "yolox-l-torchscript",
                 "dw-ll-ucoco-384-bs5",
                 "gemma-3-12b-it-qat-q4_0-unquantized",
-                "z-image-turbo"
+                "z-image-turbo",
+                "krea-2-turbo"
               ],
               "type": "string"
             },
@@ -1291,7 +1308,8 @@
                 "yolox-l-torchscript",
                 "dw-ll-ucoco-384-bs5",
                 "gemma-3-12b-it-qat-q4_0-unquantized",
-                "z-image-turbo"
+                "z-image-turbo",
+                "krea-2-turbo"
               ],
               "type": "string"
             },
@@ -1341,7 +1359,8 @@
                 "yolox-l-torchscript",
                 "dw-ll-ucoco-384-bs5",
                 "gemma-3-12b-it-qat-q4_0-unquantized",
-                "z-image-turbo"
+                "z-image-turbo",
+                "krea-2-turbo"
               ],
               "type": "string"
             },
@@ -1365,7 +1384,8 @@
                 "yolox-l-torchscript",
                 "dw-ll-ucoco-384-bs5",
                 "gemma-3-12b-it-qat-q4_0-unquantized",
-                "z-image-turbo"
+                "z-image-turbo",
+                "krea-2-turbo"
               ],
               "type": "string"
             },
@@ -1717,7 +1737,8 @@
                   "yolox-l-torchscript",
                   "dw-ll-ucoco-384-bs5",
                   "gemma-3-12b-it-qat-q4_0-unquantized",
-                  "z-image-turbo"
+                  "z-image-turbo",
+                  "krea-2-turbo"
                 ],
                 "type": "string"
               },
