@@ -7,8 +7,9 @@ from dataclasses import dataclass
 from typing import Any, cast
 
 import torch
+from diffusers import BitsAndBytesConfig  # type: ignore[reportPrivateImportUsage]
 from diffusers import Krea2Pipeline  # type: ignore[reportUnknownVariableType]
-from diffusers.hooks import apply_group_offloading  # type: ignore[reportUnknownVariableType]
+from diffusers import Krea2Transformer2DModel  # type: ignore[reportPrivateImportUsage]
 from PIL.Image import Image as PILImage
 from PIL.Image import Resampling
 
@@ -37,10 +38,36 @@ class Krea2ImageGenerationPipeline:
     def __init__(self, model_path: str, device: str | None = None) -> None:
         self._device: str | None = None
         self._cpu_offload_active = False
-        self.pipeline = Krea2Pipeline.from_pretrained(  # type: ignore[reportUnknownMemberType]
-            model_path,
-            torch_dtype=torch.bfloat16,
-        )
+
+        # NF4 quantization only benefits CUDA: it shrinks the ~24 GB bf16
+        # transformer to ~7 GB, small enough to fit on a consumer GPU as a
+        # whole component (no block-level streaming needed), which is both
+        # faster (no per-block copy overhead) and lighter to keep resident
+        # when parked between generations. bitsandbytes has no MPS backend,
+        # so other devices keep the plain bf16 transformer.
+        if get_device_type(device) == "cuda":
+            quantization_config = BitsAndBytesConfig(
+                load_in_4bit=True,
+                bnb_4bit_quant_type="nf4",
+                bnb_4bit_compute_dtype=torch.bfloat16,
+            )
+            transformer = Krea2Transformer2DModel.from_pretrained(  # type: ignore[reportUnknownMemberType]
+                model_path,
+                subfolder="transformer",
+                quantization_config=quantization_config,
+                torch_dtype=torch.bfloat16,
+            )
+            self.pipeline = Krea2Pipeline.from_pretrained(  # type: ignore[reportUnknownMemberType]
+                model_path,
+                transformer=transformer,
+                torch_dtype=torch.bfloat16,
+            )
+        else:
+            self.pipeline = Krea2Pipeline.from_pretrained(  # type: ignore[reportUnknownMemberType]
+                model_path,
+                torch_dtype=torch.bfloat16,
+            )
+
         if device is not None:
             self.to(device)
 
@@ -68,11 +95,13 @@ class Krea2ImageGenerationPipeline:
 
         return _Krea2Output(images=validated_images)
 
-    # ~1 MP is what a 24 GB card sustains with block offloading: the allocator's
-    # reservation grows toward the full transformer size during a pass, and
-    # larger canvases push it past VRAM, where Windows silently spills to
-    # system RAM (~40x slower). Measured: 1344x768 peaks ~22 GB and runs at
-    # full speed; 1920x1088 reserves 44 GB and takes minutes per step.
+    # Quantizing the transformer shrinks its *weights* (~24 GB -> ~7 GB), but
+    # activation memory still scales with pixel count regardless of
+    # quantization. Measured on a 24 GB card: 1344x768 reserves ~17 GB and
+    # runs at full speed; 1536x896 reserves ~24 GB (no safety margin left for
+    # other apps); 1728x992 reserves ~32 GB, overflowing into system RAM
+    # (~40x slower). Keep the same conservative cap as the pre-quantization
+    # implementation.
     _MAX_GENERATION_PIXELS = 1344 * 768
 
     @torch.inference_mode()
@@ -95,15 +124,6 @@ class Krea2ImageGenerationPipeline:
         generator = torch.Generator(device=device).manual_seed(seed)
         pipeline = cast(Any, self.pipeline)
 
-        def flush_cache_on_step_end(
-            _pipe: object, _step: int, _timestep: object, callback_kwargs: dict[str, Any]
-        ) -> dict[str, Any]:
-            # Return freed block buffers to the driver after every step so the
-            # allocator's reservation cannot compound across steps.
-            sync_device(device)
-            empty_device_cache(device)
-            return callback_kwargs
-
         try:
             output = pipeline(
                 prompt=prompt,
@@ -114,10 +134,9 @@ class Krea2ImageGenerationPipeline:
                 generator=generator,
                 output_type="pil",
                 return_dict=True,
-                callback_on_step_end=flush_cache_on_step_end,
             )
         finally:
-            # Leftover allocator cache would starve the next run the same way.
+            # Leftover allocator cache would starve the next run.
             sync_device(device)
             empty_device_cache(device)
 
@@ -134,41 +153,12 @@ class Krea2ImageGenerationPipeline:
 
     def to(self, device: str) -> None:
         runtime_device = get_device_type(device)
-        if runtime_device == "cuda":
-            # The bf16 transformer (~24 GB) exceeds consumer VRAM, so whole-
-            # component offloading (enable_model_cpu_offload) cannot work:
-            # blocks are copied from system RAM per-use instead.
-            # - use_stream=False: streamed (async) mode parks every block's GPU
-            #   copy behind CUDA-stream lifetimes, so the allocator accumulates
-            #   the entire transformer (~22 GB) instead of reusing one buffer;
-            #   at >=1080p that saturates 24 GB cards and Windows silently
-            #   spills to system RAM (~40x slower). Synchronous copies keep the
-            #   watermark at a few GB at a cost of a couple seconds per step.
-            # - low_cpu_mem_usage=True: skips host-memory pinning, which
-            #   Windows refuses at this size (fails as a bogus CUDA OOM).
-            onload = torch.device("cuda")
-            offload = torch.device("cpu")
-            pipeline = cast(Any, self.pipeline)
-            pipeline.transformer.enable_group_offload(
-                onload_device=onload,
-                offload_device=offload,
-                offload_type="block_level",
-                num_blocks_per_group=1,
-                use_stream=False,
-                low_cpu_mem_usage=True,
-            )
-            apply_group_offloading(
-                pipeline.text_encoder,
-                onload_device=onload,
-                offload_device=offload,
-                offload_type="block_level",
-                num_blocks_per_group=1,
-                use_stream=False,
-                low_cpu_mem_usage=True,
-            )
-            pipeline.vae.to(onload)
-            self._cpu_offload_active = True
-        elif runtime_device == "mps":
+        if runtime_device in ("cuda", "mps"):
+            # The NF4-quantized transformer (~7 GB) fits on the accelerator as
+            # a whole component, so simple whole-model offloading is enough -
+            # no custom block-level streaming needed. enable_model_cpu_offload
+            # removes any previously installed hooks first, so it's safe to
+            # call again after a park-to-CPU cycle.
             self.pipeline.enable_model_cpu_offload()  # type: ignore[reportUnknownMemberType]
             self._cpu_offload_active = True
         else:

@@ -20,6 +20,7 @@ dependencies = [
     "peft>=0.13.2",
     "protobuf>=3.20.0",
     "transformers>=5.2,<6",
+    "bitsandbytes>=0.48.0; sys_platform != 'darwin'",
     "sentencepiece>=0.1.99",
     "sageattention>=1.0.0; sys_platform != 'darwin'",
     "opencv-python-headless>=4.8.0",
