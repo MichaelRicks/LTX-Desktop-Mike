@@ -16,5 +16,8 @@ class TorchCleaner:
         self._device = device
 
     def cleanup(self) -> None:
-        empty_device_cache(self._device)
+        # Collect first: dropped pipelines hold reference cycles, so their
+        # tensors only return to the allocator during gc — emptying the cache
+        # before that releases nothing.
         gc.collect()
+        empty_device_cache(self._device)

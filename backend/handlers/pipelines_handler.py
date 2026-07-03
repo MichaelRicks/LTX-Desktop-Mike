@@ -198,6 +198,10 @@ class PipelinesHandler(StateHandlerBase):
                     self.state.gpu_slot = None
                 else:
                     self._ensure_no_running_generation()
+                    # A video-family pipeline holds the GPU — drop it too, so its
+                    # weights don't occupy VRAM underneath the image pipeline.
+                    self.state.gpu_slot = None
+                    self._assert_invariants()
 
         image_generation_pipeline: ImageGenerationPipeline | None = None
 
@@ -211,6 +215,10 @@ class PipelinesHandler(StateHandlerBase):
                     self.state.cpu_slot = None
                 case _:
                     pass
+
+        # Release whatever was just dropped BEFORE loading the new model, so the
+        # image pipeline never has to fit alongside evicted weights.
+        self._gpu_cleaner.cleanup()
 
         if image_generation_pipeline is None:
             pipeline_class = self._image_generation_pipeline_classes[cp_id]
