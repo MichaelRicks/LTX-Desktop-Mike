@@ -14,6 +14,8 @@ from diffusers import Krea2Pipeline  # type: ignore[reportUnknownVariableType]
 from diffusers import Krea2Transformer2DModel  # type: ignore[reportPrivateImportUsage]
 from PIL.Image import Image as PILImage
 from PIL.Image import Resampling
+from transformers import BitsAndBytesConfig as TransformersBitsAndBytesConfig
+from transformers.models.qwen3_vl.modeling_qwen3_vl import Qwen3VLModel
 
 from services.services_utils import (
     ImagePipelineOutputLike,
@@ -26,11 +28,14 @@ from services.services_utils import (
 logger = logging.getLogger(__name__)
 
 # Cached beside the model files themselves (never touches the originals) so
-# subsequent loads read ~7 GB of already-quantized weights instead of the
-# full ~24 GB bf16 transformer. Cuts cold-load time roughly 8x and makes the
-# load far less likely to be hit by the original files getting evicted from
-# the OS file cache under RAM pressure (e.g. from a large video model).
-_NF4_CACHE_DIRNAME = "_nf4_transformer_cache"
+# subsequent loads read the already-quantized weights instead of the full
+# bf16 originals. Cuts cold-load time roughly 8x and makes the load far less
+# likely to be hit by the original files getting evicted from the OS file
+# cache under RAM pressure (e.g. from a large video model) - the text
+# encoder is a single ~9 GB file with no shard-level progress reporting, so
+# that eviction previously showed up as a multi-minute silent stall.
+_NF4_TRANSFORMER_CACHE_DIRNAME = "_nf4_transformer_cache"
+_NF4_TEXT_ENCODER_CACHE_DIRNAME = "_nf4_text_encoder_cache"
 
 
 @dataclass(slots=True)
@@ -48,7 +53,7 @@ class Krea2ImageGenerationPipeline:
 
     @staticmethod
     def _load_quantized_transformer(model_path: str) -> Krea2Transformer2DModel:
-        cache_dir = Path(model_path) / _NF4_CACHE_DIRNAME
+        cache_dir = Path(model_path) / _NF4_TRANSFORMER_CACHE_DIRNAME
         if (cache_dir / "config.json").exists():
             try:
                 return Krea2Transformer2DModel.from_pretrained(  # type: ignore[reportUnknownMemberType]
@@ -78,21 +83,54 @@ class Krea2ImageGenerationPipeline:
             logger.warning("Failed to cache NF4 Krea 2 transformer to %s", cache_dir, exc_info=True)
         return transformer
 
+    @staticmethod
+    def _load_quantized_text_encoder(model_path: str) -> Qwen3VLModel:
+        cache_dir = Path(model_path) / _NF4_TEXT_ENCODER_CACHE_DIRNAME
+        if (cache_dir / "config.json").exists():
+            try:
+                return Qwen3VLModel.from_pretrained(cache_dir, torch_dtype=torch.bfloat16)  # type: ignore[reportUnknownMemberType]
+            except Exception:
+                logger.warning(
+                    "Failed to load cached NF4 Krea 2 text encoder from %s; re-quantizing from source.",
+                    cache_dir,
+                    exc_info=True,
+                )
+
+        quantization_config = TransformersBitsAndBytesConfig(
+            load_in_4bit=True,
+            bnb_4bit_quant_type="nf4",
+            bnb_4bit_compute_dtype=torch.bfloat16,
+        )
+        text_encoder = Qwen3VLModel.from_pretrained(  # type: ignore[reportUnknownMemberType]
+            model_path,
+            subfolder="text_encoder",
+            quantization_config=quantization_config,
+            torch_dtype=torch.bfloat16,
+        )
+        try:
+            text_encoder.save_pretrained(cache_dir)  # type: ignore[reportUnknownMemberType]
+        except OSError:
+            logger.warning("Failed to cache NF4 Krea 2 text encoder to %s", cache_dir, exc_info=True)
+        return text_encoder
+
     def __init__(self, model_path: str, device: str | None = None) -> None:
         self._device: str | None = None
         self._cpu_offload_active = False
 
         # NF4 quantization only benefits CUDA: it shrinks the ~24 GB bf16
-        # transformer to ~7 GB, small enough to fit on a consumer GPU as a
-        # whole component (no block-level streaming needed), which is both
-        # faster (no per-block copy overhead) and lighter to keep resident
-        # when parked between generations. bitsandbytes has no MPS backend,
-        # so other devices keep the plain bf16 transformer.
+        # transformer to ~7 GB and the ~9 GB text encoder to ~3 GB, small
+        # enough to fit on a consumer GPU as whole components (no
+        # block-level streaming needed), which is both faster (no per-block
+        # copy overhead) and lighter to keep resident when parked between
+        # generations. bitsandbytes has no MPS backend, so other devices
+        # keep the plain bf16 components.
         if get_device_type(device) == "cuda":
             transformer = self._load_quantized_transformer(model_path)
+            text_encoder = self._load_quantized_text_encoder(model_path)
             self.pipeline = Krea2Pipeline.from_pretrained(  # type: ignore[reportUnknownMemberType]
                 model_path,
                 transformer=transformer,
+                text_encoder=text_encoder,
                 torch_dtype=torch.bfloat16,
             )
         else:
