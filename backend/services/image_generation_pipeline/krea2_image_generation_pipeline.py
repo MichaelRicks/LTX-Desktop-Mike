@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Sequence
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, cast
 
 import torch
@@ -21,6 +23,15 @@ from services.services_utils import (
     sync_device,
 )
 
+logger = logging.getLogger(__name__)
+
+# Cached beside the model files themselves (never touches the originals) so
+# subsequent loads read ~7 GB of already-quantized weights instead of the
+# full ~24 GB bf16 transformer. Cuts cold-load time roughly 8x and makes the
+# load far less likely to be hit by the original files getting evicted from
+# the OS file cache under RAM pressure (e.g. from a large video model).
+_NF4_CACHE_DIRNAME = "_nf4_transformer_cache"
+
 
 @dataclass(slots=True)
 class _Krea2Output:
@@ -35,6 +46,38 @@ class Krea2ImageGenerationPipeline:
     ) -> "Krea2ImageGenerationPipeline":
         return Krea2ImageGenerationPipeline(model_path=model_path, device=device)
 
+    @staticmethod
+    def _load_quantized_transformer(model_path: str) -> Krea2Transformer2DModel:
+        cache_dir = Path(model_path) / _NF4_CACHE_DIRNAME
+        if (cache_dir / "config.json").exists():
+            try:
+                return Krea2Transformer2DModel.from_pretrained(  # type: ignore[reportUnknownMemberType]
+                    cache_dir, torch_dtype=torch.bfloat16
+                )
+            except Exception:
+                logger.warning(
+                    "Failed to load cached NF4 Krea 2 transformer from %s; re-quantizing from source.",
+                    cache_dir,
+                    exc_info=True,
+                )
+
+        quantization_config = BitsAndBytesConfig(
+            load_in_4bit=True,
+            bnb_4bit_quant_type="nf4",
+            bnb_4bit_compute_dtype=torch.bfloat16,
+        )
+        transformer = Krea2Transformer2DModel.from_pretrained(  # type: ignore[reportUnknownMemberType]
+            model_path,
+            subfolder="transformer",
+            quantization_config=quantization_config,
+            torch_dtype=torch.bfloat16,
+        )
+        try:
+            transformer.save_pretrained(cache_dir)  # type: ignore[reportUnknownMemberType]
+        except OSError:
+            logger.warning("Failed to cache NF4 Krea 2 transformer to %s", cache_dir, exc_info=True)
+        return transformer
+
     def __init__(self, model_path: str, device: str | None = None) -> None:
         self._device: str | None = None
         self._cpu_offload_active = False
@@ -46,17 +89,7 @@ class Krea2ImageGenerationPipeline:
         # when parked between generations. bitsandbytes has no MPS backend,
         # so other devices keep the plain bf16 transformer.
         if get_device_type(device) == "cuda":
-            quantization_config = BitsAndBytesConfig(
-                load_in_4bit=True,
-                bnb_4bit_quant_type="nf4",
-                bnb_4bit_compute_dtype=torch.bfloat16,
-            )
-            transformer = Krea2Transformer2DModel.from_pretrained(  # type: ignore[reportUnknownMemberType]
-                model_path,
-                subfolder="transformer",
-                quantization_config=quantization_config,
-                torch_dtype=torch.bfloat16,
-            )
+            transformer = self._load_quantized_transformer(model_path)
             self.pipeline = Krea2Pipeline.from_pretrained(  # type: ignore[reportUnknownMemberType]
                 model_path,
                 transformer=transformer,
