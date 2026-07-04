@@ -6,8 +6,8 @@ export interface ExportSubtitle {
 }
 
 /**
- * Color correction + fade-to-black/white filters for one segment, as an
- * ffmpeg filter-chain suffix (leading comma, or '' if nothing applies).
+ * Color correction + fade-to-black/white + wipe filters for one segment, as
+ * an ffmpeg filter-chain suffix (leading comma, or '' if nothing applies).
  *
  * The eight color sliders don't map 1:1 onto ffmpeg's eq filter (which only
  * exposes one brightness/contrast/saturation knob each), so brightness,
@@ -59,6 +59,102 @@ function buildGradingFilters(seg: FlatSegment, localDuration: number): string {
 }
 
 /**
+ * ffmpeg's xfade transition names describe which edge the wipe LINE travels
+ * from, while the editor's own naming (and its CSS inset() implementation)
+ * describes which edge the reveal GROWS from - opposite framings for the
+ * same geometry, verified empirically by rendering each ffmpeg transition
+ * and comparing pixel-for-pixel against getWipeClipPath's output. This
+ * mapping is the same for both transitionIn and transitionOut.
+ *
+ * Known limitation: ffmpeg's xfade completes its transition roughly one
+ * frame earlier than the nominal duration (verified with frame-by-frame
+ * contact sheets at 4fps and 24fps) - a fixed ~1-frame offset regardless of
+ * duration, not a scaling error. At typical transition lengths this is a
+ * fraction of a frame's worth of time (<50ms at 24fps) and isn't
+ * perceptible; not worth working around given it's inherent to xfade itself
+ * rather than this code's own math.
+ */
+const WIPE_TYPE_TO_XFADE: Record<string, string> = {
+  'wipe-left': 'wiperight',
+  'wipe-right': 'wipeleft',
+  'wipe-up': 'wipedown',
+  'wipe-down': 'wipeup',
+}
+
+/**
+ * Wipes are true two-layer composites (revealing/hiding against black), not
+ * a single-input filter like fade - ffmpeg has no per-pixel time-animated
+ * crop/drawbox (their w/h/x/y expressions are evaluated once at filter
+ * init, not per-frame), so this reuses ffmpeg's own tested xfade transition
+ * types against a synthetic black source instead of hand-rolling pixel math.
+ *
+ * Returns the new input args/filter lines to append and the label the wipe
+ * result ends up on, or null if no wipe applies to this segment.
+ */
+function applyWipeTransitions(
+  contentLabel: string,
+  seg: FlatSegment,
+  localDuration: number,
+  opts: { width: number; height: number; fps: number },
+  nextIdx: number,
+): { inputs: string[]; filterLines: string[]; label: string; nextIdx: number } | null {
+  const { width, height, fps } = opts
+  const inputs: string[] = []
+  const filterLines: string[] = []
+  let label = contentLabel
+  let idx = nextIdx
+  let applied = false
+
+  const addBlackInput = (): number => {
+    inputs.push('-f', 'lavfi', '-i', `color=c=black:s=${width}x${height}:r=${fps}:d=${localDuration.toFixed(6)}`)
+    return idx++
+  }
+
+  const tIn = seg.transitionIn
+  if (tIn && tIn.type.startsWith('wipe-') && tIn.duration > 0 && seg.offsetInClip < 0.01) {
+    const xfadeType = WIPE_TYPE_TO_XFADE[tIn.type]
+    if (xfadeType) {
+      const d = Math.min(tIn.duration, localDuration)
+      const blackIdx = addBlackInput()
+      const nextLabel = `${contentLabel}wi`
+      // fps-align both sides: the content chain intentionally skips
+      // per-segment fps conversion (applied once after concat), but xfade
+      // blends frame-for-frame and needs matched timing to do that correctly.
+      filterLines.push(
+        `[${blackIdx}:v]fps=${fps},setsar=1[${nextLabel}blk];` +
+        `[${label}]fps=${fps}[${nextLabel}clip];` +
+        `[${nextLabel}blk][${nextLabel}clip]xfade=transition=${xfadeType}:duration=${d.toFixed(4)}:offset=0[${nextLabel}]`,
+      )
+      label = nextLabel
+      applied = true
+    }
+  }
+
+  const tOut = seg.transitionOut
+  if (tOut && tOut.type.startsWith('wipe-') && tOut.duration > 0) {
+    const reachesClipEnd = Math.abs((seg.offsetInClip + localDuration) - seg.clipDuration) < 0.01
+    if (reachesClipEnd) {
+      const xfadeType = WIPE_TYPE_TO_XFADE[tOut.type]
+      if (xfadeType) {
+        const d = Math.min(tOut.duration, localDuration)
+        const st = Math.max(0, localDuration - d)
+        const blackIdx = addBlackInput()
+        const nextLabel = `${contentLabel}wo`
+        filterLines.push(
+          `[${label}]fps=${fps}[${nextLabel}clip];` +
+          `[${blackIdx}:v]fps=${fps},setsar=1[${nextLabel}blk];` +
+          `[${nextLabel}clip][${nextLabel}blk]xfade=transition=${xfadeType}:duration=${d.toFixed(4)}:offset=${st.toFixed(4)}[${nextLabel}]`,
+        )
+        label = nextLabel
+        applied = true
+      }
+    }
+  }
+
+  return applied ? { inputs, filterLines, label, nextIdx: idx } : null
+}
+
+/**
  * Build the ffmpeg filter_complex script and input arguments for the video-only pass.
  * Pure string building — zero I/O.
  */
@@ -78,10 +174,12 @@ export function buildVideoFilterGraph(
   for (let i = 0; i < segments.length; i++) {
     const seg = segments[i]
 
+    const contentLabel = `v${i}c`
+
     if (seg.type === 'gap') {
       // Gap: generate black frames at target fps (synthetic input)
       inputs.push('-f', 'lavfi', '-i', `color=c=black:s=${width}x${height}:r=${fps}:d=${seg.duration.toFixed(6)}`)
-      filterParts.push(`[${idx}:v]setsar=1[v${i}]`)
+      filterParts.push(`[${idx}:v]setsar=1[${contentLabel}]`)
       idx++
     } else if (seg.type === 'image') {
       // Image: loop for exact duration, use target fps for frame generation
@@ -90,7 +188,7 @@ export function buildVideoFilterGraph(
       if (seg.flipH) chain += ',hflip'
       if (seg.flipV) chain += ',vflip'
       chain += buildGradingFilters(seg, seg.duration)
-      chain += `[v${i}]`
+      chain += `[${contentLabel}]`
       filterParts.push(chain)
       idx++
     } else {
@@ -105,9 +203,19 @@ export function buildVideoFilterGraph(
       if (seg.flipH) chain += ',hflip'
       if (seg.flipV) chain += ',vflip'
       chain += buildGradingFilters(seg, seg.duration)
-      chain += `[v${i}]`
+      chain += `[${contentLabel}]`
       filterParts.push(chain)
       idx++
+    }
+
+    const wipe = applyWipeTransitions(contentLabel, seg, seg.duration, { width, height, fps }, idx)
+    if (wipe) {
+      inputs.push(...wipe.inputs)
+      filterParts.push(...wipe.filterLines)
+      idx = wipe.nextIdx
+      filterParts.push(`[${wipe.label}]null[v${i}]`)
+    } else {
+      filterParts.push(`[${contentLabel}]null[v${i}]`)
     }
   }
 
