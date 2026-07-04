@@ -179,6 +179,9 @@ export function ExportModal({ projectName }: ExportModalProps) {
         trackIndex: clip.trackIndex,
         muted: clip.muted || false,
         volume: clip.volume ?? 1,
+        colorCorrection: clip.colorCorrection,
+        transitionIn: clip.transitionIn,
+        transitionOut: clip.transitionOut,
       }))
   ), [assets, clips, tracks])
 

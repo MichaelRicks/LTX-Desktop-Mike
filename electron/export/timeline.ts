@@ -1,13 +1,30 @@
+export interface ColorCorrection {
+  brightness: number; contrast: number; saturation: number; temperature: number;
+  tint: number; exposure: number; highlights: number; shadows: number;
+}
+
+export interface ClipTransition {
+  type: string; duration: number;
+}
+
 export interface ExportClip {
   path: string; type: string; startTime: number; duration: number; trimStart: number;
   speed: number; reversed: boolean; flipH: boolean; flipV: boolean; opacity: number; trackIndex: number;
   muted: boolean; volume: number;
+  colorCorrection?: ColorCorrection; transitionIn?: ClipTransition; transitionOut?: ClipTransition;
 }
 
 export interface FlatSegment {
   filePath: string; type: string; startTime: number; duration: number; trimStart: number;
   speed: number; reversed: boolean; flipH: boolean; flipV: boolean; opacity: number;
   muted: boolean; volume: number;
+  colorCorrection?: ColorCorrection; transitionIn?: ClipTransition; transitionOut?: ClipTransition;
+  // Position of this segment within its ORIGINAL clip's own timeline (not the
+  // overall program timeline) and that clip's total duration - needed so a
+  // clip fragmented by a higher-track overlay still only applies its
+  // transitionIn/Out at the true start/end of the original clip, not at
+  // every fragment boundary.
+  offsetInClip: number; clipDuration: number;
 }
 
 /**
@@ -58,12 +75,18 @@ export function flattenTimeline(clips: ExportClip[]): FlatSegment[] {
         opacity: c.opacity,
         muted: c.muted,
         volume: c.volume,
+        colorCorrection: c.colorCorrection,
+        transitionIn: c.transitionIn,
+        transitionOut: c.transitionOut,
+        offsetInClip,
+        clipDuration: c.duration,
       })
     } else {
       segments.push({
         filePath: '', type: 'gap', startTime: t0, duration: segDur, trimStart: 0,
         speed: 1, reversed: false, flipH: false, flipV: false, opacity: 100,
         muted: true, volume: 0,
+        offsetInClip: 0, clipDuration: 0,
       })
     }
   }

@@ -6,6 +6,59 @@ export interface ExportSubtitle {
 }
 
 /**
+ * Color correction + fade-to-black/white filters for one segment, as an
+ * ffmpeg filter-chain suffix (leading comma, or '' if nothing applies).
+ *
+ * The eight color sliders don't map 1:1 onto ffmpeg's eq filter (which only
+ * exposes one brightness/contrast/saturation knob each), so brightness,
+ * exposure, and highlights combine into eq's additive brightness, and
+ * contrast and shadows combine into its multiplicative contrast - matching
+ * how the editor's own CSS preview groups them conceptually. This is a
+ * close creative match to the live preview, not colorimetric precision -
+ * consistent with the preview's own hue-rotate/sepia approximations.
+ */
+function buildGradingFilters(seg: FlatSegment, localDuration: number): string {
+  const parts: string[] = []
+  const cc = seg.colorCorrection
+
+  if (cc) {
+    const brightness = cc.brightness / 100 + cc.exposure / 200 + cc.highlights / 300
+    const contrast = 1 + cc.contrast / 100 + cc.shadows / 300
+    const saturation = Math.max(0, Math.min(3, 1 + cc.saturation / 100))
+    if (brightness !== 0 || contrast !== 1 || saturation !== 1) {
+      parts.push(`eq=brightness=${brightness.toFixed(4)}:contrast=${contrast.toFixed(4)}:saturation=${saturation.toFixed(4)}`)
+    }
+    if (cc.tint !== 0) {
+      parts.push(`hue=h=${(cc.tint * 1.2).toFixed(2)}`)
+    }
+    if (cc.temperature !== 0) {
+      const kelvin = Math.max(1000, Math.min(40000, Math.round(6500 - cc.temperature * 35)))
+      parts.push(`colortemperature=temperature=${kelvin}`)
+    }
+  }
+
+  // Fades are defined relative to the ORIGINAL clip's start/end, so only
+  // apply them to the fragment that actually touches that edge - a clip
+  // split by a higher-track overlay would otherwise fade every fragment.
+  const tIn = seg.transitionIn
+  if (tIn && (tIn.type === 'fade-to-black' || tIn.type === 'fade-to-white') && tIn.duration > 0 && seg.offsetInClip < 0.01) {
+    const d = Math.min(tIn.duration, localDuration)
+    parts.push(`fade=t=in:st=0:d=${d.toFixed(4)}:color=${tIn.type === 'fade-to-black' ? 'black' : 'white'}`)
+  }
+  const tOut = seg.transitionOut
+  if (tOut && (tOut.type === 'fade-to-black' || tOut.type === 'fade-to-white') && tOut.duration > 0) {
+    const reachesClipEnd = Math.abs((seg.offsetInClip + localDuration) - seg.clipDuration) < 0.01
+    if (reachesClipEnd) {
+      const d = Math.min(tOut.duration, localDuration)
+      const st = Math.max(0, localDuration - d)
+      parts.push(`fade=t=out:st=${st.toFixed(4)}:d=${d.toFixed(4)}:color=${tOut.type === 'fade-to-black' ? 'black' : 'white'}`)
+    }
+  }
+
+  return parts.length > 0 ? ',' + parts.join(',') : ''
+}
+
+/**
  * Build the ffmpeg filter_complex script and input arguments for the video-only pass.
  * Pure string building — zero I/O.
  */
@@ -36,6 +89,7 @@ export function buildVideoFilterGraph(
       let chain = `[${idx}:v]scale=${width}:${height}:force_original_aspect_ratio=decrease,pad=${width}:${height}:-1:-1:color=black,setsar=1`
       if (seg.flipH) chain += ',hflip'
       if (seg.flipV) chain += ',vflip'
+      chain += buildGradingFilters(seg, seg.duration)
       chain += `[v${i}]`
       filterParts.push(chain)
       idx++
@@ -50,6 +104,7 @@ export function buildVideoFilterGraph(
       chain += `,scale=${width}:${height}:force_original_aspect_ratio=decrease,pad=${width}:${height}:-1:-1:color=black,setsar=1`
       if (seg.flipH) chain += ',hflip'
       if (seg.flipV) chain += ',vflip'
+      chain += buildGradingFilters(seg, seg.duration)
       chain += `[v${i}]`
       filterParts.push(chain)
       idx++
