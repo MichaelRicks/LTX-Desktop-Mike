@@ -241,6 +241,15 @@ export function buildVideoFilterGraph(
     // editor's own preview - overlaps the tail of one clip with the head of
     // the next, shrinking total duration by the dissolve's length) and plain
     // concat everywhere else.
+    //
+    // xfade's "dissolve" transition is a misnomer for what this app (and
+    // every mainstream NLE) means by dissolve: it's a randomized pixel
+    // dither, not a smooth cross-fade - confirmed by blending solid red and
+    // blue test frames at 50%: "dissolve" produced visibly speckled
+    // red/blue pixels, not a uniform blend. xfade's "fade" is the one that
+    // actually does a plain linear alpha blend (verified: uniform purple at
+    // 50%), matching the editor's own opacity-based preview.
+    const XFADE_DISSOLVE_TYPE = 'fade'
     const dissolveDurationAfter = new Map(dissolveBoundaries.map(b => [b.index, b.duration]))
 
     filterParts.push(`[v0]fps=${fps}[vacc0]`)
@@ -256,7 +265,7 @@ export function buildVideoFilterGraph(
       if (dissolveDuration !== undefined) {
         const offset = Math.max(0, accDuration - dissolveDuration)
         filterParts.push(
-          `[${accLabel}][${segFpsLabel}]xfade=transition=dissolve:duration=${dissolveDuration.toFixed(4)}:offset=${offset.toFixed(4)}[${nextAccLabel}]`,
+          `[${accLabel}][${segFpsLabel}]xfade=transition=${XFADE_DISSOLVE_TYPE}:duration=${dissolveDuration.toFixed(4)}:offset=${offset.toFixed(4)}[${nextAccLabel}]`,
         )
         accDuration = accDuration + segments[i].duration - dissolveDuration
       } else {
