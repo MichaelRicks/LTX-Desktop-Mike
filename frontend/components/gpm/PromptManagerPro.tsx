@@ -8,7 +8,7 @@
  */
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
-  Camera, ChevronRight, ChevronsDownUp, ChevronsUpDown, Copy, Download, Eraser, FolderPlus, Image as ImageIcon,
+  Camera, ChevronRight, ChevronsDownUp, ChevronsUpDown, Copy, Download, Eraser, FolderPlus, GripVertical, Image as ImageIcon,
   Layers, Maximize2, Minimize2, Pencil, Plus, RotateCcw, Save, Search, Send, Trash2, Upload, Wand2, X,
 } from 'lucide-react'
 import {
@@ -50,6 +50,10 @@ function camImageUrl(file?: string): string | undefined {
 }
 
 type GpmTab = 'performance' | 'shot' | 'camera' | 'workflow' | 'prompts' | 'images' | 'plates'
+
+// DND mime types for folder drag-reorder, distinct per panel so a drag in one can't drop in the other.
+const PROMPT_FOLDER_DND = 'application/x-gpm-pro-promptfolder'
+const IMAGE_FOLDER_DND = 'application/x-gpm-pro-imagefolder'
 
 interface PerfState {
   familyIndex: number
@@ -116,20 +120,46 @@ function Triangle({ open, color }: { open: boolean; color: string }) {
 }
 
 function Section({
-  id, title, ctl, right, children,
+  id, title, ctl, right, children, dragHandle, dropLine, onDragOver, onDragLeave, onDrop,
 }: {
   id: string; title: React.ReactNode; ctl: SectionCtl
   right?: React.ReactNode; children: React.ReactNode
+  /** Present only for reorderable (folder) sections — renders a grip handle in the header. */
+  dragHandle?: { onDragStart: (e: React.DragEvent) => void; onDragEnd: () => void }
+  dropLine?: 'before' | 'after' | null
+  onDragOver?: (e: React.DragEvent) => void
+  onDragLeave?: () => void
+  onDrop?: (e: React.DragEvent) => void
 }) {
   const open = ctl.isOpen(id)
   return (
-    <div className="rounded-lg mb-2 overflow-hidden" style={{ border: `1px solid ${C.border}` }}>
+    <div
+      className="relative rounded-lg mb-2 overflow-hidden"
+      style={{ border: `1px solid ${C.border}` }}
+      onDragOver={onDragOver} onDragLeave={onDragLeave} onDrop={onDrop}
+    >
+      {dropLine && (
+        <div
+          className="absolute left-0 right-0 z-10 pointer-events-none"
+          style={{ [dropLine === 'before' ? 'top' : 'bottom']: -1, height: 2, background: C.blue, boxShadow: `0 0 4px ${C.blue}` }}
+        />
+      )}
       <button
         onClick={() => ctl.toggle(id)}
         className="w-full flex items-center justify-between px-3 py-2.5 text-[11px] font-semibold uppercase tracking-wide"
         style={{ background: C.card, color: C.text }}
       >
         <span className="flex items-center gap-1.5">
+          {dragHandle && (
+            <span
+              draggable onDragStart={dragHandle.onDragStart} onDragEnd={dragHandle.onDragEnd}
+              onClick={(e) => e.stopPropagation()}
+              className="flex items-center"
+              style={{ cursor: 'grab' }}
+            >
+              <GripVertical size={12} style={{ color: C.faint }} />
+            </span>
+          )}
           <Triangle open={open} color={open ? C.blue : C.muted} />
           {title}
         </span>
@@ -1018,6 +1048,8 @@ function PromptsPanel({
   const [editId, setEditId] = useState<string | null>(null)
   const [draft, setDraft] = useState('')
   const [thumbs, setThumbs] = useState<Record<string, string>>({})
+  const dragFolder = useRef<string | null>(null)
+  const [dropLine, setDropLine] = useState<{ target: string; before: boolean } | null>(null)
 
   const reload = () => {
     void loadPromptFolders().then(setFolders)
@@ -1034,6 +1066,20 @@ function PromptsPanel({
   const deletePrompt = (fid: string, pid: string) => {
     persist(folders.map((f) => (f.id === fid ? { ...f, prompts: f.prompts.filter((p) => p.id !== pid) } : f)))
     if (thumbs[pid]) { void deletePromptThumb(pid); setThumbs((t) => { const n = { ...t }; delete n[pid]; return n }) }
+  }
+  // Drag-reorder folders, with a blue drop-line indicator like the Studio Assets panel.
+  const onFolderDrop = (target: string, before: boolean) => {
+    const dragged = dragFolder.current
+    dragFolder.current = null
+    setDropLine(null)
+    if (!dragged || dragged === target) return
+    const order = folders.filter((f) => f.id !== dragged)
+    const draggedFolder = folders.find((f) => f.id === dragged)
+    if (!draggedFolder) return
+    let idx = order.findIndex((f) => f.id === target)
+    if (!before) idx += 1
+    order.splice(idx, 0, draggedFolder)
+    persist(order)
   }
 
   const q = search.trim().toLowerCase()
@@ -1058,6 +1104,22 @@ function PromptsPanel({
         return (
           <Section
             key={f.id} id={`pf-${f.id}`} ctl={ctl} title={`${f.name} (${f.prompts.length})`}
+            dragHandle={{
+              onDragStart: (e) => { dragFolder.current = f.id; e.dataTransfer.setData(PROMPT_FOLDER_DND, f.id); e.dataTransfer.effectAllowed = 'move' },
+              onDragEnd: () => { dragFolder.current = null; setDropLine(null) },
+            }}
+            dropLine={dropLine?.target === f.id ? (dropLine.before ? 'before' : 'after') : null}
+            onDragOver={(e) => {
+              if (!e.dataTransfer.types.includes(PROMPT_FOLDER_DND)) return
+              e.preventDefault()
+              if (dragFolder.current && dragFolder.current !== f.id) {
+                const r = e.currentTarget.getBoundingClientRect()
+                const before = e.clientY - r.top < r.height / 2
+                setDropLine({ target: f.id, before })
+              }
+            }}
+            onDragLeave={() => setDropLine((d) => (d?.target === f.id ? null : d))}
+            onDrop={(e) => { e.preventDefault(); if (dragFolder.current) onFolderDrop(f.id, dropLine?.before ?? true) }}
             right={
               <span className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
                 <Plus size={13} style={{ color: C.blue, cursor: 'pointer' }} onClick={() => addPrompt(f.id)} />
@@ -1123,9 +1185,26 @@ function ImagesPanel({ ctl, onCopy, onUse, flash }: { ctl: SectionCtl; onCopy: (
   const [renameVal, setRenameVal] = useState('')
   const targetFolder = useRef<string | null>(null)
   const fileRef = useRef<HTMLInputElement | null>(null)
+  const dragFolder = useRef<string | null>(null)
+  const [dropLine, setDropLine] = useState<{ target: string; before: boolean } | null>(null)
 
   const reload = () => { void loadImageFolders().then(setFolders); void loadImages().then(setImages) }
   useEffect(reload, [])
+
+  // Drag-reorder folders, with a blue drop-line indicator like the Studio Assets panel.
+  const onFolderDrop = (target: string, before: boolean) => {
+    const dragged = dragFolder.current
+    dragFolder.current = null
+    setDropLine(null)
+    if (!dragged || dragged === target) return
+    const order = folders.filter((f) => f.id !== dragged)
+    const draggedFolder = folders.find((f) => f.id === dragged)
+    if (!draggedFolder) return
+    let idx = order.findIndex((f) => f.id === target)
+    if (!before) idx += 1
+    order.splice(idx, 0, draggedFolder)
+    setFolders(order); void saveImageFolders(order)
+  }
 
   const addFolder = () => {
     const n = newFolder.trim(); if (!n) return
@@ -1228,6 +1307,22 @@ function ImagesPanel({ ctl, onCopy, onUse, flash }: { ctl: SectionCtl; onCopy: (
           <Section
             id={`if-${f.id}`} ctl={ctl}
             title={<span className="flex items-center gap-1.5">{f.name} ({items.length})</span>}
+            dragHandle={{
+              onDragStart: (e) => { dragFolder.current = f.id; e.dataTransfer.setData(IMAGE_FOLDER_DND, f.id); e.dataTransfer.effectAllowed = 'move' },
+              onDragEnd: () => { dragFolder.current = null; setDropLine(null) },
+            }}
+            dropLine={dropLine?.target === f.id ? (dropLine.before ? 'before' : 'after') : null}
+            onDragOver={(e) => {
+              if (!e.dataTransfer.types.includes(IMAGE_FOLDER_DND)) return
+              e.preventDefault()
+              if (dragFolder.current && dragFolder.current !== f.id) {
+                const r = e.currentTarget.getBoundingClientRect()
+                const before = e.clientY - r.top < r.height / 2
+                setDropLine({ target: f.id, before })
+              }
+            }}
+            onDragLeave={() => setDropLine((d) => (d?.target === f.id ? null : d))}
+            onDrop={(e) => { if (dragFolder.current) { e.preventDefault(); onFolderDrop(f.id, dropLine?.before ?? true) } }}
             right={
               <span className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
                 <Plus size={13} style={{ color: C.blue, cursor: 'pointer' }} onClick={() => pickFor(f.id)} />
@@ -1373,10 +1468,11 @@ function Dock({ onClose }: { onClose: () => void }) {
       <button
         onClick={onClose}
         title="Close Desktop Studio Pro"
-        className="absolute top-1/2 -translate-y-1/2 -left-6 flex items-center justify-center"
-        style={{ width: 24, height: 84, background: C.blue, color: '#fff', borderRadius: '8px 0 0 8px', boxShadow: '-3px 0 10px rgba(0,0,0,0.35)' }}
+        className="absolute top-1/2 -translate-y-1/2 -left-6 flex flex-col items-center justify-center gap-1.5"
+        style={{ width: 24, height: 110, background: C.blue, color: '#fff', borderRadius: '8px 0 0 8px', boxShadow: '-3px 0 10px rgba(0,0,0,0.35)' }}
       >
-        <ChevronRight size={18} />
+        <ChevronRight size={16} />
+        <span className="text-xs font-semibold tracking-wide" style={{ writingMode: 'vertical-rl', transform: 'rotate(180deg)' }}>CLOSE</span>
       </button>
 
       <div className="flex items-center justify-between px-4 py-3 shrink-0" style={{ borderBottom: `1px solid ${C.border}` }}>
@@ -1504,10 +1600,11 @@ export function PromptManagerPro() {
     return (
       <button
         onClick={() => setPromptManagerProOpen(true)} title="Open Desktop Studio Pro"
-        className="fixed top-1/2 -translate-y-1/2 right-0 z-[75] flex items-center justify-center"
-        style={{ width: 24, height: 84, background: C.blue, color: '#fff', borderRadius: '8px 0 0 8px', boxShadow: '-3px 0 10px rgba(0,0,0,0.35)' }}
+        className="fixed top-1/2 -translate-y-1/2 right-0 z-[75] flex flex-col items-center justify-center gap-1.5"
+        style={{ width: 24, height: 160, background: C.blue, color: '#fff', borderRadius: '8px 0 0 8px', boxShadow: '-3px 0 10px rgba(0,0,0,0.35)' }}
       >
-        <ChevronRight size={18} style={{ transform: 'rotate(180deg)' }} />
+        <ChevronRight size={16} style={{ transform: 'rotate(180deg)' }} />
+        <span className="text-xs font-semibold tracking-wide" style={{ writingMode: 'vertical-rl', transform: 'rotate(180deg)' }}>STUDIO PRO</span>
       </button>
     )
   }

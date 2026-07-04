@@ -5,7 +5,7 @@
  */
 import { useSyncExternalStore } from 'react'
 
-let isOpen = true
+let isOpen = false
 const listeners = new Set<() => void>()
 
 export function getPromptManagerProOpen(): boolean {

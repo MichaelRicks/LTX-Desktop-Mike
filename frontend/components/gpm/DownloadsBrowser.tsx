@@ -319,10 +319,11 @@ function Dock({ onClose }: { onClose: () => void }) {
 
       <button
         onClick={onClose} title="Close Studio Assets"
-        className="fixed top-1/2 -translate-y-1/2 z-[76] flex items-center justify-center"
-        style={{ left: 340, width: 16, height: 84, background: C.blue, color: '#fff', borderRadius: '0 8px 8px 0', boxShadow: '3px 0 10px rgba(0,0,0,0.35)' }}
+        className="fixed top-1/2 -translate-y-1/2 z-[76] flex flex-col items-center justify-center gap-1.5"
+        style={{ left: 340, width: 24, height: 110, background: C.blue, color: '#fff', borderRadius: '0 8px 8px 0', boxShadow: '3px 0 10px rgba(0,0,0,0.35)' }}
       >
-        <ChevronLeft size={14} />
+        <ChevronLeft size={16} />
+        <span className="text-xs font-semibold tracking-wide" style={{ writingMode: 'vertical-rl', transform: 'rotate(180deg)' }}>CLOSE</span>
       </button>
 
       {moveTarget && (
@@ -356,8 +357,9 @@ export function DownloadsBrowser() {
   const open = useDownloadsBrowserOpen()
   if (!open) {
     return (
-      <button onClick={() => setDownloadsBrowserOpen(true)} title="Open Studio Assets" className="fixed top-1/2 -translate-y-1/2 left-0 flex items-center justify-center" style={{ width: 24, height: 84, background: C.blue, color: '#fff', borderRadius: '0 8px 8px 0', boxShadow: '3px 0 10px rgba(0,0,0,0.35)' }}>
-        <ChevronLeft size={18} style={{ transform: 'rotate(180deg)' }} />
+      <button onClick={() => setDownloadsBrowserOpen(true)} title="Open Studio Assets" className="fixed top-1/2 -translate-y-1/2 left-0 flex flex-col items-center justify-center gap-1.5" style={{ width: 24, height: 110, background: C.blue, color: '#fff', borderRadius: '0 8px 8px 0', boxShadow: '3px 0 10px rgba(0,0,0,0.35)' }}>
+        <ChevronLeft size={16} style={{ transform: 'rotate(180deg)' }} />
+        <span className="text-xs font-semibold tracking-wide" style={{ writingMode: 'vertical-rl', transform: 'rotate(180deg)' }}>ASSETS</span>
       </button>
     )
   }
