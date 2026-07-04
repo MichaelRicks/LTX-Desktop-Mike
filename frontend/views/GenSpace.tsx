@@ -1837,9 +1837,9 @@ export function GenSpace() {
             <button
               onClick={clearGenSpacePrompt}
               title="Clear the prompt box"
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium bg-blue-600 hover:bg-blue-500 text-white transition-colors"
+              className="flex items-center gap-1 px-2.5 py-1.5 rounded-md text-[11px] font-semibold bg-[#1f8fff] hover:bg-[#3d9fff] text-white transition-colors"
             >
-              <Eraser className="h-4 w-4" />
+              <Eraser className="h-3.5 w-3.5" />
               Clear Prompt
             </button>
 
