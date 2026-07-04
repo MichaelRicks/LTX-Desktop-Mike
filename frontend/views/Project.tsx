@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import { ArrowLeft, Sparkles, Film, Save, Download } from 'lucide-react'
+import { ArrowLeft, Sparkles, Film, Save, Download, Pencil } from 'lucide-react'
 import { useProjects } from '../contexts/ProjectContext'
 import { useView } from '../contexts/ViewContext'
 import { LtxLogo } from '../components/LtxLogo'
@@ -27,6 +27,7 @@ export function Project() {
     getProject,
     setCurrentTab,
     updateAsset,
+    renameProject,
     pendingRetakeUpdate,
     setPendingRetakeUpdate,
     pendingIcLoraUpdate,
@@ -36,6 +37,8 @@ export function Project() {
   const [assetMetadataMigrationProgress, setAssetMetadataMigrationProgress] = useState({ running: false, total: 0, completed: 0 })
   const [upgradePassProjectId, setUpgradePassProjectId] = useState<string | null>(null)
   const [toast, setToast] = useState<string | null>(null)
+  const [isEditingName, setIsEditingName] = useState(false)
+  const [nameDraft, setNameDraft] = useState('')
   const flashToast = useCallback((message: string) => {
     setToast(message)
     setTimeout(() => setToast(null), 2200)
@@ -65,6 +68,18 @@ export function Project() {
     flushEditorAutosave()
     flashToast('Project saved')
   }, [activeProjectId, flashToast])
+
+  const startEditingName = useCallback(() => {
+    if (!activeProject) return
+    setNameDraft(activeProject.name)
+    setIsEditingName(true)
+  }, [activeProject])
+
+  const submitNameEdit = useCallback(() => {
+    const trimmed = nameDraft.trim()
+    if (activeProjectId && trimmed) renameProject(activeProjectId, trimmed)
+    setIsEditingName(false)
+  }, [activeProjectId, nameDraft, renameProject])
 
   const handleExportProject = useCallback(async () => {
     if (!activeProjectId) return
@@ -200,9 +215,30 @@ export function Project() {
           </button>
           
           <LtxLogo className="h-5 w-auto text-white" />
-          
+
           {/* Project name */}
-          <span className="text-white font-medium">{activeProject.name}</span>
+          {isEditingName ? (
+            <input
+              autoFocus
+              value={nameDraft}
+              onChange={(e) => setNameDraft(e.target.value)}
+              onBlur={submitNameEdit}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') submitNameEdit()
+                else if (e.key === 'Escape') setIsEditingName(false)
+              }}
+              className="bg-zinc-800 border border-zinc-700 rounded-md px-2 py-0.5 text-white font-medium text-sm outline-none focus:border-blue-500 w-40"
+            />
+          ) : (
+            <button
+              onClick={startEditingName}
+              title="Rename this project"
+              className="flex items-center gap-1.5 group"
+            >
+              <span className="text-white font-medium">{activeProject.name}</span>
+              <Pencil className="h-3 w-3 text-zinc-500 opacity-0 group-hover:opacity-100 transition-opacity" />
+            </button>
+          )}
         </div>
         
         {/* Center - Tabs */}
