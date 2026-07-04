@@ -1,4 +1,4 @@
-import type { FlatSegment } from './timeline'
+import { findDissolveBoundaries, type FlatSegment } from './timeline'
 
 export interface ExportSubtitle {
   text: string; startTime: number; endTime: number;
@@ -221,14 +221,54 @@ export function buildVideoFilterGraph(
     }
   }
 
-  const concatInputs = segments.map((_, i) => `[v${i}]`).join('')
+  const dissolveBoundaries = findDissolveBoundaries(segments)
 
-  // Concat all segments, then apply fps ONCE to the entire output.
-  // This is how real NLEs work: frame rate conversion happens globally,
-  // not per-clip, so per-segment duration quantization doesn't accumulate.
-  let lastLabel = 'fpsout'
-  filterParts.push(`${concatInputs}concat=n=${segments.length}:v=1:a=0[concatraw]`)
-  filterParts.push(`[concatraw]fps=${fps}[${lastLabel}]`)
+  let lastLabel: string
+  if (dissolveBoundaries.length === 0) {
+    // No dissolves: concat all segments in one pass, then apply fps ONCE to
+    // the entire output. This is how real NLEs work - frame rate conversion
+    // happens globally, not per-clip, so per-segment duration quantization
+    // doesn't accumulate.
+    const concatInputs = segments.map((_, i) => `[v${i}]`).join('')
+    lastLabel = 'fpsout'
+    filterParts.push(`${concatInputs}concat=n=${segments.length}:v=1:a=0[concatraw]`)
+    filterParts.push(`[concatraw]fps=${fps}[${lastLabel}]`)
+  } else {
+    // At least one dissolve: xfade blends two streams frame-for-frame, which
+    // needs matched timing, so every segment gets fps-normalized up front
+    // instead of once at the end. Segments combine left-to-right through an
+    // accumulator, using xfade at dissolve boundaries (which - like the
+    // editor's own preview - overlaps the tail of one clip with the head of
+    // the next, shrinking total duration by the dissolve's length) and plain
+    // concat everywhere else.
+    const dissolveDurationAfter = new Map(dissolveBoundaries.map(b => [b.index, b.duration]))
+
+    filterParts.push(`[v0]fps=${fps}[vacc0]`)
+    let accLabel = 'vacc0'
+    let accDuration = segments[0].duration
+
+    for (let i = 1; i < segments.length; i++) {
+      const segFpsLabel = `v${i}fps`
+      filterParts.push(`[v${i}]fps=${fps}[${segFpsLabel}]`)
+
+      const nextAccLabel = `vacc${i}`
+      const dissolveDuration = dissolveDurationAfter.get(i - 1)
+      if (dissolveDuration !== undefined) {
+        const offset = Math.max(0, accDuration - dissolveDuration)
+        filterParts.push(
+          `[${accLabel}][${segFpsLabel}]xfade=transition=dissolve:duration=${dissolveDuration.toFixed(4)}:offset=${offset.toFixed(4)}[${nextAccLabel}]`,
+        )
+        accDuration = accDuration + segments[i].duration - dissolveDuration
+      } else {
+        filterParts.push(`[${accLabel}][${segFpsLabel}]concat=n=2:v=1:a=0[${nextAccLabel}]`)
+        accDuration = accDuration + segments[i].duration
+      }
+      accLabel = nextAccLabel
+    }
+
+    lastLabel = 'fpsout'
+    filterParts.push(`[${accLabel}]null[${lastLabel}]`)
+  }
 
   // Letterbox overlay (drawbox)
   if (letterbox) {

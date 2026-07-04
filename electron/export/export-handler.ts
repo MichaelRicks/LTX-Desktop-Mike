@@ -5,7 +5,7 @@ import { getAllowedRoots } from '../config'
 import { logger } from '../logger'
 import { validatePath } from '../path-validation'
 import { findFfmpegPath, runFfmpeg, stopExportProcess } from './ffmpeg-utils'
-import { flattenTimeline } from './timeline'
+import { buildDissolveTimeRemap, computeFinalVideoDuration, flattenTimeline } from './timeline'
 import { buildVideoFilterGraph } from './video-filter'
 import { mixAudioToPcm } from './audio-mix'
 import { handle } from '../ipc/typed-handle'
@@ -60,12 +60,20 @@ export function registerExportHandlers(): void {
       }
 
       logger.info( '[Export] Step 2: Audio mixdown (PCM buffer approach)')
-      let totalDuration = segments.reduce((max, s) => Math.max(max, s.startTime + s.duration), 0)
-      for (const c of clips) {
+      // A dissolve overlaps two clips, shrinking the program's real duration
+      // below the naive sum of clip lengths (see buildDissolveTimeRemap) -
+      // every clip's nominal startTime needs the same conversion applied to
+      // video, or its audio drifts later relative to the picture with every
+      // dissolve that came before it.
+      const remapTime = buildDissolveTimeRemap(segments)
+      const remappedClips = clips.map(c => ({ ...c, startTime: remapTime(c.startTime) }))
+
+      let totalDuration = computeFinalVideoDuration(segments)
+      for (const c of remappedClips) {
         totalDuration = Math.max(totalDuration, c.startTime + c.duration)
       }
 
-      const { pcmBuffer, sampleRate, channels: audioChannels } = await mixAudioToPcm(clips, totalDuration, ffmpegPath)
+      const { pcmBuffer, sampleRate, channels: audioChannels } = await mixAudioToPcm(remappedClips, totalDuration, ffmpegPath)
 
       const tmpRawPcm = path.join(tmpDir, `ltx-pcm-${ts}.raw`)
       fs.writeFileSync(tmpRawPcm, pcmBuffer)

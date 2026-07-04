@@ -108,3 +108,83 @@ export function flattenTimeline(clips: ExportClip[]): FlatSegment[] {
 
   return merged
 }
+
+export interface DissolveBoundary {
+  /** Dissolve sits between segments[index] and segments[index + 1]. */
+  index: number
+  duration: number
+}
+
+/**
+ * Which adjacent segment pairs should cross-fade instead of cut. Mirrors the
+ * editor's own preview logic (ProgramMonitor's getDissolveAtTime) exactly:
+ * the duration comes ONLY from the outgoing clip's transitionOut - the
+ * incoming clip's transitionIn.duration is never read, only its type is
+ * checked as a gate. Guarded the same way fades/wipes are (offsetInClip
+ * reaching the clip's true end / start) so a clip fragmented by a
+ * higher-track overlay doesn't dissolve at every internal fragment boundary.
+ */
+export function findDissolveBoundaries(segments: FlatSegment[]): DissolveBoundary[] {
+  const boundaries: DissolveBoundary[] = []
+  for (let i = 0; i < segments.length - 1; i++) {
+    const a = segments[i]
+    const b = segments[i + 1]
+    if (a.transitionOut?.type !== 'dissolve' || !(a.transitionOut.duration > 0)) continue
+    if (b.transitionIn?.type !== 'dissolve') continue
+
+    const aReachesClipEnd = Math.abs((a.offsetInClip + a.duration) - a.clipDuration) < 0.01
+    const bIsClipStart = b.offsetInClip < 0.01
+    if (!aReachesClipEnd || !bIsClipStart) continue
+
+    const duration = Math.min(a.transitionOut.duration, a.duration, b.duration)
+    if (duration > 0) boundaries.push({ index: i, duration })
+  }
+  return boundaries
+}
+
+/**
+ * A dissolve overlaps the tail of one clip with the head of the next
+ * (matching the editor's own preview - see ProgramMonitor's
+ * getDissolveAtTime), shrinking the program's real presented duration below
+ * the naive sum of clip durations. Every clip's *nominal* startTime (as
+ * stored in the project) stays untouched by a dissolve, so anything that
+ * schedules events by nominal time - audio mixing in particular - needs to
+ * convert to the shrunk *actual* output time or it drifts out of sync with
+ * the video after every dissolve. Returns that conversion as a function
+ * rather than a lookup table since it needs to answer for arbitrary
+ * timestamps (e.g. an audio clip's own startTime), not just segment
+ * boundaries.
+ */
+export function buildDissolveTimeRemap(segments: FlatSegment[]): (nominalTime: number) => number {
+  const boundaries = findDissolveBoundaries(segments)
+  if (boundaries.length === 0) return (t) => t
+
+  const shrinkPoints = boundaries
+    .map(b => ({ atTime: segments[b.index + 1].startTime, amount: b.duration }))
+    .sort((a, b) => a.atTime - b.atTime)
+
+  return (nominalTime: number): number => {
+    let shrink = 0
+    for (const point of shrinkPoints) {
+      if (point.atTime > nominalTime) break
+      shrink += point.amount
+    }
+    return nominalTime - shrink
+  }
+}
+
+/** The program's real presented duration after dissolve overlaps shrink it
+ * below the naive sum of segment durations - the authoritative source for
+ * this is buildVideoFilterGraph's own accumulation (it has to compute the
+ * same running total to build correct xfade offsets), so this just mirrors
+ * that logic for callers that need the number without building the graph. */
+export function computeFinalVideoDuration(segments: FlatSegment[]): number {
+  const boundaries = findDissolveBoundaries(segments)
+  const shrinkAfter = new Map(boundaries.map(b => [b.index, b.duration]))
+  let total = segments.length > 0 ? segments[0].duration : 0
+  for (let i = 1; i < segments.length; i++) {
+    const dissolveDuration = shrinkAfter.get(i - 1)
+    total += segments[i].duration - (dissolveDuration ?? 0)
+  }
+  return total
+}
