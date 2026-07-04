@@ -59,12 +59,14 @@ function buildGradingFilters(seg: FlatSegment, localDuration: number): string {
 }
 
 /**
- * ffmpeg's xfade transition names describe which edge the wipe LINE travels
- * from, while the editor's own naming (and its CSS inset() implementation)
- * describes which edge the reveal GROWS from - opposite framings for the
- * same geometry, verified empirically by rendering each ffmpeg transition
- * and comparing pixel-for-pixel against getWipeClipPath's output. This
- * mapping is the same for both transitionIn and transitionOut.
+ * getWipeClipPath's direction names describe which way the wipe motion
+ * travels, matching ffmpeg's own xfade transition naming directly - this
+ * mapping is intentionally the identity (minus the hyphen), verified
+ * empirically by rendering each ffmpeg transition and comparing
+ * pixel-for-pixel against getWipeClipPath's output. Same mapping for both
+ * transitionIn and transitionOut. Kept as an explicit table rather than
+ * derived from the string (e.g. stripping the hyphen) so it stays correct
+ * and obvious if either naming scheme ever changes independently.
  *
  * Known limitation: ffmpeg's xfade completes its transition roughly one
  * frame earlier than the nominal duration (verified with frame-by-frame
@@ -75,10 +77,10 @@ function buildGradingFilters(seg: FlatSegment, localDuration: number): string {
  * rather than this code's own math.
  */
 const WIPE_TYPE_TO_XFADE: Record<string, string> = {
-  'wipe-left': 'wiperight',
-  'wipe-right': 'wipeleft',
-  'wipe-up': 'wipedown',
-  'wipe-down': 'wipeup',
+  'wipe-left': 'wipeleft',
+  'wipe-right': 'wiperight',
+  'wipe-up': 'wipeup',
+  'wipe-down': 'wipedown',
 }
 
 /**

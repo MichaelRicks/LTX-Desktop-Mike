@@ -547,16 +547,19 @@ export function getMaskedEffectOverlays(clip: TimelineClip): MaskedEffectOverlay
   return overlays
 }
 
+// Direction names describe which way the wipe motion travels (matching
+// ffmpeg's own xfade transition naming, and the intuitive reading of "wipe
+// left"), not which edge the reveal is anchored to.
 export function getWipeClipPath(type: TransitionType, progress: number, isIn: boolean): string {
   const p = Math.max(0, Math.min(1, progress)) * 100
   switch (type) {
-    case 'wipe-left':
-      return isIn ? `inset(0 ${100 - p}% 0 0)` : `inset(0 0 0 ${100 - p}%)`
     case 'wipe-right':
+      return isIn ? `inset(0 ${100 - p}% 0 0)` : `inset(0 0 0 ${100 - p}%)`
+    case 'wipe-left':
       return isIn ? `inset(0 0 0 ${100 - p}%)` : `inset(0 ${100 - p}% 0 0)`
-    case 'wipe-up':
-      return isIn ? `inset(0 0 ${100 - p}% 0)` : `inset(${100 - p}% 0 0 0)`
     case 'wipe-down':
+      return isIn ? `inset(0 0 ${100 - p}% 0)` : `inset(${100 - p}% 0 0 0)`
+    case 'wipe-up':
       return isIn ? `inset(${100 - p}% 0 0 0)` : `inset(0 0 ${100 - p}% 0)`
     default:
       return ''
