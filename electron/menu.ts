@@ -42,3 +42,25 @@ export function createAppMenu(window: BrowserWindow): void {
 
   Menu.setApplicationMenu(Menu.buildFromTemplate(template))
 }
+
+/** Electron shows no native right-click menu by default, even though the
+ * Edit menu's accelerators (Ctrl+V etc.) already work - `context-menu` fires
+ * on every right-click with everything needed to build one (isEditable,
+ * per-action editFlags), so no renderer/preload changes are required. */
+export function registerEditContextMenu(window: BrowserWindow): void {
+  window.webContents.on('context-menu', (_event, params) => {
+    if (!params.isEditable) return
+
+    const { editFlags } = params
+    Menu.buildFromTemplate([
+      { role: 'undo', enabled: editFlags.canUndo },
+      { role: 'redo', enabled: editFlags.canRedo },
+      { type: 'separator' },
+      { role: 'cut', enabled: editFlags.canCut },
+      { role: 'copy', enabled: editFlags.canCopy },
+      { role: 'paste', enabled: editFlags.canPaste },
+      { type: 'separator' },
+      { role: 'selectAll', enabled: editFlags.canSelectAll },
+    ]).popup()
+  })
+}

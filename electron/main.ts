@@ -13,7 +13,7 @@ import { initSessionLog } from './logging-management'
 import { stopPythonBackend } from './python-backend'
 import { initAutoUpdater } from './updater'
 import { createWindow, getMainWindow } from './window'
-import { createAppMenu } from './menu'
+import { createAppMenu, registerEditContextMenu } from './menu'
 import { sendAnalyticsEvent } from './analytics'
 
 function logAppVersion(): void {
@@ -52,7 +52,9 @@ if (!gotLock) {
       return
     }
     if (app.isReady()) {
-      createAppMenu(createWindow())
+      const window = createWindow()
+      createAppMenu(window)
+      registerEditContextMenu(window)
     }
   })
 
@@ -60,6 +62,7 @@ if (!gotLock) {
     setupCSP()
     const mainWindow = createWindow()
     createAppMenu(mainWindow)
+    registerEditContextMenu(mainWindow)
     initAutoUpdater()
     // Python setup + backend start are now driven by the renderer via IPC
 
@@ -76,7 +79,9 @@ if (!gotLock) {
 
   app.on('activate', () => {
     if (getMainWindow() === null) {
-      createAppMenu(createWindow())
+      const window = createWindow()
+      createAppMenu(window)
+      registerEditContextMenu(window)
     }
   })
 
