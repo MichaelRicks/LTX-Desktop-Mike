@@ -512,6 +512,22 @@ function VideoEditorWithStore({
     const knownIds = new Set(editorModel.assets.map(asset => asset.id))
     const newAssets = currentProject.assets.filter(asset => !knownIds.has(asset.id))
     if (newAssets.length > 0) actions.addAssetsToEditor(newAssets)
+
+    // Same staleness risk applies field-by-field to assets the editor already
+    // knows about: Gen Space's tagging/favoriting UI can change `binId`/
+    // `favorite` while the editor sits mounted with an older copy of those
+    // fields, and the editor's next autosave flushes its whole stale asset
+    // object back over the live project (see updatedProject's
+    // survivingEditorAssets) — silently reverting the Gen Space edit. Pull the
+    // live values in as soon as they change so that doesn't happen.
+    const liveById = new Map(currentProject.assets.map(asset => [asset.id, asset]))
+    for (const asset of editorModel.assets) {
+      const live = liveById.get(asset.id)
+      if (!live) continue
+      if (live.binId !== asset.binId || !!live.favorite !== !!asset.favorite) {
+        actions.updateAsset(asset.id, { binId: live.binId, favorite: live.favorite })
+      }
+    }
   }, [currentProject.assets, editorModel.assets, actions])
 
   // --- Core timeline logic ---

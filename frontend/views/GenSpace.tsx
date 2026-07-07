@@ -326,7 +326,7 @@ function SettingsDropdown({
   title: string
 }) {
   const [isOpen, setIsOpen] = useState(false)
-  const [panelPos, setPanelPos] = useState<{ left: number; bottom: number } | null>(null)
+  const [panelPos, setPanelPos] = useState<{ left: number; bottom: number; maxHeight: number } | null>(null)
   const triggerRef = useRef<HTMLButtonElement>(null)
   const panelRef = useRef<HTMLDivElement>(null)
 
@@ -349,6 +349,12 @@ function SettingsDropdown({
       setPanelPos({
         left: Math.min(rect.left, window.innerWidth - 180),
         bottom: window.innerHeight - rect.top + 8,
+        // The panel grows upward from the trigger (anchored via `bottom`), so
+        // with many options (e.g. lots of tags) it can extend above the top
+        // of the viewport and render off-screen with no way to reach the rest.
+        // Cap it to the space actually available above the trigger and let
+        // the option list itself scroll instead.
+        maxHeight: Math.max(120, rect.top - 16),
       })
     }
     setIsOpen(!isOpen)
@@ -361,11 +367,11 @@ function SettingsDropdown({
   const panel = isOpen && panelPos && createPortal(
     <div
       ref={panelRef}
-      style={{ position: 'fixed', left: panelPos.left, bottom: panelPos.bottom }}
-      className="bg-zinc-800 border border-zinc-700 rounded-md p-2 min-w-[160px] shadow-xl z-[9999]"
+      style={{ position: 'fixed', left: panelPos.left, bottom: panelPos.bottom, maxHeight: panelPos.maxHeight }}
+      className="bg-zinc-800 border border-zinc-700 rounded-md p-2 min-w-[160px] shadow-xl z-[9999] flex flex-col"
     >
-      <div className="text-[10px] text-zinc-500 uppercase tracking-wider mb-2">{title}</div>
-      <div className="space-y-1">
+      <div className="text-[10px] text-zinc-500 uppercase tracking-wider mb-2 shrink-0">{title}</div>
+      <div className="space-y-1 overflow-y-auto">
         {options.map(option => (
           <div key={option.value} className="relative group/option">
             <button
