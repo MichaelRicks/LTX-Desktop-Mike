@@ -60,7 +60,11 @@ class QwenMultiAngleHandler(StateHandlerBase):
         try:
             pipeline_state = self._pipelines.load_qwen_multiangle_pipeline()
             self._generation.start_generation(generation_id)
-            self._generation.update_progress("inference", 15, 0, 1)
+            self._generation.update_progress("loading_model", 5, 0, 1)
+
+            def _on_step(step: int, total_steps: int) -> None:
+                progress = 10 + int((step / total_steps) * 85)
+                self._generation.update_progress("inference", progress, step, total_steps)
 
             result_image = pipeline_state.pipeline.generate(
                 image=source_image,
@@ -70,6 +74,7 @@ class QwenMultiAngleHandler(StateHandlerBase):
                 seed=seed,
                 extra_prompt=req.extra_prompt,
                 use_lightning=req.use_lightning,
+                on_step=_on_step,
             )
 
             if self._generation.is_generation_cancelled():

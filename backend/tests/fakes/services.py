@@ -749,6 +749,10 @@ class FakeQwenMultiAnglePipeline:
         self.generate_calls.append(kwargs)
         if self.raise_on_generate is not None:
             raise self.raise_on_generate
+        on_step = kwargs.get("on_step")
+        if on_step is not None:
+            on_step(1, 4)
+            on_step(4, 4)
         return Image.new("RGB", (32, 32), "green")
 
 

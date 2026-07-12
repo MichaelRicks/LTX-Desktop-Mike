@@ -30,7 +30,7 @@ import { saveDataUrlToTempFile, GPM_IMAGE_DND_TYPE, type GpmDndImage } from './g
 import { FILE_DND, type LibFile } from './DownloadsBrowser'
 import { usePromptManagerProOpen, setPromptManagerProOpen } from './prompt-manager-pro-store'
 import { MediaThumb } from './MediaThumb'
-import { QwenMultiAnglePanel } from './QwenMultiAnglePanel'
+import { QwenMultiAnglePanel, DEFAULT_QWEN_ANGLE_STATE, type QwenAngleState } from './QwenMultiAnglePanel'
 
 /* Theme tokens sampled from the LTX / GPM screenshots (from the prototype). */
 const C = {
@@ -1389,6 +1389,7 @@ function Dock({ onClose }: { onClose: () => void }) {
   })
   // Ephemeral panel state lifted here so it survives the enlarge/shrink remount.
   const [shotSrcImage, setShotSrcImage] = useState<{ name: string; dataUrl: string } | null>(null)
+  const [qwenAngleState, setQwenAngleState] = useState<QwenAngleState>(DEFAULT_QWEN_ANGLE_STATE)
   const [platesActiveId, setPlatesActiveId] = useState<string | null>(null)
   const [sceneLens, setSceneLens] = useState('50mm')
   const sceneAimRef = useRef<{ yaw: number; pitch: number }>({ yaw: 0, pitch: 0 })
@@ -1456,7 +1457,7 @@ function Dock({ onClose }: { onClose: () => void }) {
       {tab === 'prompts' && <PromptsPanel ctl={ctl} onCopy={copyText} onInject={injectIntoPrompt} flash={flash} />}
       {tab === 'images' && <ImagesPanel ctl={ctl} onCopy={copyText} onUse={sendImageToGenSpace} flash={flash} />}
       {tab === 'plates' && <PlatesPanel onUse={sendImageToGenSpace} flash={flash} activeId={platesActiveId} setActiveId={setPlatesActiveId} sceneLens={sceneLens} setSceneLens={setSceneLens} sceneAimRef={sceneAimRef} />}
-      {tab === 'qwenAngle' && <QwenMultiAnglePanel onUse={sendImageToGenSpace} flash={flash} />}
+      {tab === 'qwenAngle' && <QwenMultiAnglePanel state={qwenAngleState} setState={setQwenAngleState} onUse={sendImageToGenSpace} flash={flash} />}
     </>
   )
   const activePanel = renderPanel(gpmTab)

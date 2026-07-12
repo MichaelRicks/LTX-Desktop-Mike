@@ -25,6 +25,7 @@ from services.qwen_multiangle_pipeline.qwen_multiangle_pipeline import QwenMulti
 
 if TYPE_CHECKING:
     import torch
+    from collections.abc import Callable
     from PIL.Image import Image as PILImage
 
 logger = logging.getLogger(__name__)
@@ -112,6 +113,7 @@ class GGUFQwenMultiAnglePipeline:
         seed: int,
         extra_prompt: str = "",
         use_lightning: bool = True,
+        on_step: "Callable[[int, int], None] | None" = None,
     ) -> "PILImage":
         import torch
         import torch.nn.functional as F
@@ -127,6 +129,12 @@ class GGUFQwenMultiAnglePipeline:
             steps, cfg = BASE_STEPS, BASE_CFG
 
         generator = torch.Generator(device="cpu").manual_seed(seed)
+
+        def _on_step_end(pipeline: object, step: int, timestep: object, kwargs: dict[str, object]) -> dict[str, object]:
+            del pipeline, timestep
+            if on_step is not None:
+                on_step(step + 1, steps)
+            return kwargs
 
         # ltx2_server.py globally monkeypatches F.scaled_dot_product_attention
         # to route eligible shapes through SageAttention, tuned for LTX-2's
@@ -145,6 +153,7 @@ class GGUFQwenMultiAnglePipeline:
                 true_cfg_scale=cfg,
                 num_inference_steps=steps,
                 generator=generator,
+                callback_on_step_end=_on_step_end,
             )
             return result.images[0]  # type: ignore[reportUnknownMemberType]
         finally:

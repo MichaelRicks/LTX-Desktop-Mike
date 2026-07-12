@@ -25,12 +25,55 @@ const C = {
 }
 const ACCENT2 = '#ff5c93' // camera-dot / sight-line accent, distinct from C.blue
 
-interface ResultEntry {
+export interface ResultEntry {
   id: string
   dataUrl: string
   prompt: string
   seed: number
   isMock: boolean
+}
+
+/* State that must survive the panel unmounting/remounting when the dock
+   toggles between docked and enlarged workspace (PromptManagerPro renders
+   two separate instances via `renderPanel`, mirroring ShotPanel's
+   `srcImage`/`setSrcImage` lift for the same reason). Transient UI flags
+   (busy, save status) stay local — resetting those on remount is fine. */
+export interface QwenAngleState {
+  source: { name: string; dataUrl: string } | null
+  view: 'dial' | '3d'
+  azDeg: number
+  elDeg: number
+  znIdx: number
+  extraPrompt: string
+  seed: number
+  randomizeSeed: boolean
+  useLightning: boolean
+  history: ResultEntry[]
+  histIdx: number
+}
+
+export const DEFAULT_QWEN_ANGLE_STATE: QwenAngleState = {
+  source: null,
+  view: '3d',
+  azDeg: 135,
+  elDeg: 0,
+  znIdx: 0,
+  extraPrompt: '',
+  seed: 42,
+  randomizeSeed: false,
+  useLightning: true,
+  history: [],
+  histIdx: -1,
+}
+
+function makeFieldSetter<K extends keyof QwenAngleState>(
+  setState: React.Dispatch<React.SetStateAction<QwenAngleState>>,
+  key: K,
+): React.Dispatch<React.SetStateAction<QwenAngleState[K]>> {
+  return (updater) => setState((s) => ({
+    ...s,
+    [key]: typeof updater === 'function' ? (updater as (prev: QwenAngleState[K]) => QwenAngleState[K])(s[key]) : updater,
+  }))
 }
 
 /* ---- 3D orbit gizmo math (ported verbatim from the standalone app) -------
@@ -86,21 +129,26 @@ function drawPolyline(
   }
 }
 
-export function QwenMultiAnglePanel({ onUse, flash }: {
+export function QwenMultiAnglePanel({ state, setState, onUse, flash }: {
+  state: QwenAngleState
+  setState: React.Dispatch<React.SetStateAction<QwenAngleState>>
   onUse: (img: GpmImage) => void
   flash: (m: string) => void
 }) {
-  const [source, setSource] = useState<{ name: string; dataUrl: string } | null>(null)
-  const [view, setView] = useState<'dial' | '3d'>('3d')
-  const [azDeg, setAzDeg] = useState(135)
-  const [elDeg, setElDeg] = useState(0)
-  const [znIdx, setZnIdx] = useState(0)
-  const [extraPrompt, setExtraPrompt] = useState('')
-  const [seed, setSeed] = useState(42)
-  const [randomizeSeed, setRandomizeSeed] = useState(false)
+  const { source, view, azDeg, elDeg, znIdx, extraPrompt, seed, randomizeSeed, useLightning, history, histIdx } = state
+  const setSource = makeFieldSetter(setState, 'source')
+  const setView = makeFieldSetter(setState, 'view')
+  const setAzDeg = makeFieldSetter(setState, 'azDeg')
+  const setElDeg = makeFieldSetter(setState, 'elDeg')
+  const setZnIdx = makeFieldSetter(setState, 'znIdx')
+  const setExtraPrompt = makeFieldSetter(setState, 'extraPrompt')
+  const setSeed = makeFieldSetter(setState, 'seed')
+  const setRandomizeSeed = makeFieldSetter(setState, 'randomizeSeed')
+  const setUseLightning = makeFieldSetter(setState, 'useLightning')
+  const setHistory = makeFieldSetter(setState, 'history')
+  const setHistIdx = makeFieldSetter(setState, 'histIdx')
   const [busy, setBusy] = useState(false)
-  const [history, setHistory] = useState<ResultEntry[]>([])
-  const [histIdx, setHistIdx] = useState(-1)
+  const [genProgress, setGenProgress] = useState<{ currentStep: number; totalSteps: number } | null>(null)
   const [saveFolder, setSaveFolder] = useState<string | null>(() => localStorage.getItem(SAVE_FOLDER_KEY))
   const [saveStatus, setSaveStatus] = useState<string | null>(null)
 
@@ -223,30 +271,55 @@ export function QwenMultiAnglePanel({ onUse, flash }: {
   const generate = async () => {
     if (!source || busy) return
     setBusy(true)
-    const result = await ApiClient.qwenMultiAngleGenerate({
-      image_data_url: source.dataUrl,
-      azimuth_deg: azDeg,
-      elevation_deg: elDeg,
-      zoom: DISTANCE_BUCKETS[znIdx].zoom,
-      seed,
-      randomize_seed: randomizeSeed,
-      use_lightning: true,
-      extra_prompt: extraPrompt,
-    })
-    if (!result.ok) {
-      flash(`Generate failed: ${result.error.message}`)
+    setGenProgress(null)
+    // Poll the app's existing generic generation-progress endpoint (used by
+    // video/image gen too) for live step counts while the request is
+    // in-flight — the backend's on_step callback updates the same
+    // GenerationRunning.progress the pipeline generate() call populates.
+    const pollId = window.setInterval(() => {
+      void ApiClient.getGenerationProgress().then((p) => {
+        if (p.ok && p.data.status === 'running' && p.data.currentStep != null && p.data.totalSteps) {
+          setGenProgress({ currentStep: p.data.currentStep, totalSteps: p.data.totalSteps })
+        }
+      })
+    }, 400)
+    try {
+      const result = await ApiClient.qwenMultiAngleGenerate({
+        image_data_url: source.dataUrl,
+        azimuth_deg: azDeg,
+        elevation_deg: elDeg,
+        zoom: DISTANCE_BUCKETS[znIdx].zoom,
+        seed,
+        randomize_seed: randomizeSeed,
+        use_lightning: useLightning,
+        extra_prompt: extraPrompt,
+      })
+      if (!result.ok) {
+        flash(`Generate failed: ${result.error.message}`)
+        return
+      }
+      const entry: ResultEntry = {
+        id: gpmId(),
+        dataUrl: result.data.image_data_url,
+        prompt: result.data.prompt,
+        seed: result.data.seed,
+        isMock: false,
+      }
+      // One atomic update, not setHistory(...) nesting a setHistIdx(...) call
+      // inside its updater — both fields live on the same lifted `state` now
+      // (see QwenAngleState), and nesting a second setState call inside the
+      // first's updater re-enters React's update queue for the same atom,
+      // which silently dropped/misordered the index (new image generated but
+      // the carousel advanced past it, showing a blank frame until Back).
+      setState((s) => {
+        const next = [...s.history, entry]
+        return { ...s, history: next, histIdx: next.length - 1 }
+      })
+    } finally {
+      window.clearInterval(pollId)
+      setGenProgress(null)
       setBusy(false)
-      return
     }
-    const entry: ResultEntry = {
-      id: gpmId(),
-      dataUrl: result.data.image_data_url,
-      prompt: result.data.prompt,
-      seed: result.data.seed,
-      isMock: false,
-    }
-    setHistory((h) => { const next = [...h, entry]; setHistIdx(next.length - 1); return next })
-    setBusy(false)
   }
 
   const current = histIdx >= 0 ? history[histIdx] : null
@@ -289,10 +362,14 @@ export function QwenMultiAnglePanel({ onUse, flash }: {
 
   return (
     <div>
-      <div className="flex items-center gap-2 mb-3">
+      <div className="flex items-center gap-2 mb-2">
         <Orbit size={16} style={{ color: C.blue }} />
         <span className="text-sm font-semibold" style={{ color: C.text }}>Multi-Angle</span>
       </div>
+      <p className="text-[11px] mb-3" style={{ color: C.muted }}>
+        Camera-angle editing via Qwen-Image-Edit. The first generation each session loads the model
+        and takes longer (up to a few minutes); later generations are much faster.
+      </p>
 
       <div className="flex flex-wrap gap-3 mb-2">
         {/* source image — 16:9, generously sized */}
@@ -416,7 +493,7 @@ export function QwenMultiAnglePanel({ onUse, flash }: {
       </div>
 
       {/* seed */}
-      <div className="flex items-center gap-2 mb-3">
+      <div className="flex items-center gap-2 mb-2">
         <span className="text-[10px]" style={{ color: C.muted }}>Seed</span>
         <input
           type="number" value={seed} onChange={(e) => setSeed(Number(e.target.value) || 0)}
@@ -430,71 +507,105 @@ export function QwenMultiAnglePanel({ onUse, flash }: {
         ><Shuffle size={12} /></button>
       </div>
 
+      {/* lightning / fast mode */}
+      <label className="flex items-center gap-2 mb-3 cursor-pointer select-none">
+        <input
+          type="checkbox" checked={useLightning} onChange={(e) => setUseLightning(e.target.checked)}
+          className="h-3.5 w-3.5" style={{ accentColor: C.blue }}
+        />
+        <span className="text-[11px]" style={{ color: C.text }}>Lightning (4-step, fast)</span>
+        <span className="text-[10px]" style={{ color: C.faint }}>
+          {useLightning ? '~30s' : '28 steps, slower, higher quality'}
+        </span>
+      </label>
+
       <button
         onClick={() => void generate()} disabled={!source || busy}
-        className="w-full flex items-center justify-center gap-1.5 rounded-md px-3 py-2 text-xs font-semibold mb-3 disabled:opacity-40"
+        className="relative w-full overflow-hidden rounded-md px-3 py-2 text-xs font-semibold mb-3 disabled:opacity-40"
         style={{ background: C.blue, color: '#fff' }}
       >
-        {busy ? 'Generating…' : 'Generate'}
+        {busy && genProgress && (
+          <div
+            className="absolute inset-y-0 left-0"
+            style={{ width: `${(genProgress.currentStep / genProgress.totalSteps) * 100}%`, background: 'rgba(255,255,255,0.25)', transition: 'width 0.2s ease' }}
+          />
+        )}
+        <span className="relative">
+          {busy
+            ? genProgress ? `Generating… step ${genProgress.currentStep}/${genProgress.totalSteps}` : 'Generating…'
+            : 'Generate'}
+        </span>
       </button>
 
       {/* result + history — deliberately large, matching the standalone's
-         prominent result window (min-height 420px, up to 74vh there). */}
-      {history.length > 0 && (
-        <div className="pt-3" style={{ borderTop: `1px solid ${C.border}` }}>
-          <div
-            className="relative rounded-md overflow-hidden mb-2 flex items-center justify-center"
-            style={{ background: '#000', minHeight: 320, maxHeight: '60vh' }}
-          >
-            {current && (
-              <img
-                src={current.dataUrl} alt="" draggable onDragStart={onResultDragStart}
-                style={{ maxWidth: '100%', maxHeight: '60vh', objectFit: 'contain', display: 'block' }}
-              />
-            )}
-            {current?.isMock && (
-              <div className="absolute top-2 left-2 px-1.5 py-0.5 rounded text-[9px]" style={{ background: 'rgba(0,0,0,0.65)', color: C.amber }}>
-                Preview &middot; backend not wired yet
+         prominent result window (min-height 420px, up to 74vh there). Always
+         shown (not just once a result exists) so the user can see where the
+         generated image will land, matching the standalone's result frame. */}
+      <div className="pt-3" style={{ borderTop: `1px solid ${C.border}` }}>
+        <div
+          className="relative rounded-md overflow-hidden mb-2 flex items-center justify-center"
+          style={{
+            background: '#000', minHeight: 320, maxHeight: '60vh',
+            border: history.length === 0 ? `1px dashed ${C.borderLt}` : undefined,
+          }}
+        >
+          {current && (
+            <img
+              src={current.dataUrl} alt="" draggable onDragStart={onResultDragStart}
+              style={{ maxWidth: '100%', maxHeight: '60vh', objectFit: 'contain', display: 'block' }}
+            />
+          )}
+          {!current && (
+            <span className="text-[11px]" style={{ color: C.faint }}>
+              {busy ? 'Generating…' : 'Generated image will appear here'}
+            </span>
+          )}
+          {current?.isMock && (
+            <div className="absolute top-2 left-2 px-1.5 py-0.5 rounded text-[9px]" style={{ background: 'rgba(0,0,0,0.65)', color: C.amber }}>
+              Preview &middot; backend not wired yet
+            </div>
+          )}
+          {history.length > 1 && (
+            <>
+              <button
+                onClick={() => setHistIdx((i) => Math.max(0, i - 1))} disabled={histIdx <= 0}
+                className="absolute left-2 top-1/2 -translate-y-1/2 h-8 w-8 flex items-center justify-center rounded disabled:opacity-30"
+                style={{ background: 'rgba(0,0,0,0.6)', color: '#fff' }}
+              ><ChevronLeft size={18} /></button>
+              <button
+                onClick={() => setHistIdx((i) => Math.min(history.length - 1, i + 1))} disabled={histIdx >= history.length - 1}
+                className="absolute right-2 top-1/2 -translate-y-1/2 h-8 w-8 flex items-center justify-center rounded disabled:opacity-30"
+                style={{ background: 'rgba(0,0,0,0.6)', color: '#fff' }}
+              ><ChevronRight size={18} /></button>
+              <div className="absolute bottom-2 right-2 px-2 py-1 rounded text-[11px]" style={{ background: 'rgba(0,0,0,0.6)', color: C.text }}>
+                {histIdx + 1} / {history.length}
               </div>
-            )}
-            {history.length > 1 && (
-              <>
-                <button
-                  onClick={() => setHistIdx((i) => Math.max(0, i - 1))} disabled={histIdx <= 0}
-                  className="absolute left-2 top-1/2 -translate-y-1/2 h-8 w-8 flex items-center justify-center rounded disabled:opacity-30"
-                  style={{ background: 'rgba(0,0,0,0.6)', color: '#fff' }}
-                ><ChevronLeft size={18} /></button>
-                <button
-                  onClick={() => setHistIdx((i) => Math.min(history.length - 1, i + 1))} disabled={histIdx >= history.length - 1}
-                  className="absolute right-2 top-1/2 -translate-y-1/2 h-8 w-8 flex items-center justify-center rounded disabled:opacity-30"
-                  style={{ background: 'rgba(0,0,0,0.6)', color: '#fff' }}
-                ><ChevronRight size={18} /></button>
-                <div className="absolute bottom-2 right-2 px-2 py-1 rounded text-[11px]" style={{ background: 'rgba(0,0,0,0.6)', color: C.text }}>
-                  {histIdx + 1} / {history.length}
-                </div>
-              </>
-            )}
-          </div>
-          <div className="flex gap-1.5 mb-1.5">
-            <button
-              onClick={inject} disabled={!current}
-              className="flex-1 flex items-center justify-center gap-1 rounded px-2 py-1.5 text-[11px] font-semibold disabled:opacity-40"
-              style={{ background: C.blue, color: '#fff' }}
-            ><Send size={12} />Inject</button>
-            <button
-              onClick={() => void saveResult()} disabled={!current}
-              className="flex-1 flex items-center justify-center gap-1 rounded px-2 py-1.5 text-[11px] disabled:opacity-40"
-              style={{ background: C.card, color: C.text, border: `1px solid ${C.border}` }}
-            ><Save size={12} />Save</button>
-            <button
-              onClick={() => void chooseFolder()}
-              className="flex items-center justify-center gap-1 rounded px-2 py-1.5 text-[11px]"
-              style={{ background: C.card, color: C.text, border: `1px solid ${C.border}` }} title="Choose save folder"
-            ><FolderOpen size={12} /></button>
-          </div>
-          {saveStatus && <p className="text-[10px] break-all" style={{ color: C.faint }}>{saveStatus}</p>}
+            </>
+          )}
         </div>
-      )}
+        {history.length > 0 && (
+          <>
+            <div className="flex gap-1.5 mb-1.5">
+              <button
+                onClick={inject} disabled={!current}
+                className="flex-1 flex items-center justify-center gap-1 rounded px-2 py-1.5 text-[11px] font-semibold disabled:opacity-40"
+                style={{ background: C.blue, color: '#fff' }}
+              ><Send size={12} />Inject</button>
+              <button
+                onClick={() => void saveResult()} disabled={!current}
+                className="flex-1 flex items-center justify-center gap-1 rounded px-2 py-1.5 text-[11px] disabled:opacity-40"
+                style={{ background: C.card, color: C.text, border: `1px solid ${C.border}` }}
+              ><Save size={12} />Save</button>
+              <button
+                onClick={() => void chooseFolder()}
+                className="flex items-center justify-center gap-1 rounded px-2 py-1.5 text-[11px]"
+                style={{ background: C.card, color: C.text, border: `1px solid ${C.border}` }} title="Choose save folder"
+              ><FolderOpen size={12} /></button>
+            </div>
+            {saveStatus && <p className="text-[10px] break-all" style={{ color: C.faint }}>{saveStatus}</p>}
+          </>
+        )}
+      </div>
     </div>
   )
 }

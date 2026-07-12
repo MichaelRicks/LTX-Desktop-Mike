@@ -16,6 +16,7 @@ never this protocol or a raw pipeline instance.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import TYPE_CHECKING, Protocol
 
 if TYPE_CHECKING:
@@ -37,4 +38,5 @@ class QwenMultiAnglePipeline(Protocol):
         seed: int,
         extra_prompt: str = "",
         use_lightning: bool = True,
+        on_step: Callable[[int, int], None] | None = None,
     ) -> "PILImage": ...
