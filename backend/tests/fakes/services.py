@@ -726,6 +726,32 @@ class FakeRetakePipeline:
         output_path.write_bytes(b"fake-retake-video")
 
 
+class FakeQwenMultiAnglePipeline:
+    _singleton: ClassVar["FakeQwenMultiAnglePipeline | None"] = None
+
+    @classmethod
+    def bind_singleton(cls, pipeline: "FakeQwenMultiAnglePipeline") -> None:
+        cls._singleton = pipeline
+
+    @staticmethod
+    def create(device: str | object) -> "FakeQwenMultiAnglePipeline":
+        del device
+        pipeline = FakeQwenMultiAnglePipeline._singleton
+        if pipeline is None:
+            raise RuntimeError("FakeQwenMultiAnglePipeline singleton is not bound")
+        return pipeline
+
+    def __init__(self) -> None:
+        self.generate_calls: list[dict[str, Any]] = []
+        self.raise_on_generate: Exception | None = None
+
+    def generate(self, **kwargs: Any) -> Image.Image:
+        self.generate_calls.append(kwargs)
+        if self.raise_on_generate is not None:
+            raise self.raise_on_generate
+        return Image.new("RGB", (32, 32), "green")
+
+
 class FakeTextEncoder:
     def __init__(self) -> None:
         self.install_calls = 0
@@ -767,6 +793,7 @@ class FakeServices:
     pose_processor_pipeline: FakePoseProcessorPipeline = field(default_factory=FakePoseProcessorPipeline)
     a2v_pipeline: FakeA2VPipeline = field(default_factory=FakeA2VPipeline)
     retake_pipeline: FakeRetakePipeline = field(default_factory=FakeRetakePipeline)
+    qwen_multiangle_pipeline: FakeQwenMultiAnglePipeline = field(default_factory=FakeQwenMultiAnglePipeline)
 
     def __post_init__(self) -> None:
         FakeFastVideoPipeline.bind_singleton(self.fast_video_pipeline)
@@ -776,3 +803,4 @@ class FakeServices:
         FakePoseProcessorPipeline.bind_singleton(self.pose_processor_pipeline)
         FakeA2VPipeline.bind_singleton(self.a2v_pipeline)
         FakeRetakePipeline.bind_singleton(self.retake_pipeline)
+        FakeQwenMultiAnglePipeline.bind_singleton(self.qwen_multiangle_pipeline)

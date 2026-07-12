@@ -17,6 +17,7 @@ from handlers import (
     ImageGenerationHandler,
     ModelsHandler,
     PipelinesHandler,
+    QwenMultiAngleHandler,
     SuggestGapPromptHandler,
     RetakeHandler,
     RuntimePolicyHandler,
@@ -38,6 +39,7 @@ from services.interfaces import (
     LTXAPIClient,
     ModelDownloader,
     PoseProcessorPipeline,
+    QwenMultiAnglePipeline,
     RetakePipeline,
     TaskRunner,
     TextEncoder,
@@ -69,6 +71,7 @@ class AppHandler:
         pose_processor_pipeline_class: type[PoseProcessorPipeline],
         a2v_pipeline_class: type[A2VPipeline],
         retake_pipeline_class: type[RetakePipeline],
+        qwen_multiangle_pipeline_class: type[QwenMultiAnglePipeline] | None = None,
     ) -> None:
         self.config = config
 
@@ -88,6 +91,7 @@ class AppHandler:
         self.pose_processor_pipeline_class = pose_processor_pipeline_class
         self.a2v_pipeline_class = a2v_pipeline_class
         self.retake_pipeline_class = retake_pipeline_class
+        self.qwen_multiangle_pipeline_class = qwen_multiangle_pipeline_class
 
         self._lock = threading.RLock()
 
@@ -149,6 +153,7 @@ class AppHandler:
             pose_processor_pipeline_class=pose_processor_pipeline_class,
             a2v_pipeline_class=a2v_pipeline_class,
             retake_pipeline_class=retake_pipeline_class,
+            qwen_multiangle_pipeline_class=qwen_multiangle_pipeline_class,
             config=config,
         )
 
@@ -200,6 +205,14 @@ class AppHandler:
             text_handler=self.text,
         )
 
+        self.qwen_multiangle = QwenMultiAngleHandler(
+            state=self.state,
+            lock=self._lock,
+            config=config,
+            generation_handler=self.generation,
+            pipelines_handler=self.pipelines,
+        )
+
         self.ic_lora = IcLoraHandler(
             state=self.state,
             lock=self._lock,
@@ -238,6 +251,7 @@ class ServiceBundle:
     pose_processor_pipeline_class: type[PoseProcessorPipeline]
     a2v_pipeline_class: type[A2VPipeline]
     retake_pipeline_class: type[RetakePipeline]
+    qwen_multiangle_pipeline_class: type[QwenMultiAnglePipeline] | None = None
 
 
 def build_default_service_bundle(config: RuntimeConfig) -> ServiceBundle:
@@ -255,6 +269,7 @@ def build_default_service_bundle(config: RuntimeConfig) -> ServiceBundle:
     from services.ltx_api_client.ltx_api_client_impl import LTXAPIClientImpl
     from services.model_downloader.hugging_face_downloader import HuggingFaceDownloader
     from services.retake_pipeline.ltx_retake_pipeline import LTXRetakePipeline
+    from services.qwen_multiangle_pipeline.gguf_qwen_multiangle_pipeline import GGUFQwenMultiAnglePipeline
     from services.pose_processor_pipeline.dw_pose_pipeline import DWPosePipeline
     from services.task_runner.threading_runner import ThreadingRunner
     from services.text_encoder.ltx_text_encoder import LTXTextEncoder
@@ -286,6 +301,7 @@ def build_default_service_bundle(config: RuntimeConfig) -> ServiceBundle:
         pose_processor_pipeline_class=DWPosePipeline,
         a2v_pipeline_class=LTXa2vPipeline,
         retake_pipeline_class=LTXRetakePipeline,
+        qwen_multiangle_pipeline_class=GGUFQwenMultiAnglePipeline,
     )
 
 
@@ -315,4 +331,5 @@ def build_initial_state(
         pose_processor_pipeline_class=bundle.pose_processor_pipeline_class,
         a2v_pipeline_class=bundle.a2v_pipeline_class,
         retake_pipeline_class=bundle.retake_pipeline_class,
+        qwen_multiangle_pipeline_class=bundle.qwen_multiangle_pipeline_class,
     )

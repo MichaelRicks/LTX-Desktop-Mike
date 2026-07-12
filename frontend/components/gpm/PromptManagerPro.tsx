@@ -30,6 +30,7 @@ import { saveDataUrlToTempFile, GPM_IMAGE_DND_TYPE, type GpmDndImage } from './g
 import { FILE_DND, type LibFile } from './DownloadsBrowser'
 import { usePromptManagerProOpen, setPromptManagerProOpen } from './prompt-manager-pro-store'
 import { MediaThumb } from './MediaThumb'
+import { QwenMultiAnglePanel } from './QwenMultiAnglePanel'
 
 /* Theme tokens sampled from the LTX / GPM screenshots (from the prototype). */
 const C = {
@@ -49,7 +50,7 @@ function camImageUrl(file?: string): string | undefined {
   return hit?.[1]
 }
 
-type GpmTab = 'performance' | 'shot' | 'camera' | 'workflow' | 'prompts' | 'images' | 'plates'
+type GpmTab = 'performance' | 'shot' | 'camera' | 'workflow' | 'prompts' | 'images' | 'plates' | 'qwenAngle'
 
 // DND mime types for folder drag-reorder, distinct per panel so a drag in one can't drop in the other.
 const PROMPT_FOLDER_DND = 'application/x-gpm-pro-promptfolder'
@@ -1427,6 +1428,7 @@ function Dock({ onClose }: { onClose: () => void }) {
   const TABS: Array<[GpmTab, string]> = [
     ['prompts', 'Prompts'], ['images', 'Images'], ['camera', 'Camera'],
     ['shot', 'Shot Setup'], ['plates', 'Plates'], ['workflow', 'Workflow'],
+    ['qwenAngle', 'Multi-Angle'],
   ]
   const ALL_TABS: Array<[GpmTab, string]> = [...TABS, ['performance', 'Performance Studio']]
 
@@ -1454,6 +1456,7 @@ function Dock({ onClose }: { onClose: () => void }) {
       {tab === 'prompts' && <PromptsPanel ctl={ctl} onCopy={copyText} onInject={injectIntoPrompt} flash={flash} />}
       {tab === 'images' && <ImagesPanel ctl={ctl} onCopy={copyText} onUse={sendImageToGenSpace} flash={flash} />}
       {tab === 'plates' && <PlatesPanel onUse={sendImageToGenSpace} flash={flash} activeId={platesActiveId} setActiveId={setPlatesActiveId} sceneLens={sceneLens} setSceneLens={setSceneLens} sceneAimRef={sceneAimRef} />}
+      {tab === 'qwenAngle' && <QwenMultiAnglePanel onUse={sendImageToGenSpace} flash={flash} />}
     </>
   )
   const activePanel = renderPanel(gpmTab)

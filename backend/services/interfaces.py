@@ -15,6 +15,7 @@ from services.ic_lora_pipeline.ic_lora_pipeline import IcLoraPipeline
 from services.image_generation_pipeline.image_generation_pipeline import ImageGenerationPipeline
 from services.ltx_api_client.ltx_api_client import LTXAPIClient
 from services.retake_pipeline.retake_pipeline import RetakePipeline
+from services.qwen_multiangle_pipeline.qwen_multiangle_pipeline import QwenMultiAnglePipeline
 from services.model_downloader.model_downloader import ModelDownloader
 from services.pose_processor_pipeline.pose_processor_pipeline import PoseProcessorPipeline
 from services.services_utils import JSONScalar, JSONValue
@@ -47,5 +48,6 @@ __all__ = [
     "IcLoraPipeline",
     "LTXAPIClient",
     "RetakePipeline",
+    "QwenMultiAnglePipeline",
     "TextEncoder",
 ]

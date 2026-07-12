@@ -366,6 +366,8 @@ export class ApiClient {
 
   static retake = makeEndpointClient('/api/retake', 'post')
 
+  static qwenMultiAngleGenerate = makeEndpointClient('/api/qwen-multiangle/generate', 'post')
+
   static startHuggingFaceLogin = makeEndpointClient('/api/auth/huggingface/login', 'post')
 
   static getHuggingFaceAuthStatus = makeEndpointClient('/api/auth/huggingface/status', 'get')

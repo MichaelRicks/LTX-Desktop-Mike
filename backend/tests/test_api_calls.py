@@ -1,7 +1,8 @@
-"""Integration-style tests for /api/suggest-gap-prompt, /api/retake."""
+"""Integration-style tests for /api/suggest-gap-prompt, /api/retake, /api/qwen-multiangle."""
 
 from __future__ import annotations
 
+import base64
 import uuid
 
 from services.interfaces import HttpTimeoutError
@@ -270,3 +271,57 @@ class TestRetake:
         assert r.json()["status"] == "complete"
         assert len(test_state.ltx_api_client.retake_calls) == 0
         assert len(fake_services.retake_pipeline.generate_calls) == 1
+
+
+class TestQwenMultiAngle:
+    def _data_url(self, make_test_image) -> str:
+        png_bytes = make_test_image(64, 64, "red").getvalue()
+        return "data:image/png;base64," + base64.b64encode(png_bytes).decode()
+
+    def _base_payload(self, make_test_image) -> dict[str, object]:
+        return {
+            "image_data_url": self._data_url(make_test_image),
+            "azimuth_deg": 135.0,
+            "elevation_deg": 0.0,
+            "zoom": 0.6,
+        }
+
+    def test_happy_path(self, client, test_state, make_test_image, fake_services):
+        r = client.post("/api/qwen-multiangle/generate", json=self._base_payload(make_test_image))
+        assert r.status_code == 200
+        data = r.json()
+        assert data["status"] == "complete"
+        assert data["image_data_url"].startswith("data:image/png;base64,")
+        assert data["prompt"] == "<sks> back-right quarter view eye-level shot close-up"
+        assert data["seed"] == 42
+        assert len(fake_services.qwen_multiangle_pipeline.generate_calls) == 1
+
+    def test_extra_prompt_appended(self, client, test_state, make_test_image):
+        payload = self._base_payload(make_test_image)
+        payload["extra_prompt"] = "dramatic lighting"
+        r = client.post("/api/qwen-multiangle/generate", json=payload)
+        assert r.status_code == 200
+        assert r.json()["prompt"].endswith("dramatic lighting")
+
+    def test_randomize_seed_returns_int(self, client, test_state, make_test_image):
+        payload = self._base_payload(make_test_image)
+        payload["seed"] = 42
+        payload["randomize_seed"] = True
+        r = client.post("/api/qwen-multiangle/generate", json=payload)
+        assert r.status_code == 200
+        assert isinstance(r.json()["seed"], int)
+
+    def test_invalid_data_url_400(self, client, test_state):
+        payload = {
+            "image_data_url": "not-a-data-url",
+            "azimuth_deg": 0.0,
+            "elevation_deg": 0.0,
+            "zoom": 1.0,
+        }
+        r = client.post("/api/qwen-multiangle/generate", json=payload)
+        assert r.status_code == 400
+
+    def test_pipeline_failure_surfaces_500(self, client, test_state, make_test_image, fake_services):
+        fake_services.qwen_multiangle_pipeline.raise_on_generate = RuntimeError("boom")
+        r = client.post("/api/qwen-multiangle/generate", json=self._base_payload(make_test_image))
+        assert r.status_code == 500

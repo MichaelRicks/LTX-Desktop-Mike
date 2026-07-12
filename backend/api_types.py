@@ -391,6 +391,26 @@ class RetakeRequest(BaseModel):
     mode: RetakeMode = "replace_audio_and_video"
 
 
+class QwenMultiAngleGenerateRequest(BaseModel):
+    model_config = ConfigDict(strict=True)
+
+    image_data_url: str
+    azimuth_deg: float
+    elevation_deg: float
+    zoom: float
+    seed: int = 42
+    randomize_seed: bool = False
+    use_lightning: bool = True
+    extra_prompt: str = ""
+
+
+class QwenMultiAngleGenerateResponse(BaseModel):
+    status: Literal["complete"] = "complete"
+    image_data_url: str
+    prompt: str
+    seed: int
+
+
 ConditioningType: TypeAlias = Literal["canny", "depth"]
 
 

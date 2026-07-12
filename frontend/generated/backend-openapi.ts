@@ -359,6 +359,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/qwen-multiangle/generate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Route Qwen Multiangle Generate */
+        post: operations["route_qwen_multiangle_generate_api_qwen_multiangle_generate_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/retake": {
         parameters: {
             query?: never;
@@ -1017,6 +1034,52 @@ export interface components {
             loaded: boolean;
             /** Name */
             name: string;
+        };
+        /** QwenMultiAngleGenerateRequest */
+        QwenMultiAngleGenerateRequest: {
+            /** Azimuth Deg */
+            azimuth_deg: number;
+            /** Elevation Deg */
+            elevation_deg: number;
+            /**
+             * Extra Prompt
+             * @default
+             */
+            extra_prompt: string;
+            /** Image Data Url */
+            image_data_url: string;
+            /**
+             * Randomize Seed
+             * @default false
+             */
+            randomize_seed: boolean;
+            /**
+             * Seed
+             * @default 42
+             */
+            seed: number;
+            /**
+             * Use Lightning
+             * @default true
+             */
+            use_lightning: boolean;
+            /** Zoom */
+            zoom: number;
+        };
+        /** QwenMultiAngleGenerateResponse */
+        QwenMultiAngleGenerateResponse: {
+            /** Image Data Url */
+            image_data_url: string;
+            /** Prompt */
+            prompt: string;
+            /** Seed */
+            seed: number;
+            /**
+             * Status
+             * @default complete
+             * @constant
+             */
+            status: "complete";
         };
         /** RetakeCancelledResponse */
         RetakeCancelledResponse: {
@@ -1981,6 +2044,48 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["TextEncoderRecommendationResponse"];
+                };
+            };
+            /** @description Client Error */
+            "4XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPErrorResponse"];
+                };
+            };
+            /** @description Server Error */
+            "5XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPErrorResponse"];
+                };
+            };
+        };
+    };
+    route_qwen_multiangle_generate_api_qwen_multiangle_generate_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["QwenMultiAngleGenerateRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["QwenMultiAngleGenerateResponse"];
                 };
             };
             /** @description Client Error */

@@ -25,6 +25,7 @@ from services.interfaces import (
     GpuCleaner,
     IcLoraPipeline,
     PoseProcessorPipeline,
+    QwenMultiAnglePipeline,
     RetakePipeline,
     VideoPipelineModelType,
 )
@@ -37,6 +38,7 @@ from state.app_state_types import (
     GenerationRunning,
     GpuSlot,
     ICLoraState,
+    QwenMultiAngleState,
     RetakePipelineState,
     VideoPipelineState,
 )
@@ -62,6 +64,7 @@ class PipelinesHandler(StateHandlerBase):
         a2v_pipeline_class: type[A2VPipeline],
         retake_pipeline_class: type[RetakePipeline],
         config: RuntimeConfig,
+        qwen_multiangle_pipeline_class: type[QwenMultiAnglePipeline] | None = None,
     ) -> None:
         super().__init__(state, lock, config)
         self._text_handler = text_handler
@@ -74,6 +77,7 @@ class PipelinesHandler(StateHandlerBase):
         self._pose_processor_pipeline_class = pose_processor_pipeline_class
         self._a2v_pipeline_class = a2v_pipeline_class
         self._retake_pipeline_class = retake_pipeline_class
+        self._qwen_multiangle_pipeline_class = qwen_multiangle_pipeline_class
         self._runtime_device = get_device_type(self.config.device)
 
     def _ensure_no_running_generation(self) -> None:
@@ -384,6 +388,30 @@ class PipelinesHandler(StateHandlerBase):
             quantization=quantization,
         )
         state = RetakePipelineState(pipeline=pipeline, distilled=distilled, quantized=quantized)
+
+        with self._lock:
+            self.state.gpu_slot = GpuSlot(active_pipeline=state)
+            self._assert_invariants()
+        return state
+
+    def load_qwen_multiangle_pipeline(self) -> QwenMultiAngleState:
+        with self._lock:
+            match self.state.gpu_slot:
+                case GpuSlot(active_pipeline=QwenMultiAngleState() as state):
+                    return state
+                case _:
+                    pass
+
+        if self._qwen_multiangle_pipeline_class is None:
+            raise HTTPError(500, "Qwen multi-angle pipeline is not configured")
+
+        self._evict_gpu_pipeline_for_swap()
+
+        import torch
+
+        device = torch.device(self._runtime_device)
+        pipeline = self._qwen_multiangle_pipeline_class.create(device=device)
+        state = QwenMultiAngleState(pipeline=pipeline)
 
         with self._lock:
             self.state.gpu_slot = GpuSlot(active_pipeline=state)

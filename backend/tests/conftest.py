@@ -84,6 +84,7 @@ def test_state(tmp_path: Path, fake_services: FakeServices):
         pose_processor_pipeline_class=type(fake_services.pose_processor_pipeline),
         a2v_pipeline_class=type(fake_services.a2v_pipeline),
         retake_pipeline_class=type(fake_services.retake_pipeline),
+        qwen_multiangle_pipeline_class=type(fake_services.qwen_multiangle_pipeline),
     )
 
     handler = build_initial_state(

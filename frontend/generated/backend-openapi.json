@@ -1458,6 +1458,83 @@
         "title": "ModelStatusItem",
         "type": "object"
       },
+      "QwenMultiAngleGenerateRequest": {
+        "properties": {
+          "azimuth_deg": {
+            "title": "Azimuth Deg",
+            "type": "number"
+          },
+          "elevation_deg": {
+            "title": "Elevation Deg",
+            "type": "number"
+          },
+          "extra_prompt": {
+            "default": "",
+            "title": "Extra Prompt",
+            "type": "string"
+          },
+          "image_data_url": {
+            "title": "Image Data Url",
+            "type": "string"
+          },
+          "randomize_seed": {
+            "default": false,
+            "title": "Randomize Seed",
+            "type": "boolean"
+          },
+          "seed": {
+            "default": 42,
+            "title": "Seed",
+            "type": "integer"
+          },
+          "use_lightning": {
+            "default": true,
+            "title": "Use Lightning",
+            "type": "boolean"
+          },
+          "zoom": {
+            "title": "Zoom",
+            "type": "number"
+          }
+        },
+        "required": [
+          "image_data_url",
+          "azimuth_deg",
+          "elevation_deg",
+          "zoom"
+        ],
+        "title": "QwenMultiAngleGenerateRequest",
+        "type": "object"
+      },
+      "QwenMultiAngleGenerateResponse": {
+        "properties": {
+          "image_data_url": {
+            "title": "Image Data Url",
+            "type": "string"
+          },
+          "prompt": {
+            "title": "Prompt",
+            "type": "string"
+          },
+          "seed": {
+            "title": "Seed",
+            "type": "integer"
+          },
+          "status": {
+            "const": "complete",
+            "default": "complete",
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "image_data_url",
+          "prompt",
+          "seed"
+        ],
+        "title": "QwenMultiAngleGenerateResponse",
+        "type": "object"
+      },
       "RetakeCancelledResponse": {
         "properties": {
           "status": {
@@ -2772,6 +2849,57 @@
         "summary": "Route Text Encoder Recommendation",
         "tags": [
           "models"
+        ]
+      }
+    },
+    "/api/qwen-multiangle/generate": {
+      "post": {
+        "operationId": "route_qwen_multiangle_generate_api_qwen_multiangle_generate_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/QwenMultiAngleGenerateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/QwenMultiAngleGenerateResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "4XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPErrorResponse"
+                }
+              }
+            },
+            "description": "Client Error"
+          },
+          "5XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPErrorResponse"
+                }
+              }
+            },
+            "description": "Server Error"
+          }
+        },
+        "summary": "Route Qwen Multiangle Generate",
+        "tags": [
+          "qwen-multiangle"
         ]
       }
     },

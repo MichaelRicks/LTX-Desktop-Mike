@@ -17,6 +17,7 @@ if TYPE_CHECKING:
         ImageGenerationPipeline,
         IcLoraPipeline,
         PoseProcessorPipeline,
+        QwenMultiAnglePipeline,
         RetakePipeline,
         TextEncoder,
     )
@@ -133,6 +134,15 @@ class RetakePipelineState:
     quantized: bool
 
 
+@dataclass
+class QwenMultiAngleState:
+    """Evicted-and-reloaded on GPU swap, like the video-family states above —
+    deliberately NOT ImageGenerationPipeline's park-on-CPU protocol. See
+    services/qwen_multiangle_pipeline/qwen_multiangle_pipeline.py for why."""
+
+    pipeline: QwenMultiAnglePipeline
+
+
 # ============================================================
 # Generation state
 # ============================================================
@@ -192,7 +202,7 @@ ActiveGeneration = GpuGeneration | ApiGeneration
 
 @dataclass
 class GpuSlot:
-    active_pipeline: VideoPipelineState | ICLoraState | A2VPipelineState | RetakePipelineState | ImageGenerationPipeline
+    active_pipeline: VideoPipelineState | ICLoraState | A2VPipelineState | RetakePipelineState | QwenMultiAngleState | ImageGenerationPipeline
 
 
 @dataclass
