@@ -281,6 +281,19 @@ export function registerFileHandlers(): void {
     }
   })
 
+  handle('copyFileToPath', async ({ srcPath, destPath }) => {
+    try {
+      validatePath(srcPath, getAllowedRoots())
+      // destPath is a user-chosen save location approved via showSaveDialog.
+      validatePath(destPath, getAllowedRoots())
+      fs.copyFileSync(srcPath, destPath)
+      return { success: true, path: destPath }
+    } catch (error) {
+      logger.error(`Error copying file: ${error}`)
+      return { success: false, error: String(error) }
+    }
+  })
+
   handle('showOpenDirectoryDialog', async ({ title }) => {
     const mainWindow = getMainWindow()
     if (!mainWindow) return null

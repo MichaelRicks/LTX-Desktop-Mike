@@ -101,6 +101,7 @@ export function extractVideoFrameToFile({
   width,
   quality,
   outputPath,
+  accurate = false,
   timeoutMs = 10000,
 }: {
   videoPath: string
@@ -108,6 +109,13 @@ export function extractVideoFrameToFile({
   width?: number
   quality?: number
   outputPath?: string
+  /**
+   * When true, seek *after* -i (frame-accurate but slower, decodes from 0 to
+   * seekTime). Default false uses the fast keyframe seek before -i, which is
+   * fine for thumbnails but can land a few frames off — not acceptable when the
+   * user is saving the exact frame they paused on.
+   */
+  accurate?: boolean
   timeoutMs?: number
 }): string {
   const ffmpegPath = findFfmpegPath()
@@ -124,9 +132,9 @@ export function extractVideoFrameToFile({
       `ltx_frame_${Date.now()}_${Math.random().toString(36).slice(2, 8)}.jpg`,
     )
 
+  const seekArgs = ['-ss', String(Math.max(0, seekTime))]
   const args: string[] = [
-    '-ss', String(Math.max(0, seekTime)),
-    '-i', videoPath,
+    ...(accurate ? ['-i', videoPath, ...seekArgs] : [...seekArgs, '-i', videoPath]),
     ...(width ? ['-vf', `scale=${width}:-2`] : []),
     '-frames:v', '1',
     ...(quality !== undefined ? ['-q:v', String(quality)] : []),

@@ -32,6 +32,7 @@ import { logger } from '../lib/logger'
 import { RetakePanel } from '../components/RetakePanel'
 import { ICLoraPanel, CONDITIONING_TYPES } from '../components/ICLoraPanel'
 import { FreeApiKeyBubble } from '../components/FreeApiKeyBubble'
+import { useVideoSaveMenu } from '../components/useVideoSaveMenu'
 
 // Sentinel binFilter value meaning "show every asset" (vs. a real binId, or
 // null for the default untagged-only view).
@@ -1053,6 +1054,7 @@ export function GenSpace() {
   const [localError, setLocalError] = useState<GenerationError | null>(null)
   const [selectedAsset, setSelectedAsset] = useState<Asset | null>(null)
   const [copiedPrompt, setCopiedPrompt] = useState(false)
+  const { onContextMenu: onVideoSaveContextMenu, menu: videoSaveMenu } = useVideoSaveMenu()
   const [showFavorites, setShowFavorites] = useState(false)
   // null = default view (untagged only); ALL_BINS_FILTER = every asset; otherwise a specific binId.
   const [binFilter, setBinFilter] = useState<string | null>(null)
@@ -2075,6 +2077,10 @@ export function GenSpace() {
                 controls
                 autoPlay
                 className="w-full rounded-xl object-contain max-h-[75vh]"
+                onContextMenu={(e) => onVideoSaveContextMenu(e, {
+                  sourcePath: selectedAsset.path,
+                  name: selectedAsset.prompt,
+                })}
               />
             ) : (
               <img
@@ -2108,6 +2114,8 @@ export function GenSpace() {
           </div>
         </div>
       )}
+
+      {videoSaveMenu}
 
       {creatingTagFor !== null && (
         <div
