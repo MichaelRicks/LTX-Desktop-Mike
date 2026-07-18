@@ -218,6 +218,7 @@ export function sanitizeVideoGenerationSettings<T extends VideoGenerationSetting
     hasAudio?: boolean
     minimumDuration?: number
     durationSelection?: DurationSelectionMode
+    allowedAspectRatios?: readonly string[]
   } = {},
 ): T | null {
   const resolved = resolveVideoGenerationOptions({
@@ -237,13 +238,23 @@ export function sanitizeVideoGenerationSettings<T extends VideoGenerationSetting
     return null
   }
 
+  // Aspect ratio isn't part of model-spec compatibility, so clamp it to the
+  // set the caller allows (defaults to the two universally-supported ratios;
+  // callers on the local pipeline opt into '21:9' by widening this list).
+  const allowedAspectRatios = options.allowedAspectRatios ?? ['16:9', '9:16']
+  const aspectRatio = (
+    settings.aspectRatio && allowedAspectRatios.includes(settings.aspectRatio)
+      ? settings.aspectRatio
+      : '16:9'
+  ) as VideoGenerationAspectRatio
+
   return {
     ...settings,
     model: resolved.selectedModel,
     videoResolution: resolved.selectedResolution,
     fps: resolved.selectedFps,
     duration: resolved.selectedDuration,
-    aspectRatio: (settings.aspectRatio === '9:16' ? '9:16' : '16:9') as VideoGenerationAspectRatio,
+    aspectRatio,
   }
 }
 
