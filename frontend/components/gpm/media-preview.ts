@@ -8,6 +8,8 @@
  * serves every thumbnail without React plumbing.
  */
 
+import { saveVideoFile, saveVideoFrame } from '../../lib/video-save-actions'
+
 export interface PreviewMedia { src: string; isVideo: boolean; isAudio?: boolean; name?: string }
 
 const DELAY_MS = 500
@@ -119,6 +121,10 @@ export function openLightbox(media: PreviewMedia): void {
     const v = document.createElement('video')
     v.src = media.src; v.controls = true; v.autoplay = true; v.loop = true; v.playsInline = true
     v.style.cssText = inner; v.onclick = stop
+    v.oncontextmenu = (e) => {
+      e.preventDefault(); e.stopPropagation()
+      showLightboxContextMenu(e.clientX, e.clientY, v, media)
+    }
     overlay.appendChild(v)
     void v.play().catch(() => {})
   } else {
@@ -152,7 +158,46 @@ function onLightboxKey(e: KeyboardEvent): void {
   if (e.key === 'Escape') { e.preventDefault(); closeLightbox() }
 }
 
+// Right-click "Save video / Save video frame" menu for the lightbox video.
+// Appended to the overlay so a backdrop click (which closes the lightbox) also
+// disposes it; menu-button clicks stopPropagation so they don't close it.
+let lightboxMenuEl: HTMLDivElement | null = null
+
+function removeLightboxMenu(): void {
+  if (lightboxMenuEl) { lightboxMenuEl.remove(); lightboxMenuEl = null }
+}
+
+function showLightboxContextMenu(
+  clientX: number, clientY: number, video: HTMLVideoElement, media: PreviewMedia,
+): void {
+  removeLightboxMenu()
+  const W = 168, H = 76
+  const menu = document.createElement('div')
+  menu.style.cssText = [
+    'position:fixed', `left:${Math.min(clientX, window.innerWidth - W - 8)}px`,
+    `top:${Math.min(clientY, window.innerHeight - H - 8)}px`, `width:${W}px`,
+    'z-index:2147483602', 'padding:4px', 'border-radius:8px',
+    'background:#18181b', 'border:1px solid #34343d',
+    'box-shadow:0 12px 40px rgba(0,0,0,0.5)', 'font:500 13px system-ui,sans-serif',
+  ].join(';')
+  menu.oncontextmenu = (e) => e.preventDefault()
+  const mkItem = (label: string, onPick: () => void): HTMLButtonElement => {
+    const b = document.createElement('button')
+    b.textContent = label
+    b.style.cssText = 'display:block;width:100%;text-align:left;padding:7px 12px;background:transparent;border:none;color:#e4e4e7;font-size:13px;cursor:pointer;border-radius:6px;'
+    b.onmouseenter = () => { b.style.background = '#27272a' }
+    b.onmouseleave = () => { b.style.background = 'transparent' }
+    b.onclick = (e) => { e.stopPropagation(); removeLightboxMenu(); onPick() }
+    return b
+  }
+  menu.appendChild(mkItem('Save video', () => { void saveVideoFile(media.src, media.name) }))
+  menu.appendChild(mkItem('Save video frame', () => { void saveVideoFrame(video, media.src, media.name) }))
+  ;(lightboxEl ?? document.body).appendChild(menu)
+  lightboxMenuEl = menu
+}
+
 export function closeLightbox(): void {
   window.removeEventListener('keydown', onLightboxKey, true)
+  removeLightboxMenu()
   if (lightboxEl) { lightboxEl.remove(); lightboxEl = null }
 }

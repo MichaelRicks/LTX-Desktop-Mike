@@ -241,6 +241,10 @@ export const electronAPISchemas = {
     input: z.object({ filePath: z.string(), data: z.instanceof(ArrayBuffer) }),
     output: ipcResult({ path: z.string() }),
   },
+  copyFileToPath: {
+    input: z.object({ srcPath: z.string(), destPath: z.string() }),
+    output: ipcResult({ path: z.string() }),
+  },
   showOpenDirectoryDialog: {
     input: z.object({ title: z.string().optional() }),
     output: z.string().nullable(),
@@ -302,7 +306,7 @@ export const electronAPISchemas = {
 
   // Video processing
   extractVideoFrame: {
-    input: z.object({ videoPath: z.string(), seekTime: z.number(), width: z.number().optional(), quality: z.number().optional() }),
+    input: z.object({ videoPath: z.string(), seekTime: z.number(), width: z.number().optional(), quality: z.number().optional(), outputPath: z.string().optional() }),
     output: z.object({ path: z.string() }),
   },
 
