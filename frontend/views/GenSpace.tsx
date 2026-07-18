@@ -474,6 +474,7 @@ function PromptBar({
   onIcLoraCondTypeChange,
   icLoraStrength,
   onIcLoraStrengthChange,
+  allowUltrawideVideo,
 }: {
   mode: 'image' | 'video' | 'retake' | 'ic-lora'
   onModeChange: (mode: 'image' | 'video' | 'retake' | 'ic-lora') => void
@@ -507,6 +508,7 @@ function PromptBar({
   onIcLoraCondTypeChange?: (type: ICLoraConditioningType) => void
   icLoraStrength?: number
   onIcLoraStrengthChange?: (strength: number) => void
+  allowUltrawideVideo?: boolean
 }) {
   const inputRef = useRef<HTMLInputElement>(null)
   const audioInputRef = useRef<HTMLInputElement>(null)
@@ -906,6 +908,8 @@ function PromptBar({
                   options={[
                     { value: '16:9', label: '16:9' },
                     { value: '9:16', label: '9:16' },
+                    // 21:9 ultrawide is local-only (the LTX cloud API rejects it).
+                    ...(allowUltrawideVideo ? [{ value: '21:9', label: '21:9' }] : []),
                   ]}
                   trigger={
                     <>
@@ -1096,9 +1100,13 @@ export function GenSpace() {
       if (mode !== 'video' || videoModelSpecs.length === 0) return next
       return sanitizeVideoGenerationSettings(next, videoModelSpecs, {
         hasAudio: Boolean(inputAudio),
+        // 21:9 is only valid on the local pipeline; drop it in API mode.
+        allowedAspectRatios: shouldVideoGenerateWithLtxApi
+          ? ['16:9', '9:16']
+          : ['16:9', '9:16', '21:9'],
       }) ?? next
     },
-    [inputAudio, mode, videoModelSpecs],
+    [inputAudio, mode, videoModelSpecs, shouldVideoGenerateWithLtxApi],
   )
   
   const {
@@ -1999,6 +2007,7 @@ export function GenSpace() {
           mode={mode}
           onModeChange={setMode}
           canUseIcLora={!forceApiGenerations}
+          allowUltrawideVideo={!shouldVideoGenerateWithLtxApi}
           prompt={prompt}
           onPromptChange={setPrompt}
           onGenerate={handleGenerate}

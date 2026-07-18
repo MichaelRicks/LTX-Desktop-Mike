@@ -110,6 +110,13 @@ class VideoGenerationHandler(StateHandlerBase):
             "720p": (1280, 704),
             "1080p": (1920, 1088),
         }
+        # 21:9 (~2.37:1) ultrawide: local-only, capped at 540p/720p (1080p ultrawide
+        # is too heavy). Dims are pre-rounded to /64 (generate_video rounds to 64),
+        # widths chosen against the rounded short side so the ratio isn't distorted.
+        RESOLUTION_MAP_21_9: dict[str, tuple[int, int]] = {
+            "540p": (1216, 512),
+            "720p": (1664, 704),
+        }
 
         def get_16_9_size(res: str) -> tuple[int, int]:
             size = RESOLUTION_MAP_16_9.get(res)
@@ -121,11 +128,19 @@ class VideoGenerationHandler(StateHandlerBase):
             w, h = get_16_9_size(res)
             return h, w
 
+        def get_21_9_size(res: str) -> tuple[int, int]:
+            size = RESOLUTION_MAP_21_9.get(res)
+            if size is None:
+                raise HTTPError(400, "UNSUPPORTED_ULTRAWIDE_RESOLUTION")
+            return size
+
         match req.aspectRatio:
             case "9:16":
                 width, height = get_9_16_size(resolution)
             case "16:9":
                 width, height = get_16_9_size(resolution)
+            case "21:9":
+                width, height = get_21_9_size(resolution)
 
         num_frames = self._compute_num_frames(duration, fps)
 
@@ -269,12 +284,23 @@ class VideoGenerationHandler(StateHandlerBase):
             "720p": (1280, 704),
             "1080p": (1920, 1088),
         }
-        size = RESOLUTION_MAP.get(req.resolution)
-        if size is None:
-            raise HTTPError(400, "INVALID_LOCAL_A2V_RESOLUTION")
-        width, height = size
-        if req.aspectRatio == "9:16":
-            width, height = height, width
+        # 21:9 (~2.35:1) ultrawide is local-only and capped at 540p/720p.
+        RESOLUTION_MAP_21_9: dict[str, tuple[int, int]] = {
+            "540p": (1344, 576),
+            "720p": (1664, 704),
+        }
+        if req.aspectRatio == "21:9":
+            size = RESOLUTION_MAP_21_9.get(req.resolution)
+            if size is None:
+                raise HTTPError(400, "UNSUPPORTED_ULTRAWIDE_RESOLUTION")
+            width, height = size
+        else:
+            size = RESOLUTION_MAP.get(req.resolution)
+            if size is None:
+                raise HTTPError(400, "INVALID_LOCAL_A2V_RESOLUTION")
+            width, height = size
+            if req.aspectRatio == "9:16":
+                width, height = height, width
 
         num_frames = self._compute_num_frames(duration, fps)
 

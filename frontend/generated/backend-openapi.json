@@ -503,7 +503,8 @@
             "default": "16:9",
             "enum": [
               "16:9",
-              "9:16"
+              "9:16",
+              "21:9"
             ],
             "title": "Aspectratio",
             "type": "string"

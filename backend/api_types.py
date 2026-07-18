@@ -319,7 +319,7 @@ class GenerateVideoRequest(BaseModel):
     audio: bool = False
     imagePath: str | None = None
     audioPath: str | None = None
-    aspectRatio: Literal["16:9", "9:16"] = "16:9"
+    aspectRatio: Literal["16:9", "9:16", "21:9"] = "16:9"
 
 
 class GenerateImageRequest(BaseModel):

@@ -665,7 +665,7 @@ export interface components {
              * @default 16:9
              * @enum {string}
              */
-            aspectRatio: "16:9" | "9:16";
+            aspectRatio: "16:9" | "9:16" | "21:9";
             /**
              * Audio
              * @default false

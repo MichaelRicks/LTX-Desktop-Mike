@@ -141,6 +141,37 @@ class TestGenerate:
         assert call["width"] == 1280
         assert call["height"] == 704
 
+    def test_resolution_mapping_21_9_540p(self, client, test_state, fake_services, create_fake_model_files):
+        create_fake_model_files()
+        _enable_local_text_encoding(test_state)
+
+        r = client.post("/api/generate", json={**_T2V_JSON, "aspectRatio": "21:9"})
+        assert r.status_code == 200
+
+        pipeline = fake_services.fast_video_pipeline
+        call = pipeline.generate_calls[0]
+        assert call["width"] == 1216
+        assert call["height"] == 512
+
+    def test_resolution_mapping_21_9_720p(self, client, test_state, fake_services, create_fake_model_files):
+        create_fake_model_files()
+        _enable_local_text_encoding(test_state)
+
+        r = client.post("/api/generate", json={**_T2V_JSON, "resolution": "720p", "aspectRatio": "21:9"})
+        assert r.status_code == 200
+
+        pipeline = fake_services.fast_video_pipeline
+        call = pipeline.generate_calls[0]
+        assert call["width"] == 1664
+        assert call["height"] == 704
+
+    def test_21_9_rejected_at_1080p(self, client, test_state, fake_services, create_fake_model_files):
+        create_fake_model_files()
+        _enable_local_text_encoding(test_state)
+
+        r = client.post("/api/generate", json={**_T2V_JSON, "resolution": "1080p", "aspectRatio": "21:9"})
+        assert r.status_code == 400
+
     def test_locked_seed(self, client, test_state, fake_services, create_fake_model_files):
         create_fake_model_files()
         _enable_local_text_encoding(test_state)
