@@ -190,6 +190,13 @@ export function useGeneration(): UseGenerationReturn {
       })
       shouldApplyPollingUpdates = false
       if (!result.ok) {
+        // A user cancel aborts the fetch, which the API client surfaces as a
+        // synthetic error result (not a thrown AbortError). Treat that as a
+        // clean cancellation rather than a "Generation Failed" error.
+        if (abortControllerRef.current?.signal.aborted) {
+          setState(prev => ({ ...prev, isGenerating: false, statusMessage: 'Cancelled' }))
+          return
+        }
         setState(prev => ({
           ...prev,
           isGenerating: false,
@@ -350,6 +357,12 @@ export function useGeneration(): UseGenerationReturn {
 
       clearInterval(progressInterval)
       if (!result.ok) {
+        // A user cancel aborts the fetch → synthetic error result, not a thrown
+        // AbortError; surface it as a clean cancellation, not a failure.
+        if (abortControllerRef.current?.signal.aborted) {
+          setState(prev => ({ ...prev, isGenerating: false, statusMessage: 'Cancelled' }))
+          return
+        }
         setState(prev => ({
           ...prev,
           isGenerating: false,

@@ -279,6 +279,8 @@ export const assetSchema = z.object({
   takes: z.array(assetTakeSchema).optional(),
   activeTakeIndex: z.number().optional(),
   colorLabel: z.string().optional(),
+  // Wall-clock time the render took, in milliseconds (local generations only).
+  renderMs: z.number().optional(),
 })
 
 export const timelineClipSchema = z.object({

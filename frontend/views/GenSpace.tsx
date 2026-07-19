@@ -4,7 +4,7 @@ import {
   Trash2, Download, Image, Video, X,
   Heart, Film, Volume2, VolumeX, Sparkles,
   Clock, Monitor, ChevronUp, Scissors, Music,
-  ChevronLeft, ChevronRight, Copy, Check, Tag, Eraser
+  ChevronLeft, ChevronRight, Copy, Check, Tag, Eraser, Square
 } from 'lucide-react'
 import { useProjects } from '../contexts/ProjectContext'
 import type { GenSpaceRetakeSource } from '../contexts/ProjectContext'
@@ -37,6 +37,14 @@ import { useVideoSaveMenu } from '../components/useVideoSaveMenu'
 // Sentinel binFilter value meaning "show every asset" (vs. a real binId, or
 // null for the default untagged-only view).
 const ALL_BINS_FILTER = '__all__'
+
+// Format a millisecond duration as a stopwatch clock, e.g. 0:07, 1:23.
+function formatClock(ms: number): string {
+  const totalSec = Math.max(0, Math.round(ms / 1000))
+  const m = Math.floor(totalSec / 60)
+  const s = totalSec % 60
+  return `${m}:${s.toString().padStart(2, '0')}`
+}
 
 // Asset card with hover overlays
 function AssetCard({
@@ -1058,6 +1066,10 @@ export function GenSpace() {
   const [localError, setLocalError] = useState<GenerationError | null>(null)
   const [selectedAsset, setSelectedAsset] = useState<Asset | null>(null)
   const [copiedPrompt, setCopiedPrompt] = useState(false)
+  // Live render stopwatch: elapsedMs ticks while generating and freezes on
+  // completion; generationStartRef feeds the render time stored on the asset.
+  const [elapsedMs, setElapsedMs] = useState(0)
+  const generationStartRef = useRef<number | null>(null)
   const { onContextMenu: onVideoSaveContextMenu, menu: videoSaveMenu } = useVideoSaveMenu()
   const [showFavorites, setShowFavorites] = useState(false)
   // null = default view (untagged only); ALL_BINS_FILTER = every asset; otherwise a specific binId.
@@ -1121,6 +1133,7 @@ export function GenSpace() {
     imagePaths,
     error,
     reset,
+    cancel,
   } = useGeneration()
 
   const {
@@ -1281,8 +1294,27 @@ export function GenSpace() {
   const [lastPrompt, setLastPrompt] = useState('')
   
   // When video generation completes, add to project assets
+  // Render stopwatch: (re)start when a generation begins, tick while running,
+  // and freeze the last value when it stops (the cleanup clears the interval).
+  useEffect(() => {
+    if (!isGenerating) return
+    generationStartRef.current = Date.now()
+    setElapsedMs(0)
+    const id = setInterval(() => {
+      if (generationStartRef.current != null) {
+        setElapsedMs(Date.now() - generationStartRef.current)
+      }
+    }, 200)
+    return () => clearInterval(id)
+  }, [isGenerating])
+
   useEffect(() => {
     if (!videoPath || !currentProjectId || isGenerating) return
+
+    // Wall-clock render time, captured before the async persist work below.
+    const renderMs = generationStartRef.current != null
+      ? Date.now() - generationStartRef.current
+      : undefined
 
     const generationKey = videoPath
     if (persistedVideoKeyRef.current === generationKey) return
@@ -1307,6 +1339,7 @@ export function GenSpace() {
           prompt: lastPrompt,
           resolution: savedVideoSettings.videoResolution,
           duration: savedVideoSettings.duration,
+          renderMs,
           generationParams: {
             mode: genMode as 'text-to-video' | 'image-to-video' | 'audio-to-video',
             prompt: lastPrompt,
@@ -1934,11 +1967,23 @@ export function GenSpace() {
                       </div>
                     </div>
                     <p className="text-sm text-zinc-400">{statusMessage || 'Generating...'}</p>
+                    <p className="mt-1 flex items-center gap-1 text-xs text-zinc-500 tabular-nums">
+                      <Clock className="h-3 w-3" />
+                      {formatClock(elapsedMs)}
+                    </p>
                     {progress > 0 && (
                       <div className="w-32 h-1 bg-zinc-800 rounded-full mt-2 overflow-hidden">
                         <div className="h-full bg-violet-500 transition-all" style={{ width: `${progress}%` }} />
                       </div>
                     )}
+                    <button
+                      onClick={() => void cancel()}
+                      className="mt-4 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium text-zinc-300 bg-zinc-700/60 hover:bg-red-600/80 hover:text-white transition-colors"
+                      title="Stop this generation"
+                    >
+                      <Square className="h-3 w-3 fill-current" />
+                      Stop
+                    </button>
                   </div>
                 </div>
               )}
@@ -2118,6 +2163,7 @@ export function GenSpace() {
               </div>
               <p className="text-zinc-500 text-sm mt-1">
                 {selectedAsset.resolution} • {selectedAsset.duration ? `${selectedAsset.duration}s` : 'Image'}
+                {selectedAsset.renderMs != null && ` • ${formatClock(selectedAsset.renderMs)} render`}
               </p>
             </div>
           </div>
