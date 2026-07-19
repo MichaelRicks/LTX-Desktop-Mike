@@ -37,12 +37,38 @@ used by LTX Desktop.
   License: Apache License 2.0
   https://huggingface.co/hr16/yolox-onnx
 
+- **Krea 2 Turbo**
+  Copyright (c) Krea AI.
+  License: Krea 2 Community License
+  https://huggingface.co/krea/Krea-2-Turbo
+
+- **Qwen-Image-Edit-2511**
+  Copyright (c) Alibaba Cloud / Qwen Team.
+  License: Apache License 2.0
+  https://huggingface.co/Qwen/Qwen-Image-Edit-2511
+
+- **Qwen-Image-Edit-2511 (GGUF quantization)**
+  Copyright (c) Unsloth AI; base model (c) Alibaba Cloud / Qwen Team.
+  License: Apache License 2.0
+  https://huggingface.co/unsloth/Qwen-Image-Edit-2511-GGUF
+
+- **Qwen-Image-Edit-2511 Multiple Angles LoRA**
+  Copyright (c) fal.ai.
+  License: Apache License 2.0
+  https://huggingface.co/fal/Qwen-Image-Edit-2511-Multiple-Angles-LoRA
+
+- **Qwen-Image-Edit-2511 Lightning LoRA**
+  Copyright (c) LightX2V contributors.
+  License: Apache License 2.0
+  https://huggingface.co/lightx2v/Qwen-Image-Edit-2511-Lightning
+
 ---
 
 ## Python Dependencies
 
 - **pillow** — Copyright (c) Jeffrey A. Clark and Pillow contributors — HPND License
 - **torch** — Copyright (c) Meta Platforms, Inc. — BSD 3-Clause License
+- **torchvision** — Copyright (c) Soumith Chintala and torchvision contributors — BSD 3-Clause License
 - **huggingface-hub** — Copyright (c) Hugging Face — Apache License 2.0
 - **tqdm** — Copyright (c) Casper da Costa-Luis — Mozilla Public License 2.0
 - **pynvml** — Copyright (c) NVIDIA Corporation — BSD 3-Clause License
@@ -57,6 +83,8 @@ used by LTX Desktop.
 - **protobuf** — Copyright (c) Google LLC — BSD 3-Clause License
 - **transformers** — Copyright (c) Hugging Face — Apache License 2.0
 - **sentencepiece** — Copyright (c) Google LLC — Apache License 2.0
+- **bitsandbytes** — Copyright (c) Facebook, Inc. and its affiliates — MIT License
+- **gguf** — Copyright (c) GGML (ggml.ai) — MIT License
 - **sageattention** — Copyright (c) Jintao Zhang et al. — Apache License 2.0
 - **opencv-python-headless** — Copyright (c) OpenCV team — Apache License 2.0
 - **fastapi** — Copyright (c) Sebastian Ramirez — MIT License
@@ -76,8 +104,11 @@ used by LTX Desktop.
 - **electron-updater** — Copyright (c) electron-userland — MIT License
 - **js-yaml** — Copyright (c) Vitaly Puzrin — MIT License
 - **lucide-react** — Copyright (c) Lucide contributors — ISC License
-- **react-dropzone** — Copyright (c) Param Aggarwal — MIT License
+- **react-resizable-panels** — Copyright (c) Brian Vaughn — MIT License
 - **tailwind-merge** — Copyright (c) dcastil — MIT License
+- **use-sync-external-store** — Copyright (c) Meta Platforms, Inc. and affiliates — MIT License
+- **zod** — Copyright (c) Colin McDonnell — MIT License
+- **zustand** — Copyright (c) Paul Henschel and Poimandres contributors — MIT License
 
 ---
 
