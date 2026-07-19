@@ -12,19 +12,36 @@
    Values are RGB channels: R G B
    ───────────────────────────────────────── */
 :root {
+  /* ── Zinc scale (default = "Midnight" palette) ──
+     The whole main-app UI uses Tailwind zinc-* classes, which are redirected to
+     these variables (see tailwind.config.js). A palette theme (lib/theme.ts)
+     rewrites them at runtime to retheme the app; these values are the fallback
+     used for first paint before JS runs. */
+  --zinc-50: 250 250 250;
+  --zinc-100: 244 244 245;
+  --zinc-200: 228 228 231;
+  --zinc-300: 212 212 216;
+  --zinc-400: 161 161 170;
+  --zinc-500: 113 113 122;
+  --zinc-600: 82 82 91;
+  --zinc-700: 63 63 70;
+  --zinc-800: 39 39 42;
+  --zinc-900: 24 24 27;
+  --zinc-950: 9 9 11;
+
   /* Accent color (used for buttons, progress, highlights) */
   --accent: 43 97 255;        /* #2B61FF */
   --accent-dark: 26 80 224;   /* #1A50E0 — darker shade for hover states */
 
-  /* Surface colors */
-  --bg: 9 9 11;               /* zinc-950 — main app background */
-  --surface: 24 24 27;        /* zinc-900 — panels, cards */
-  --surface-raised: 39 39 42; /* zinc-800 — inputs, hover states */
-  --border-color: 63 63 70;   /* zinc-700 — dividers, borders */
+  /* Surface colors — derived from the zinc scale so they follow the palette */
+  --bg: var(--zinc-950);            /* main app background */
+  --surface: var(--zinc-900);       /* panels, cards */
+  --surface-raised: var(--zinc-800);/* inputs, hover states */
+  --border-color: var(--zinc-700);  /* dividers, borders */
 
   /* Text */
   --text: 255 255 255;
-  --text-muted: 161 161 170;  /* zinc-400 */
+  --text-muted: var(--zinc-400);
 }
 
 * {

@@ -1,5 +1,6 @@
-import { AlertCircle, Check, Download, Film, Folder, Info, KeyRound, Settings, Sparkles, X, Zap } from 'lucide-react'
+import { AlertCircle, Check, Download, Film, Folder, Info, KeyRound, Palette, Settings, Sparkles, X, Zap } from 'lucide-react'
 import React, { useEffect, useMemo, useRef, useState } from 'react'
+import { PALETTES, getStoredPaletteId, selectPalette } from '../lib/theme'
 import { Button } from './ui/button'
 import { useAppSettings, type AppSettings } from '../contexts/AppSettingsContext'
 import { ApiClient, type ApiSuccessOf } from '../lib/api-client'
@@ -14,7 +15,7 @@ interface SettingsModalProps {
   initialTab?: TabId
 }
 
-type TabId = 'general' | 'apiKeys' | 'promptEnhancer' | 'about'
+type TabId = 'general' | 'appearance' | 'apiKeys' | 'promptEnhancer' | 'about'
 
 export function SettingsModal({ isOpen, onClose, initialTab }: SettingsModalProps) {
   const { settings, updateSettings, saveLtxApiKey, saveFalApiKey, saveGeminiApiKey, forceApiGenerations } = useAppSettings()
@@ -49,6 +50,7 @@ export function SettingsModal({ isOpen, onClose, initialTab }: SettingsModalProp
   const [showModelLicense, setShowModelLicense] = useState(false)
   const [analyticsEnabled, setAnalyticsEnabled] = useState(false)
   const [projectAssetsPath, setProjectAssetsPath] = useState('')
+  const [paletteId, setPaletteId] = useState(getStoredPaletteId)
 
   // Sync active tab with initialTab prop when modal opens
   useEffect(() => {
@@ -248,10 +250,16 @@ export function SettingsModal({ isOpen, onClose, initialTab }: SettingsModalProp
 
   const tabs = [
     { id: 'general' as TabId, label: 'General', icon: Settings },
+    { id: 'appearance' as TabId, label: 'Appearance', icon: Palette },
     { id: 'apiKeys' as TabId, label: 'API Keys', icon: KeyRound },
     { id: 'promptEnhancer' as TabId, label: 'Prompt Enhancer', icon: Sparkles },
     { id: 'about' as TabId, label: 'About', icon: Info },
   ]
+
+  const handleSelectPalette = (id: string) => {
+    setPaletteId(id)
+    selectPalette(id)
+  }
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center">
@@ -703,6 +711,51 @@ export function SettingsModal({ isOpen, onClose, initialTab }: SettingsModalProp
 
               </div>
             </>
+          )}
+
+          {activeTab === 'appearance' && (
+            <div className="space-y-3">
+              <div>
+                <h3 className="text-sm font-semibold text-white">Color palette</h3>
+                <p className="text-xs text-zinc-400 mt-1">
+                  Changes the main app's colors. Studio Pro panels keep their own styling.
+                </p>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                {PALETTES.map((palette) => {
+                  const selected = palette.id === paletteId
+                  return (
+                    <button
+                      key={palette.id}
+                      onClick={() => handleSelectPalette(palette.id)}
+                      className={`relative flex items-center gap-3 rounded-lg border p-3 text-left transition-colors ${
+                        selected
+                          ? 'border-blue-500 bg-zinc-800/60'
+                          : 'border-zinc-700 hover:border-zinc-500 hover:bg-zinc-800/40'
+                      }`}
+                    >
+                      {/* Swatch: base surface + accent dot + a light-text bar */}
+                      <div
+                        className="h-10 w-10 shrink-0 rounded-md border border-black/40 flex items-center justify-center"
+                        style={{ background: `rgb(${palette.zinc['950']})` }}
+                      >
+                        <div className="flex flex-col items-center gap-1">
+                          <span className="block h-1.5 w-5 rounded-full" style={{ background: `rgb(${palette.accent})` }} />
+                          <span className="block h-1 w-4 rounded-full" style={{ background: `rgb(${palette.zinc['400']})` }} />
+                        </div>
+                      </div>
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-sm font-medium text-white">{palette.name}</span>
+                          {selected && <Check className="h-3.5 w-3.5 text-blue-400" />}
+                        </div>
+                        <p className="text-[11px] text-zinc-400 leading-tight mt-0.5">{palette.blurb}</p>
+                      </div>
+                    </button>
+                  )
+                })}
+              </div>
+            </div>
           )}
 
           {activeTab === 'apiKeys' && (
