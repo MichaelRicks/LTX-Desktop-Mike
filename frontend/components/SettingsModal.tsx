@@ -337,7 +337,7 @@ export function SettingsModal({ isOpen, onClose, initialTab }: SettingsModalProp
       />
 
       {/* Modal */}
-      <div className="relative bg-zinc-900 border border-zinc-700 rounded-xl shadow-2xl w-full max-w-2xl mx-4">
+      <div className="relative bg-zinc-900 border border-zinc-700 rounded-xl shadow-2xl w-full max-w-3xl mx-4">
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-zinc-800">
           <div className="flex items-center gap-2">
@@ -354,8 +354,11 @@ export function SettingsModal({ isOpen, onClose, initialTab }: SettingsModalProp
           </Button>
         </div>
 
-        {/* Tabs */}
-        <div className="flex border-b border-zinc-800">
+        {/* Tabs — the buttons are shrink-0/nowrap by design, so a row that outgrows the
+            modal overflows rather than compressing. Scroll instead of spilling past the
+            edge (as the 6th "Appearance" tab did). The wider max-w-3xl above means this
+            shouldn't normally engage; it's here so adding a 7th tab can't break the layout. */}
+        <div className="flex overflow-x-auto border-b border-zinc-800">
           {tabs.map((tab) => {
             const Icon = tab.icon
             return (
