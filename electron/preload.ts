@@ -1,5 +1,4 @@
 import { electronAPISchemas, type BackendHealthStatus } from '../shared/electron-api-schema'
-import { HF_GATING_ENABLED } from '../shared/feature-flags'
 
 const { contextBridge, ipcRenderer, webUtils } = require('electron')
 
@@ -36,8 +35,6 @@ api.onMenuAction = (cb: (action: string) => void) => {
 api.getPathForFile = (file: File) => webUtils.getPathForFile(file)
 
 api.platform = process.platform
-
-api.hfGatingEnabled = HF_GATING_ENABLED
 
 contextBridge.exposeInMainWorld('electronAPI', api)
 

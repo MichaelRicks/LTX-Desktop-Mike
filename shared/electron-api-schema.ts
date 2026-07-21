@@ -138,6 +138,10 @@ export const electronAPISchemas = {
     input: z.object({ repoId: z.string() }),
     output: z.boolean(),
   },
+  openExternalUrl: {
+    input: z.object({ url: z.string() }),
+    output: z.boolean(),
+  },
   openHuggingFaceAuth: {
     input: z.object({
       clientId: z.string(),
@@ -164,7 +168,7 @@ export const electronAPISchemas = {
 
   // Logs
   getLogs: {
-    input: z.object({}),
+    input: z.object({ query: z.string().optional() }),
     output: logsResponse,
   },
   getLogPath: {
@@ -321,6 +325,12 @@ export const electronAPISchemas = {
     input: z.object({}),
     output: ipcResult({ path: z.string() }),
   },
+  openModelsFolder: {
+    // No path argument by design — the main process resolves the configured models dir
+    // from the backend so a renderer can't ask to open an arbitrary location.
+    input: z.object({}),
+    output: ipcResult({}),
+  },
 
   // Analytics
   getAnalyticsState: {
@@ -376,5 +386,4 @@ export type ElectronAPI = InvokeAPI & {
   onMenuAction: (cb: (action: string) => void) => (() => void)
   getPathForFile: (file: File) => string
   platform: string
-  hfGatingEnabled: boolean
 }

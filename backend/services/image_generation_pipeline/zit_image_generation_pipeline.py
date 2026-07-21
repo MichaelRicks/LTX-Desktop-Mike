@@ -37,10 +37,15 @@ class ZitImageGenerationPipeline:
             self.to(device)
 
     def _resolve_generator_device(self) -> str:
-        if self._cpu_offload_active:
-            return "cuda"
+        # The configured runtime device is authoritative. With enable_model_cpu_offload()
+        # the pipeline's _execution_device can read as "cpu", but the generator must live
+        # on the actual compute device. This previously returned "cuda" whenever offload
+        # was active — but offload is enabled on MPS too, so on a Mac it built a CUDA
+        # generator and failed ("Cannot get CUDA generator without ATen_cuda library").
         if self._device is not None:
             return self._device
+        if self._cpu_offload_active:
+            return "cuda"
 
         execution_device = getattr(self.pipeline, "_execution_device", None)
         return get_device_type(execution_device)
@@ -89,8 +94,15 @@ class ZitImageGenerationPipeline:
     def to(self, device: str) -> None:
         runtime_device = get_device_type(device)
         if runtime_device in ("cuda", "mps"):
-            self.pipeline.enable_model_cpu_offload()  # type: ignore[reportUnknownMemberType]
-            self._cpu_offload_active = True
+            # enable_model_cpu_offload() installs accelerate hooks. Re-invoking it while
+            # offload is already active for this device leaves modules holding
+            # accelerate's wrapped forward but no _hf_hook attribute, which then blows up
+            # at inference: "'Qwen3Model' object has no attribute '_hf_hook'". Install it
+            # once; a park-to-CPU cycle takes the else-branch below and clears the flag,
+            # so moving back to the accelerator re-installs correctly.
+            if not (self._cpu_offload_active and self._device == runtime_device):
+                self.pipeline.enable_model_cpu_offload()  # type: ignore[reportUnknownMemberType]
+                self._cpu_offload_active = True
         else:
             self._cpu_offload_active = False
             self.pipeline.to(runtime_device)  # type: ignore[reportUnknownMemberType]

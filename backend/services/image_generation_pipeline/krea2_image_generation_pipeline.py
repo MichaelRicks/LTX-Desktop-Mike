@@ -1,5 +1,12 @@
 """Krea 2 Turbo image generation pipeline wrapper."""
 
+# Krea2Pipeline / Krea2Transformer2DModel are untyped in diffusers, so every value
+# derived from them is "unknown" under pyright's strict mode. Suppress the unknown-type
+# family for this file rather than scattering per-line ignores that can't fully resolve
+# a third-party class with no stubs. (Fork-only file — see FORK.md section B.)
+# pyright: reportUnknownMemberType=false, reportUnknownVariableType=false
+# pyright: reportUnknownParameterType=false, reportUnknownArgumentType=false
+
 from __future__ import annotations
 
 import logging
@@ -227,11 +234,16 @@ class Krea2ImageGenerationPipeline:
         if runtime_device in ("cuda", "mps"):
             # The NF4-quantized transformer (~7 GB) fits on the accelerator as
             # a whole component, so simple whole-model offloading is enough -
-            # no custom block-level streaming needed. enable_model_cpu_offload
-            # removes any previously installed hooks first, so it's safe to
-            # call again after a park-to-CPU cycle.
-            self.pipeline.enable_model_cpu_offload()  # type: ignore[reportUnknownMemberType]
-            self._cpu_offload_active = True
+            # no custom block-level streaming needed.
+            #
+            # Only install the accelerate hooks once per move-to-accelerator. Calling
+            # enable_model_cpu_offload() again while offload is already active leaves
+            # modules with accelerate's wrapped forward but no _hf_hook attribute, which
+            # fails at inference ("object has no attribute '_hf_hook'"). A park-to-CPU
+            # cycle takes the else-branch and clears the flag, so coming back re-installs.
+            if not (self._cpu_offload_active and self._device == runtime_device):
+                self.pipeline.enable_model_cpu_offload()  # type: ignore[reportUnknownMemberType]
+                self._cpu_offload_active = True
         else:
             self._cpu_offload_active = False
             self.pipeline.to(runtime_device)  # type: ignore[reportUnknownMemberType]
