@@ -5,7 +5,7 @@
  * for its greys/blacks) is redirected to CSS variables `--zinc-50..950` in
  * tailwind.config.js. A palette just rewrites those variables plus the accent,
  * so all ~1000 existing `zinc-*` class uses re-theme at once — no per-component
- * migration. The Studio Pro / GPM panels use their own hex constants and are
+ * migration. The Prompt Manager Pro / GPM panels use their own hex constants and are
  * intentionally left untouched.
  *
  * Persistence is renderer-only (localStorage) — deliberately avoiding the

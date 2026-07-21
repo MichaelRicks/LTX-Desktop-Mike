@@ -718,7 +718,7 @@ export function SettingsModal({ isOpen, onClose, initialTab }: SettingsModalProp
               <div>
                 <h3 className="text-sm font-semibold text-white">Color palette</h3>
                 <p className="text-xs text-zinc-400 mt-1">
-                  Changes the main app's colors. Studio Pro panels keep their own styling.
+                  Changes the main app's colors. Prompt Manager Pro panels keep their own styling.
                 </p>
               </div>
               <div className="grid grid-cols-2 gap-3">

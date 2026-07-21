@@ -1471,7 +1471,7 @@ function Dock({ onClose }: { onClose: () => void }) {
       {/* Side tab on the left edge (centered) to collapse the panel. */}
       <button
         onClick={onClose}
-        title="Close Desktop Studio Pro"
+        title="Close Prompt Manager Pro"
         className="absolute top-1/2 -translate-y-1/2 -left-6 flex flex-col items-center justify-center gap-1.5"
         style={{ width: 24, height: 110, background: C.blue, color: '#fff', borderRadius: '8px 0 0 8px', boxShadow: '-3px 0 10px rgba(0,0,0,0.35)' }}
       >
@@ -1481,7 +1481,7 @@ function Dock({ onClose }: { onClose: () => void }) {
 
       <div className="flex items-center justify-between px-4 py-3 shrink-0" style={{ borderBottom: `1px solid ${C.border}` }}>
         <span className="flex items-center gap-2 text-sm font-semibold" style={{ color: C.text }}>
-          <Wand2 size={15} style={{ color: C.blue }} />Desktop Studio Pro
+          <Wand2 size={15} style={{ color: C.blue }} />Prompt Manager Pro
         </span>
         <div className="flex items-center gap-2">
           <button
@@ -1603,12 +1603,12 @@ export function PromptManagerPro() {
   if (!open) {
     return (
       <button
-        onClick={() => setPromptManagerProOpen(true)} title="Open Desktop Studio Pro"
+        onClick={() => setPromptManagerProOpen(true)} title="Open Prompt Manager Pro"
         className="fixed top-1/2 -translate-y-1/2 right-0 z-[75] flex flex-col items-center justify-center gap-1.5"
         style={{ width: 24, height: 160, background: C.blue, color: '#fff', borderRadius: '8px 0 0 8px', boxShadow: '-3px 0 10px rgba(0,0,0,0.35)' }}
       >
         <ChevronRight size={16} style={{ transform: 'rotate(180deg)' }} />
-        <span className="text-xs font-semibold tracking-wide" style={{ writingMode: 'vertical-rl', transform: 'rotate(180deg)' }}>STUDIO PRO</span>
+        <span className="text-xs font-semibold tracking-wide" style={{ writingMode: 'vertical-rl', transform: 'rotate(180deg)' }}>PROMPT MANAGER</span>
       </button>
     )
   }
