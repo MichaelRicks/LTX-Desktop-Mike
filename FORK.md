@@ -7,7 +7,13 @@ checklist, not an archaeology expedition.**
 When you hit a merge conflict, find the file in the map below to learn which feature owns it
 and what must survive.
 
-Last updated: 2026-07-21 · Fork base: upstream `827b9d8` (LTX Desktop 1.0.5)
+Last updated: 2026-07-21 · Fork base: upstream **LTX Desktop 1.1.0**
+(`sync-public-preview/2026-07-19`, merged in `cd9395e`)
+
+Branches: `feature/upstream-1.1.0` is the current line.
+`feature/21-9-plus-save-video` is frozen at `5b5efbc` as the pre-1.1.0 backup —
+falling back to it **requires** `cd backend && uv sync --extra test --extra dev`,
+or you'll run 1.0.5 code against 1.1.0 libraries.
 
 ---
 
@@ -60,6 +66,32 @@ If it goes wrong: `git merge --abort`, delete the branch. Your working branch ne
 **Merge, don't rebase.** Rebasing replays every fork commit and makes you re-resolve the same
 conflicts repeatedly.
 
+### ⚠️ Dependency pins: do NOT blindly take upstream's
+
+Learned the hard way in the 1.1.0 merge. **Upstream being newer overall does not mean every
+pin is newer.** Their `diffusers` rev was a strict *ancestor* of ours — 380 commits behind —
+and predated `Krea2Pipeline`, so accepting it broke Krea 2 at import time.
+
+For every conflicting pin in `backend/pyproject.toml`, check the ancestry before choosing:
+
+```
+https://api.github.com/repos/<owner>/<repo>/compare/<theirs>...<ours>
+```
+`status: ahead, behind_by: 0` means ours is strictly newer — keep ours. Only take theirs when
+they're genuinely ahead, or when upstream code needs a version-specific API.
+
+Pins we deliberately keep ahead of upstream (see the comments in `pyproject.toml`):
+- **`diffusers`** — ours has `Krea2Pipeline`; upstream's does not.
+
+### ⚠️ Tests cannot validate a merge — run the real app
+
+Also learned in the 1.1.0 merge: 487 tests passed and the frontend typechecked while the app
+**crashed on startup** (`Krea2Pipeline` import) and later blew up mid-generation
+(`_hf_hook`). Neither path is covered by tests. Always work through section 5's manual
+checklist before committing a merge, and prefer a **fresh app process per model** — chaining
+several heavy pipelines in one session parks them all in RAM and produces misleading
+slowness that looks like a regression.
+
 ---
 
 ## 3. What we changed, and what must survive
@@ -77,6 +109,19 @@ Ported prompt/camera/workflow manager mounted as a right-hand dock panel.
   `promptManagerPro*`. Don't let a merge revert it to "Studio Pro" — that name now collides
   with the app name.
 
+### A2. SettingsDropdown — shared component carrying our fix
+Upstream 1.1.0 extracted `SettingsDropdown` out of `GenSpace.tsx` into
+`frontend/components/SettingsDropdown.tsx`, but **their version lacked our tag-popup
+clipping fix**. We adopted their extraction and ported our fix into it, so the IC-LoRA panels
+inherit it too.
+
+- **Must survive:** the `createPortal` render into `document.body` (an `overflow-hidden`
+  ancestor otherwise clips the popup invisible) and the viewport-aware
+  `maxHeight: Math.max(120, rect.top - 16)` (the panel grows upward, so a long list can
+  otherwise run off the top of the screen). Upstream's static `max-h-80` does **not** cover
+  either case.
+- **Test:** open a tag dropdown with 5+ tags — it must stay fully on screen and scroll.
+
 ### B. Krea 2 Turbo (second image model)
 Self-hosted Krea 2 Turbo alongside Z-Image-Turbo, NF4-quantized with a disk cache.
 
@@ -87,6 +132,13 @@ Self-hosted Krea 2 Turbo alongside Z-Image-Turbo, NF4-quantized with a disk cach
 - **Must survive:** the NF4 quantization **and its disk cache** (~3x speedup — expensive to
   regenerate), and the transformers-5.x compatibility fix. If image generation suddenly gets
   slow after a merge, the NF4 cache path is the first suspect.
+- **Must survive:** our `diffusers` pin (see the dependency-pin warning in section 2) — it is
+  the only rev that has `Krea2Pipeline`.
+- **Must survive (both image pipelines):** `to()` installs accelerate hooks via
+  `enable_model_cpu_offload()` **once per move-to-accelerator**. Calling it again while
+  offload is already active leaves modules with accelerate's wrapped `forward` but no
+  `_hf_hook`, which fails at inference (`'Qwen3Model' object has no attribute '_hf_hook'`) —
+  and also causes needless CPU↔GPU shuttling. Don't "simplify" that guard away.
 
 ### C. Qwen Multi-Angle
 Camera-angle tool using Qwen-Image-Edit + GGUF + angle/Lightning LoRAs.
@@ -238,11 +290,22 @@ Manual smoke test (each maps to a feature above):
   Apache-2.0 grants no trademark rights, so this must change before any distribution. Note
   that renaming the userData folder will orphan projects (they live in `localStorage` inside
   it) — the folder must be renamed/migrated, not just repointed.
-- **Upstream 1.1.0** adds a first-class **LoRA / IC-LoRA catalog** (`lora_catalog_handler.py`,
-  `_routes/lora_catalog.py`) supporting catalog downloads *and* manually-placed LoRAs under
-  `models/loras/<id>/`. Worth merging for; it supersedes hand-rolled IC-LoRA work.
-- **Ingredients IC-LoRA** is parked on a VRAM ceiling, not an integration bug — see the
-  project notes. `ltx-core` is pinned at 1.1.1 here; upstream 1.1.0 pins 1.1.7.
+- ~~Upstream 1.1.0~~ — **merged** in `cd9395e`. Brings the LoRA / IC-LoRA catalog, video
+  Extend, outpainting, a Models tab, generation recovery, and heartbeat instrumentation.
+  Largely unexercised so far: the **LoRA catalog** and **Extend** got a code review but only
+  a light smoke test.
+- **New checkpoint requirement:** 1.1.0 repoints *both* model variants at
+  `ltx-2.3-spatial-upscaler-x2-1.1`, so that ~950MB file is required even when staying on
+  the 1.0 transformer. The Models tab offers a whole-bundle download but skips files already
+  on disk, so it only fetches what's missing.
+- **Ingredients IC-LoRA** is CLOSED — needs 32GB+ VRAM and the full (non-distilled) 22B
+  model. Not viable on a 3090; don't reopen without new hardware.
+- **Possible perf win (untested):** on a 24GB card the runtime policy selects
+  `streaming_models_loading`, and the heartbeats show it streaming weights off disk while
+  ~20GB of VRAM sits free (peak usage only ~4.6GB). That band was presumably tuned for the
+  full model, not our fp8-cast distilled one. Forcing `full_models_loading` might cut render
+  times substantially. Pre-existing behaviour, not a merge issue — worth an A/B using the new
+  heartbeat instrumentation.
 
 ---
 
