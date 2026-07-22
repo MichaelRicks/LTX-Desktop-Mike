@@ -84,6 +84,25 @@ def test_retake_pipeline_eviction(test_state, create_fake_model_files):
     assert isinstance(test_state.state.gpu_slot.active_pipeline, VideoPipelineState)
 
 
+def test_image_pipeline_freed_not_parked_when_loading_video(test_state, create_fake_model_files):
+    """FORK behavior (see FORK.md): loading a video pipeline FREES a resident image
+    pipeline outright rather than parking it in host RAM. Parking an image model
+    through a video generation is dead weight that thrashes a 64 GB machine
+    (bf16-read + fp8-pin working set exceeds RAM). A regression to upstream's
+    parking would leave ``cpu_slot`` populated here instead of None.
+    """
+    create_fake_model_files(include_zit=True)
+    image_pipeline = test_state.pipelines.load_image_generation_pipeline_to_gpu("z-image-turbo")
+    assert isinstance(test_state.state.gpu_slot, GpuSlot)
+    assert test_state.state.gpu_slot.active_pipeline is image_pipeline
+    assert test_state.state.cpu_slot is None
+
+    # Swapping to a video pipeline must free the image pipeline, not park it.
+    test_state.pipelines.load_gpu_pipeline("fast")
+    assert isinstance(test_state.state.gpu_slot.active_pipeline, VideoPipelineState)
+    assert test_state.state.cpu_slot is None
+
+
 def test_ic_lora_load_includes_depth_resources(test_state, fake_services, create_fake_model_files, create_fake_ic_lora_files):
     create_fake_model_files()
     create_fake_ic_lora_files()

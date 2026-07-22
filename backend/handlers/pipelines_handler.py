@@ -262,26 +262,27 @@ class PipelinesHandler(StateHandlerBase):
         return image_generation_pipeline
 
     def _evict_gpu_pipeline_for_swap(self) -> None:
-        should_park_image_generation_pipeline = False
-        should_cleanup = False
-
+        # FORK CHANGE — diverges from upstream (see FORK.md "must survive").
+        # Upstream parks an active image pipeline in host RAM here so a later
+        # image<->image switch stays warm (via park_image_generation_pipeline_on_cpu,
+        # now unused). But every caller of this method is loading a memory-hungry
+        # video-class pipeline (video / IC-LoRA / a2v / retake), for which a parked
+        # image model is pure dead weight: on a 64 GB box it pushes the video model's
+        # bf16-read + fp8-pin working set past physical RAM and into pagefile
+        # thrashing — and image->video (i2v) is the *common* workflow. So free the
+        # image pipeline outright instead of parking it, and also drop any pipeline
+        # parked by a previous swap. Returning to image gen reloads from its fast
+        # NF4/disk cache, far cheaper than thrashing every video render.
         with self._lock:
             self._ensure_no_running_generation()
-            if self.state.gpu_slot is None:
+            if self.state.gpu_slot is None and self.state.cpu_slot is None:
                 return
+            self.state.gpu_slot = None
+            self.state.cpu_slot = None
+            self._active_image_generation_cp_id = None
+            self._assert_invariants()
 
-            active = self.state.gpu_slot.active_pipeline
-            if isinstance(active, ImageGenerationPipeline):
-                should_park_image_generation_pipeline = True
-            else:
-                self.state.gpu_slot = None
-                self._assert_invariants()
-                should_cleanup = True
-
-        if should_park_image_generation_pipeline:
-            self.park_image_generation_pipeline_on_cpu()
-        elif should_cleanup:
-            self._gpu_cleaner.cleanup()
+        self._gpu_cleaner.cleanup()
 
     def load_gpu_pipeline(
         self,

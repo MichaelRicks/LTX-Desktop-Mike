@@ -140,6 +140,27 @@ Self-hosted Krea 2 Turbo alongside Z-Image-Turbo, NF4-quantized with a disk cach
   `_hf_hook`, which fails at inference (`'Qwen3Model' object has no attribute '_hf_hook'`) —
   and also causes needless CPU↔GPU shuttling. Don't "simplify" that guard away.
 
+### B2. Free (don't park) image pipelines when loading video ⚠️ upstream divergence
+`backend/handlers/pipelines_handler.py` — `_evict_gpu_pipeline_for_swap`.
+
+Upstream parks an active image pipeline in host RAM (`park_image_generation_pipeline_on_cpu`
+→ `CpuSlot`) so an image↔image switch stays warm. We changed it to **free** the image
+pipeline (and drop any already-parked `cpu_slot`) instead, because every caller of that method
+is loading a memory-hungry video/IC-LoRA/a2v pipeline, and a parked image model then thrashes
+a 64 GB box: the video model's bf16-read + fp8-pin working set (~70 GB) plus a parked image
+model exceeds RAM and spills to the pagefile. Measured: image→video went 5:04 (parked) →
+3:42 (freed).
+
+- **Must survive:** the free-not-park behavior. Guardrail:
+  `tests/test_state_actions.py::test_image_pipeline_freed_not_parked_when_loading_video` — it
+  fails if a merge silently restores upstream's parking (`cpu_slot` becomes a `CpuSlot`).
+- `park_image_generation_pipeline_on_cpu` is now **unused** but intentionally left in place to
+  keep the diff small and reduce merge friction; don't be surprised it has no callers.
+- **This is a candidate to upstream** (it's a latent bug that hurts Z-Image too — Z-Image is
+  bf16/unquantized, so parking it is *worse* than our NF4 Krea 2). If Lightricks takes a PR,
+  drop this divergence. Root cause is that 64 GB RAM is below what upstream's design assumes;
+  see the perf notes in section 6.
+
 ### C. Qwen Multi-Angle
 Camera-angle tool using Qwen-Image-Edit + GGUF + angle/Lightning LoRAs.
 
