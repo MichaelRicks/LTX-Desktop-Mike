@@ -44,13 +44,15 @@ class GenerationHandler(StateHandlerBase):
         if self.state.gpu_slot is None:
             raise RuntimeError("No active GPU pipeline")
 
-        # EXPERIMENTAL: push the live Settings toggle, then drop any transformer
-        # cached from the previous generation before this one starts -- otherwise
-        # it stays resident while this generation's own text encoder/VAE/etc.
-        # build, double-booking VRAM. See that module's GENERATION-SCOPED
-        # docstring section for the RTX 5090 repro (~42GB reported on a 32GB card).
+        # EXPERIMENTAL: push the live Settings toggle, then apply the kind-scoped
+        # generation-start eviction: a VRAM-resident cached transformer is dropped
+        # (it would double-book VRAM with this generation's own text encoder/VAE
+        # builds -- see that module's GENERATION-SCOPED docstring section for the
+        # RTX 5090 repro, ~42GB reported on a 32GB card), while a streaming entry
+        # (pinned host RAM) is session-scoped and kept unless system RAM is under
+        # pressure -- see the SESSION-SCOPED section.
         diffusion_stage_cache.set_enabled(self.state.app_settings.diffusion_stage_cache_enabled)
-        diffusion_stage_cache.evict()
+        diffusion_stage_cache.evict_for_generation_start()
 
         self.state.active_generation = GpuGeneration(
             state=GenerationRunning(
@@ -65,9 +67,13 @@ class GenerationHandler(StateHandlerBase):
             raise RuntimeError("Generation already in progress")
 
         # EXPERIMENTAL: see start_generation -- an API generation doesn't build a
-        # local transformer itself, but evicting here still releases VRAM held by
-        # a previous local generation's cached build.
-        diffusion_stage_cache.evict()
+        # local transformer itself, but the kind-scoped eviction still releases
+        # VRAM held by a previous local generation's resident build, while keeping
+        # a session-scoped streaming entry warm for the next local generation.
+        # Push the toggle here too: a user who disables the setting but then only
+        # runs API generations must still reclaim the pinned host RAM.
+        diffusion_stage_cache.set_enabled(self.state.app_settings.diffusion_stage_cache_enabled)
+        diffusion_stage_cache.evict_for_generation_start()
 
         self.state.active_generation = ApiGeneration(
             state=GenerationRunning(

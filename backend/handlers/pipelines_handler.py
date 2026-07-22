@@ -17,6 +17,7 @@ from runtime_config.model_download_specs import (
     resolve_active_ltx_model_id,
 )
 from runtime_config.runtime_policy import streaming_prefetch_count_for_mode
+from services.patches import diffusion_stage_cache
 from services.interfaces import (
     A2VPipeline,
     DepthProcessorPipeline,
@@ -179,6 +180,10 @@ class PipelinesHandler(StateHandlerBase):
             self._ensure_no_running_generation()
             self.state.gpu_slot = None
             self._assert_invariants()
+        # Drop any session-scoped cached transformer with its pipeline: unloading
+        # means giving the memory back, including the streaming entry's pinned host
+        # RAM. Before cleanup() so the pass reclaims what eviction released.
+        diffusion_stage_cache.evict()
         self._gpu_cleaner.cleanup()
 
     def park_image_generation_pipeline_on_cpu(self) -> None:
@@ -242,7 +247,11 @@ class PipelinesHandler(StateHandlerBase):
                     pass
 
         # Release whatever was just dropped BEFORE loading the new model, so the
-        # image pipeline never has to fit alongside evicted weights.
+        # image pipeline never has to fit alongside evicted weights. This includes
+        # any session-scoped cached transformer (this path drops a video pipeline
+        # inline above and does NOT route through _evict_gpu_pipeline_for_swap, so
+        # it needs its own cache evict -- a no-op when nothing is cached).
+        diffusion_stage_cache.evict()
         self._gpu_cleaner.cleanup()
 
         if image_generation_pipeline is None:
@@ -282,6 +291,11 @@ class PipelinesHandler(StateHandlerBase):
             self._active_image_generation_cp_id = None
             self._assert_invariants()
 
+        # A pipeline swap invalidates the session-scoped transformer cache: the
+        # incoming pipeline (different checkpoint/LoRAs, or an image model) needs
+        # both the cached build's VRAM slice and, for streaming entries, its ~23GB
+        # of pinned host RAM. Evict before cleanup() so the pass reclaims it.
+        diffusion_stage_cache.evict()
         self._gpu_cleaner.cleanup()
 
     def load_gpu_pipeline(

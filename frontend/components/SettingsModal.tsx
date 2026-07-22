@@ -642,9 +642,11 @@ export function SettingsModal({ isOpen, onClose, initialTab }: SettingsModalProp
               {cudaAvailable && (
                 <SettingToggle
                   title="Diffusion Stage Cache"
-                  description={<>Reuses an already-built transformer across stage 1/stage 2 within one generation
-                    instead of reloading it from disk twice. <span className="text-orange-400">Experimental:</span> only
-                    applies on high-VRAM cards (32GB+); no effect otherwise.</>}
+                  description={<>Keeps the built transformer resident instead of reloading it from disk on every
+                    stage. On 32GB+ cards it stays in VRAM for the generation; on 24GB cards it stays in
+                    system RAM (~23GB pinned) for the whole session, so repeat generations skip the model
+                    load entirely. <span className="text-orange-400">Experimental:</span> turn off if other
+                    apps need the RAM back.</>}
                   enabled={settings.diffusionStageCacheEnabled}
                   onToggle={handleToggleDiffusionStageCache}
                   statusOn="Skipping redundant transformer reloads"

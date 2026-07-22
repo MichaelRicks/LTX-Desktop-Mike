@@ -161,6 +161,30 @@ model exceeds RAM and spills to the pagefile. Measured: image→video went 5:04 
   drop this divergence. Root cause is that 64 GB RAM is below what upstream's design assumes;
   see the perf notes in section 6.
 
+### B3. Diffusion stage cache — session-scoped streaming transformer
+`backend/services/patches/diffusion_stage_cache.py` (monkey-patch on
+`DiffusionStage._transformer_ctx`), plus eviction hooks in
+`backend/handlers/generation_handler.py` (`evict_for_generation_start`) and
+`backend/handlers/pipelines_handler.py` (unload/swap/image-load), gated from
+`backend/ltx2_server.py` (`set_streaming_enabled`, streaming mode only).
+
+Upstream rebuilds the transformer from the checkpoint on **every** DiffusionStage call
+(43GB read + fp8 cast + pin, ~90-100s each on a 3090 — ~190s of a ~226s generation).
+Two cached kinds: **resident** (32GB+ cards, generation-scoped — a VRAM-resident cache
+surviving the generation double-books VRAM with the next gen's text-encoder/VAE builds,
+measured ~42GB on a 32GB card) and **streaming** (24GB cards, ~23GB fp8 pinned host RAM,
+**session-scoped** — survives across generations ComfyUI-style; warm generations skip the
+model load entirely).
+
+- **Must survive:** the `set_streaming_enabled` gate (IC-LoRA's `use_lora_in_stage_2`
+  forces CPU-mode streaming even on 5090s — must NOT session-cache there); the
+  builder-type + `cpu_slots_count` discriminants in the cache key; the eviction calls in
+  `pipelines_handler` (video↔image swaps need the pinned RAM back); `teardown()` before
+  the meta-swap when evicting a streaming entry.
+- **Tests:** `tests/test_diffusion_stage_cache.py`.
+- The patch reads DiffusionStage/StreamingModelBuilder privates — re-verify against
+  `ltx_pipelines.utils.blocks` on every rev bump (the docstring lists the exact surface).
+
 ### C. Qwen Multi-Angle
 Camera-angle tool using Qwen-Image-Edit + GGUF + angle/Lightning LoRAs.
 
