@@ -300,6 +300,14 @@ export async function startPythonBackend(): Promise<void> {
         } : {}),
         // Only pass LTX_PORT when the developer explicitly set it
         ...(process.env.LTX_PORT ? { LTX_PORT: process.env.LTX_PORT } : {}),
+        // Redirect the HuggingFace cache (Qwen Multi-Angle loads ~17GB of GGUF
+        // weights via hf_hub_download/from_pretrained, which obey HF_HOME) to a
+        // fast drive. LTX_HF_HOME overrides an inherited HF_HOME that may point
+        // at a slow disk — Michael's user HF_HOME was D:\hf-cache (SATA HDD),
+        // pegging that drive at 99% and stretching cold Qwen loads to minutes.
+        // App-scoped (never touches the global env / other HF tools) and
+        // portable: a no-op when LTX_HF_HOME is unset, mirroring LTX_MODELS_DIR.
+        ...(process.env.LTX_HF_HOME ? { HF_HOME: process.env.LTX_HF_HOME } : {}),
         LTX_AUTH_TOKEN: authToken,
         LTX_ADMIN_TOKEN: adminToken,
         LTX_LOG_FILE: getCurrentLogFilename(),

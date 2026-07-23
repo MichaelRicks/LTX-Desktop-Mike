@@ -289,11 +289,18 @@ Six curated palettes, picker in Settings → Appearance, persisted in `localStor
 ### J. Dev/runtime infrastructure
 - **Modified:** `backend/handlers/base.py` (`LTX_MODELS_DIR` env override),
   `electron/app-paths.ts` (`APP_FOLDER_NAME`, `app.setName`), `frontend/App.tsx`
-  (`requiredModelsGate`), `scripts/launch-fork-dev.cmd` (new)
+  (`requiredModelsGate`), `electron/python-backend.ts` (`LTX_HF_HOME` → `HF_HOME`),
+  `scripts/launch-fork-dev.cmd` (new)
 - **Must survive:**
   - **`LTX_MODELS_DIR` env override** — takes priority over persisted `models_dir`, because
     the settings.json round-trip proved unreliable. Also set in `launch-fork-dev.cmd`; the two
     must stay in sync.
+  - **`LTX_HF_HOME` env override** — when set, `python-backend.ts` injects it as `HF_HOME`
+    for the backend, redirecting the HuggingFace cache (Qwen Multi-Angle's ~17GB GGUF load
+    obeys it) to a fast drive without touching the global env or other HF tools. App-scoped,
+    portable (no-op when unset). `launch-fork-dev.cmd` sets it to `E:\hf-cache` because the
+    user's global `HF_HOME` pointed at a SATA HDD (`D:\hf-cache`) that pinned at 99% and made
+    cold Qwen loads take minutes.
   - **Startup gate fix** — don't block startup on missing local models when an LTX API key is
     present (otherwise a bogus ~25GB download prompt reappears).
   - **Dev userData isolation** — dev builds use a separate app folder so the fork doesn't
