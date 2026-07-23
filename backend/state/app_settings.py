@@ -49,7 +49,11 @@ class SettingsPatchModel(SettingsBaseModel):
 
 class AppSettings(SettingsBaseModel):
     use_torch_compile: bool = False
-    diffusion_stage_cache_enabled: bool = False
+    # Default ON: the session-scoped streaming cache is the fork's 6x video-gen
+    # speedup (226s -> 35s warm on the 3090) and is safe on both hardware tiers;
+    # settings persistence is currently broken (see save_settings diagnostic),
+    # so a False default would silently disable it on every launch.
+    diffusion_stage_cache_enabled: bool = True
     ltx_api_key: str = ""
     user_prefers_ltx_api_video_generations: bool = False
     fal_api_key: str = ""
@@ -120,7 +124,8 @@ UpdateSettingsRequest = AppSettingsPatch
 
 class SettingsResponse(SettingsBaseModel):
     use_torch_compile: bool = False
-    diffusion_stage_cache_enabled: bool = False
+    # Keep in sync with AppSettings.diffusion_stage_cache_enabled (default ON).
+    diffusion_stage_cache_enabled: bool = True
     has_ltx_api_key: bool = False
     user_prefers_ltx_api_video_generations: bool = False
     has_fal_api_key: bool = False

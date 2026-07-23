@@ -56,6 +56,16 @@ class SettingsHandler(StateHandlerBase):
             payload = self.get_settings_snapshot().model_dump(by_alias=False)
             with open(self.config.settings_file, "w", encoding="utf-8") as f:
                 json.dump(payload, f, indent=2)
+            # DIAGNOSTIC (settings-persistence bug): settings.json was observed
+            # untouched since 2026-07-11 despite successful POST /api/settings
+            # round-trips ("Applied settings patch" logged, no save warning).
+            # Log the resolved path + size on every save so the next session
+            # shows definitively whether this code runs and where it writes.
+            logger.info(
+                "Settings saved to %s (%d bytes)",
+                self.config.settings_file,
+                self.config.settings_file.stat().st_size,
+            )
         except Exception as exc:
             logger.warning("Could not save settings: %s", exc, exc_info=True)
 
