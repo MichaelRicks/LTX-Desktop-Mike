@@ -182,6 +182,13 @@ _streaming_enabled = False
 _cached_key: _CacheKey | None = None
 _cached_model: object | None = None
 _cached_kind: _CacheKind | None = None
+# Set when a checkout exits abnormally (exception/cancel unwinding through the
+# denoising loop). An abnormal unwind skips the streaming wrapper's forward
+# post-hooks, which can leak GPU BufferPool slots ("BufferPool exhausted: all 2
+# buffers are in use" observed live after a zombie generation) -- so a dirty
+# entry must never be reused: it is evicted and rebuilt on the next checkout
+# (and at generation start).
+_dirty = False
 # >0 while a cached transformer is checked out (yielded to a caller) and possibly
 # mid-denoise. The single-slot cache is only safe under strict sequentiality; this
 # counter lets _evict_locked() fail loud if something tries to free a model that is
@@ -301,6 +308,7 @@ def _evict_locked() -> None:
             _cached_model.teardown()  # type: ignore[attr-defined]
         _cached_model.to("meta")  # type: ignore[attr-defined]
         cleanup_memory()
+    globals()["_dirty"] = False
     _cached_key, _cached_model, _cached_kind = None, None, None
 
 
@@ -330,6 +338,17 @@ def evict_for_generation_start() -> None:
     """
     with _lock:
         if _cached_model is None:
+            return
+        if _dirty:
+            # A previous checkout exited abnormally -- never carry a possibly
+            # slot-leaked wrapper into a new generation. If a zombie checkout is
+            # still live (_in_use > 0), leave it alone: evicting would raise, and
+            # the checkout-time concurrency bypass isolates the new generation.
+            if _in_use == 0:
+                logger.warning(
+                    "[diffusion-stage-cache] evicting dirty entry at generation start"
+                )
+                _evict_locked()
             return
         if _cached_kind != "streaming":
             _evict_locked()
@@ -377,37 +396,65 @@ def _cached_transformer_ctx(self: DiffusionStage, **kwargs: object) -> Iterator[
     global _in_use
     key = _cache_key(self)
     with _lock:
-        if _cached_key == key and _cached_model is not None:
-            model = _cached_model
-            kind = _cached_kind
-            hit = True
-        else:
-            if _cached_key is not None:
-                logger.info(
-                    "[diffusion-stage-cache] key mismatch (config changed) -- evicting before rebuild"
-                )
-            _evict_locked()
-            if self._is_streaming:  # noqa: SLF001
-                # Build the streaming wrapper directly (mirror _streaming_model's
-                # build half, blocks.py:151). kwargs are deliberately dropped:
-                # upstream's _streaming_transformer_ctx ignores them too. Do NOT
-                # route through _build_transformer -- its .to(target) must not be
-                # applied to the meta-blocked streaming wrapper.
-                model = self._prepared_builder().build(device=self._device, dtype=self._dtype)  # noqa: SLF001
-                kind = "streaming"
+        # Concurrency check and checkout must share ONE critical section: checking
+        # _in_use in a separate lock acquisition would let two threads both observe
+        # 0 and then serialize into a shared checkout anyway (TOCTOU).
+        concurrent = _in_use > 0
+        if not concurrent:
+            if _cached_key == key and _cached_model is not None and not _dirty:
+                model = _cached_model
+                kind = _cached_kind
+                hit = True
             else:
-                model = self._build_transformer(**kwargs)  # noqa: SLF001
-                kind = "resident"
-            globals()["_cached_key"] = key
-            globals()["_cached_model"] = model
-            globals()["_cached_kind"] = kind
-            hit = False
-        # Mark in use BEFORE releasing the lock (not after): _evict_locked runs only
-        # under _lock, so bumping the counter here closes the window between resolving
-        # the model and marking it -- otherwise a concurrent evict could see _in_use==0
-        # and free the model we're about to yield. This counter (not the lock, which is
-        # released before the yield) is what protects the model for the whole denoise.
-        _in_use += 1
+                if _dirty and _cached_model is not None:
+                    logger.warning(
+                        "[diffusion-stage-cache] cached transformer is dirty (previous "
+                        "checkout exited abnormally, may have leaked BufferPool slots) "
+                        "-- evicting and rebuilding"
+                    )
+                elif _cached_key is not None:
+                    logger.info(
+                        "[diffusion-stage-cache] key mismatch (config changed) -- evicting before rebuild"
+                    )
+                _evict_locked()
+                if self._is_streaming:  # noqa: SLF001
+                    # Build the streaming wrapper directly (mirror _streaming_model's
+                    # build half, blocks.py:151). kwargs are deliberately dropped:
+                    # upstream's _streaming_transformer_ctx ignores them too. Do NOT
+                    # route through _build_transformer -- its .to(target) must not be
+                    # applied to the meta-blocked streaming wrapper.
+                    model = self._prepared_builder().build(device=self._device, dtype=self._dtype)  # noqa: SLF001
+                    kind = "streaming"
+                else:
+                    model = self._build_transformer(**kwargs)  # noqa: SLF001
+                    kind = "resident"
+                globals()["_cached_key"] = key
+                globals()["_cached_model"] = model
+                globals()["_cached_kind"] = kind
+                hit = False
+            # Mark in use BEFORE releasing the lock (not after): _evict_locked runs only
+            # under _lock, so bumping the counter here closes the window between resolving
+            # the model and marking it -- otherwise a concurrent evict could see _in_use==0
+            # and free the model we're about to yield. This counter (not the lock, which is
+            # released before the yield) is what protects the model for the whole denoise.
+            _in_use += 1
+
+    if concurrent:
+        # Another checkout is live (observed in the wild: a cancelled/failed
+        # generation's denoise thread still running as a zombie while a new
+        # generation starts). Sharing one wrapper between concurrent forward
+        # passes exhausts its 2-slot GPU BufferPool ("BufferPool exhausted: all 2
+        # buffers are in use") -- pre-cache, each call had its own private
+        # wrapper, so concurrency was merely wasteful. Restore exactly that:
+        # bypass the cache with an isolated one-shot build and leave the cached
+        # entry alone.
+        logger.warning(
+            "[diffusion-stage-cache] checkout requested while cached transformer is "
+            "in use (overlapping generation?) -- bypassing cache with an isolated build"
+        )
+        with _orig_transformer_ctx(self, **kwargs) as model:
+            yield model
+        return
 
     logger.info(
         "[diffusion-stage-cache] %s %s transformer",
@@ -422,6 +469,14 @@ def _cached_transformer_ctx(self: DiffusionStage, **kwargs: object) -> Iterator[
             yield X0Model(model).eval()  # type: ignore[arg-type]
         else:
             yield model
+    except BaseException:
+        # Abnormal unwind (exception or cancellation) mid-denoise skips the
+        # wrapper's forward post-hooks, which can leak BufferPool slots. Mark the
+        # entry dirty so it is rebuilt instead of reused -- reusing a leaked-slot
+        # wrapper fails every subsequent generation until eviction.
+        with _lock:
+            globals()["_dirty"] = True
+        raise
     finally:
         _mark_free()
 

@@ -434,6 +434,72 @@ def test_set_streaming_enabled_false_evicts_streaming_entry() -> None:
     assert dsc._cached_kind == "resident"
 
 
+def test_abnormal_exit_marks_dirty_and_next_checkout_rebuilds() -> None:
+    """An exception unwinding through the denoise loop can leak BufferPool slots
+    (observed live: 'BufferPool exhausted: all 2 buffers are in use' on every
+    retry) -- the entry must be rebuilt, never reused."""
+    dsc.set_streaming_enabled(True)
+    builder = _FakeStreamingBuilder("ckpt.safetensors")
+    with pytest.raises(RuntimeError, match="boom"):
+        with dsc._cached_transformer_ctx(_streaming_stage(builder)):
+            raise RuntimeError("boom")
+
+    assert dsc._dirty is True
+    assert dsc._in_use == 0, "abnormal exit must still release the checkout"
+    assert builder.built[0].events == [], "dirty entry is kept (lazily evicted), not freed mid-unwind"
+
+    with dsc._cached_transformer_ctx(_streaming_stage(builder)):
+        pass
+
+    assert builder.build_count == 2, "dirty entry must be rebuilt, not reused"
+    assert builder.built[0].events == ["teardown", "to:meta"], "dirty wrapper torn down before rebuild"
+    assert dsc._dirty is False, "rebuild clears the dirty flag"
+
+
+def test_generation_start_evicts_dirty_streaming_entry_despite_free_ram(monkeypatch: pytest.MonkeyPatch) -> None:
+    dsc.set_streaming_enabled(True)
+    builder = _FakeStreamingBuilder("ckpt.safetensors")
+    with pytest.raises(RuntimeError, match="boom"):
+        with dsc._cached_transformer_ctx(_streaming_stage(builder)):
+            raise RuntimeError("boom")
+    monkeypatch.setattr(dsc.psutil, "virtual_memory", lambda: _fake_virtual_memory(64.0))
+
+    dsc.evict_for_generation_start()
+
+    assert dsc._cached_model is None, "dirty entry must never survive into a new generation"
+    assert builder.built[0].events == ["teardown", "to:meta"]
+
+
+def test_concurrent_checkout_bypasses_cache_with_isolated_build(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A zombie generation's checkout must not share the cached wrapper (2-slot
+    BufferPool) with a new generation -- the second checkout gets an isolated
+    one-shot build via the original ctx, mirroring pre-cache behavior."""
+    from contextlib import contextmanager
+
+    dsc.set_streaming_enabled(True)
+    builder = _FakeStreamingBuilder("ckpt.safetensors")
+    orig_calls: list[object] = []
+
+    @contextmanager
+    def _fake_orig(stage: object, **kwargs: object):
+        orig_calls.append(stage)
+        yield object()
+
+    monkeypatch.setattr(dsc, "_orig_transformer_ctx", _fake_orig)
+
+    outer_stage = _streaming_stage(builder)
+    inner_stage = _streaming_stage(builder)
+    with dsc._cached_transformer_ctx(outer_stage):
+        assert dsc._in_use == 1
+        with dsc._cached_transformer_ctx(inner_stage):
+            pass
+        assert orig_calls == [inner_stage], "concurrent checkout must delegate to the original ctx"
+        assert builder.build_count == 1, "cached wrapper must not be rebuilt or shared"
+        assert dsc._in_use == 1, "bypassed checkout must not touch the in-use counter"
+    assert dsc._in_use == 0
+    assert dsc._cached_model is not None, "cached entry survives a concurrent bypass"
+
+
 def test_streaming_stage_bypasses_and_evicts_when_gate_is_off() -> None:
     """With the gate off (full-loading cards), a streaming stage takes the bypass
     branch and unconditionally evicts -- the original NON-CACHEABLE TRANSITIONS
