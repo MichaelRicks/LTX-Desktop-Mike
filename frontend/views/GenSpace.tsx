@@ -492,6 +492,7 @@ function PromptBar({
   canUseIcLora,
   prompt,
   onPromptChange,
+  onClearPrompt,
   onGenerate,
   isGenerating,
   inputImage,
@@ -526,6 +527,7 @@ function PromptBar({
   canUseIcLora: boolean
   prompt: string
   onPromptChange: (prompt: string) => void
+  onClearPrompt: () => void
   onGenerate: () => void
   isGenerating: boolean
   canGenerate: boolean
@@ -823,9 +825,20 @@ function PromptBar({
             </>
           }
         />
-        
+
+        {/* Clear prompt — parked next to the mode selector, close to the box. */}
+        <button
+          onClick={onClearPrompt}
+          disabled={!prompt}
+          title="Clear the prompt box"
+          className="ml-8 flex items-center gap-1 px-2.5 py-1.5 rounded-md text-[11px] font-semibold bg-[#1f8fff] hover:bg-[#3d9fff] text-white transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+        >
+          <Eraser className="h-3.5 w-3.5" />
+          Clear
+        </button>
+
         <div className="flex-1" />
-        
+
         {isRetake ? (
           resolutionControl ?? <div className="text-[10px] text-zinc-500 pr-2">Trim in the panel above, then retake</div>
         ) : isExtend ? (
@@ -2474,15 +2487,6 @@ export function GenSpace() {
             </div>
             <div className="flex items-center gap-2">
             <button
-              onClick={clearGenSpacePrompt}
-              title="Clear the prompt box"
-              className="flex items-center gap-1 px-2.5 py-1.5 rounded-md text-[11px] font-semibold bg-[#1f8fff] hover:bg-[#3d9fff] text-white transition-colors"
-            >
-              <Eraser className="h-3.5 w-3.5" />
-              Clear Prompt
-            </button>
-
-            <button
               onClick={() => setShowFavorites(!showFavorites)}
               className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${
                 showFavorites
@@ -2720,6 +2724,7 @@ export function GenSpace() {
           allowUltrawideVideo={!shouldVideoGenerateWithLtxApi}
           prompt={prompt}
           onPromptChange={setPrompt}
+          onClearPrompt={clearGenSpacePrompt}
           onGenerate={handleGenerate}
           isGenerating={promptGenerating}
           canGenerate={canSubmit}
