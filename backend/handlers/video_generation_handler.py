@@ -245,6 +245,23 @@ class VideoGenerationHandler(StateHandlerBase):
             else:
                 enhance = use_api_encoding and settings.prompt_enhancer_enabled_t2v
 
+            if enhance:
+                # Transparency: the model will follow the API-rewritten prompt, not the
+                # text the user typed. On i2v with the local distilled (no-CFG) pipeline
+                # this can override the source image entirely — the video holds the
+                # conditioned first frame, then cuts into the rewritten prompt's scene
+                # (root cause of the 2026-07-22 "character morphs ~4 frames in" incident).
+                logger.warning(
+                    "[%s] Prompt Enhancer is ON: the LTX API will REWRITE this prompt before "
+                    "encoding%s. Disable it in Settings -> Prompt Enhancer if the output "
+                    "diverges from your prompt%s.",
+                    gen_mode,
+                    " -- on local i2v the video may follow the rewritten text instead of the source image"
+                    if image is not None
+                    else "",
+                    " or source image" if image is not None else "",
+                )
+
             encoding_method = "api" if use_api_encoding else "local"
             t_text_start = time.perf_counter()
             self._text.prepare_text_encoding(enhanced_prompt, enhance_prompt=enhance)
@@ -353,6 +370,17 @@ class VideoGenerationHandler(StateHandlerBase):
                 a2v_enhance = a2v_use_api and a2v_settings.prompt_enhancer_enabled_i2v
             else:
                 a2v_enhance = a2v_use_api and a2v_settings.prompt_enhancer_enabled_t2v
+
+            if a2v_enhance:
+                # See the fast-path warning above: the rewritten prompt can override the
+                # source image on local no-CFG generations.
+                logger.warning(
+                    "[a2v] Prompt Enhancer is ON: the LTX API will REWRITE this prompt before "
+                    "encoding%s. Disable it in Settings -> Prompt Enhancer if the output diverges.",
+                    " -- the video may follow the rewritten text instead of the source image"
+                    if image is not None
+                    else "",
+                )
 
             self._generation.update_progress("loading_model", 5, 0, total_steps)
             self._generation.update_progress("encoding_text", 10, 0, total_steps)

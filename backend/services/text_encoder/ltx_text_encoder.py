@@ -212,6 +212,42 @@ class LTXTextEncoder:
             logger.warning("Could not extract model_id from checkpoint: %s", exc, exc_info=True)
         return None
 
+    @staticmethod
+    def _log_enhanced_prompt(conditioning: object) -> None:
+        """Best-effort transparency for the Prompt Enhancer.
+
+        The user never sees the rewritten prompt the model actually follows -- which
+        is how the 2026-07-22 "i2v morphs the source character" incident stayed
+        invisible for hours. The /v1/prompt-embedding response is a pickled
+        conditioning structure that is primarily tensors; if the API includes the
+        enhanced TEXT anywhere in it, surface it. Otherwise at least record
+        unambiguously that a server-side rewrite happened.
+        """
+        from typing import cast
+
+        try:
+            found: list[str] = []
+            stack: list[object] = [conditioning]
+            while stack and len(found) < 4:
+                item = stack.pop()
+                if isinstance(item, str):
+                    if item.strip():
+                        found.append(item.strip())
+                elif isinstance(item, (list, tuple)):
+                    stack.extend(cast("list[object] | tuple[object, ...]", item))
+                elif isinstance(item, dict):
+                    stack.extend(cast("dict[object, object]", item).values())
+            if found:
+                logger.info("Prompt as enhanced by the LTX API: %s", " | ".join(found)[:1500])
+            else:
+                logger.info(
+                    "Prompt was REWRITTEN server-side by the LTX API (Prompt Enhancer on); "
+                    "the rewritten text was not included in the response -- the embeddings "
+                    "encode the rewritten version, not the prompt as typed."
+                )
+        except Exception:
+            logger.debug("Could not inspect conditioning payload for enhanced prompt text", exc_info=True)
+
     def encode_via_api(self, prompt: str, api_key: str, checkpoint_path: str, enhance_prompt: bool) -> TextEncodingResult | None:
         model_id = self.get_model_id_from_checkpoint(checkpoint_path)
         if not model_id:
@@ -243,6 +279,9 @@ class LTXTextEncoder:
             if not conditioning or len(conditioning) == 0:
                 logger.warning("LTX API returned unexpected conditioning format")
                 return None
+
+            if enhance_prompt:
+                self._log_enhanced_prompt(conditioning)
 
             embeddings = conditioning[0][0]
             video_dim = 4096

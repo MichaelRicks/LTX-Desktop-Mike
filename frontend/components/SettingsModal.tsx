@@ -1124,6 +1124,11 @@ export function SettingsModal({ isOpen, onClose, initialTab }: SettingsModalProp
                           <p className="text-[10px] text-zinc-500 mt-0.5">
                             {settings.promptEnhancerEnabledI2V ? 'Prompts will be enhanced before I2V generation' : 'I2V prompts used as-is'}
                           </p>
+                          <p className="text-[10px] text-amber-400/90 mt-0.5">
+                            ⚠️ Rewrites your prompt via the LTX API. On local generations the video may
+                            follow the rewritten text instead of your source image (character/scene can
+                            change a few frames in). Leave off for faithful image-to-video.
+                          </p>
                         </div>
                       </div>
                       <div className={`relative w-11 h-6 rounded-full transition-colors flex-shrink-0 ${
