@@ -645,7 +645,8 @@ export function SettingsModal({ isOpen, onClose, initialTab }: SettingsModalProp
                   description={<>Keeps the built transformer resident instead of reloading it from disk on every
                     stage. On 32GB+ cards it stays in VRAM for the generation; on 24GB cards it stays in
                     system RAM (~23GB pinned) for the whole session, so repeat generations skip the model
-                    load entirely. <span className="text-orange-400">Experimental:</span> turn off if other
+                    load entirely. Also keeps the small VAE/upsampler/audio models warm between generations
+                    (~2-4GB VRAM). <span className="text-orange-400">Experimental:</span> turn off if other
                     apps need the RAM back.</>}
                   enabled={settings.diffusionStageCacheEnabled}
                   onToggle={handleToggleDiffusionStageCache}

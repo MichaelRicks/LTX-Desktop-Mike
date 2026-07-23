@@ -17,7 +17,7 @@ from runtime_config.model_download_specs import (
     resolve_active_ltx_model_id,
 )
 from runtime_config.runtime_policy import streaming_prefetch_count_for_mode
-from services.patches import diffusion_stage_cache
+from services.patches import aux_block_cache, diffusion_stage_cache
 from services.interfaces import (
     A2VPipeline,
     DepthProcessorPipeline,
@@ -184,6 +184,7 @@ class PipelinesHandler(StateHandlerBase):
         # means giving the memory back, including the streaming entry's pinned host
         # RAM. Before cleanup() so the pass reclaims what eviction released.
         diffusion_stage_cache.evict()
+        aux_block_cache.evict()
         self._gpu_cleaner.cleanup()
 
     def park_image_generation_pipeline_on_cpu(self) -> None:
@@ -252,6 +253,7 @@ class PipelinesHandler(StateHandlerBase):
         # inline above and does NOT route through _evict_gpu_pipeline_for_swap, so
         # it needs its own cache evict -- a no-op when nothing is cached).
         diffusion_stage_cache.evict()
+        aux_block_cache.evict()
         self._gpu_cleaner.cleanup()
 
         if image_generation_pipeline is None:
@@ -296,6 +298,7 @@ class PipelinesHandler(StateHandlerBase):
         # both the cached build's VRAM slice and, for streaming entries, its ~23GB
         # of pinned host RAM. Evict before cleanup() so the pass reclaims it.
         diffusion_stage_cache.evict()
+        aux_block_cache.evict()
         self._gpu_cleaner.cleanup()
 
     def load_gpu_pipeline(

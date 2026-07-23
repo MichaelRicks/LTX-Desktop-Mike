@@ -13,7 +13,7 @@ from api_types import (
     GenerationProgressResponse,
 )
 from handlers.base import StateHandlerBase, with_state_lock
-from services.patches import diffusion_stage_cache
+from services.patches import aux_block_cache, diffusion_stage_cache
 from state.app_state_types import (
     ApiGeneration,
     AppState,
@@ -53,6 +53,9 @@ class GenerationHandler(StateHandlerBase):
         # pressure -- see the SESSION-SCOPED section.
         diffusion_stage_cache.set_enabled(self.state.app_settings.diffusion_stage_cache_enabled)
         diffusion_stage_cache.evict_for_generation_start()
+        # The aux-model cache shares the same Settings toggle; its (VRAM, small)
+        # entries are kept across generations unconditionally -- no gen-start evict.
+        aux_block_cache.set_enabled(self.state.app_settings.diffusion_stage_cache_enabled)
 
         self.state.active_generation = GpuGeneration(
             state=GenerationRunning(
@@ -74,6 +77,7 @@ class GenerationHandler(StateHandlerBase):
         # runs API generations must still reclaim the pinned host RAM.
         diffusion_stage_cache.set_enabled(self.state.app_settings.diffusion_stage_cache_enabled)
         diffusion_stage_cache.evict_for_generation_start()
+        aux_block_cache.set_enabled(self.state.app_settings.diffusion_stage_cache_enabled)
 
         self.state.active_generation = ApiGeneration(
             state=GenerationRunning(

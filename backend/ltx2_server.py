@@ -52,6 +52,10 @@ import services.patches.ic_lora_stage2_lora as _ic_lora_stage2_lora  # pyright: 
 del _ic_lora_stage2_lora
 import services.patches.diffusion_stage_cache as _diffusion_stage_cache  # pyright: ignore[reportUnusedImport]  # EXPERIMENTAL: remove once DiffusionStage caches/reuses identical builds upstream
 del _diffusion_stage_cache
+import services.patches.aux_block_cache as _aux_block_cache_import  # pyright: ignore[reportUnusedImport]  # EXPERIMENTAL: remove once blocks.py caches/reuses identical aux builds upstream
+del _aux_block_cache_import
+import services.patches.fp8_sidecar_cache as _fp8_sidecar_cache  # pyright: ignore[reportUnusedImport]  # EXPERIMENTAL: remove if ltx-core caches post-sd_ops block weights on disk
+del _fp8_sidecar_cache
 
 from state.app_settings import AppSettings
 
@@ -248,10 +252,13 @@ LOCAL_GENERATIONS_MODE = _resolve_local_generations_mode()
 # streaming runtime mode. Load-bearing gate: IC-LoRA's use_lora_in_stage_2 forces
 # a CPU-mode streaming stage_2 even on full-loading (5090) cards, which must NOT
 # get session-cached there -- see that module's TWO CACHED KINDS docstring section.
+import services.patches.aux_block_cache as _aux_block_cache_gate
 import services.patches.diffusion_stage_cache as _diffusion_stage_cache_gate
 
 _diffusion_stage_cache_gate.set_streaming_enabled(LOCAL_GENERATIONS_MODE == "streaming_models_loading")
+_aux_block_cache_gate.set_streaming_enabled(LOCAL_GENERATIONS_MODE == "streaming_models_loading")
 del _diffusion_stage_cache_gate
+del _aux_block_cache_gate
 
 CAMERA_MOTION_PROMPTS = {
     "none": "",

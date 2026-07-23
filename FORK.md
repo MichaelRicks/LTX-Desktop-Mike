@@ -185,6 +185,38 @@ model load entirely).
 - The patch reads DiffusionStage/StreamingModelBuilder privates — re-verify against
   `ltx_pipelines.utils.blocks` on every rev bump (the docstring lists the exact surface).
 
+### B4. Aux-model session cache
+`backend/services/patches/aux_block_cache.py` — Phase B companion to B3: caches the small
+per-generation builds (VAE encoder — shared between ImageConditioner and VideoUpsampler —
+spatial upsampler, video decoder, audio decoder, vocoder; ~3-4s/warm gen). Multi-slot,
+VRAM-resident (~2-4GB), streaming-mode-gated, evicted at the same `pipelines_handler`
+unload/swap/image-load sites (paired with `diffusion_stage_cache.evict()`), governed by the
+same Settings toggle.
+
+- **Must survive:** the streaming gate; the `SingleGPUModelBuilder` isinstance exclusion
+  (multi-GPU custom decoder builders); the VideoDecoder cached iterator running WITHOUT
+  `gpu_model` (its teardown would meta-swap the cached decoder) with checkout-at-first-next;
+  the vocoder's effective-dtype key (fp32 on MPS); the paired eviction calls.
+- **Tests:** `tests/test_aux_block_cache.py`. Patch reads `blocks.py` privates — re-verify
+  each `__call__` body on rev bumps (the docstring lists the surface).
+
+### B5. fp8 block-weight sidecar
+`backend/services/patches/fp8_sidecar_cache.py` — persists the streaming transformer's
+POST-downcast block weights to `<checkpoint stem>.fp8-blocks-cache.safetensors` beside the
+checkpoint (~22GB; Krea-2 NF4 placement precedent). Cold session builds drop ~95s → ~40s
+(23GB identity mmap read, zero cast compute); one-time synchronous write on the first-ever
+build. Sits beneath both diffusion-stage-cache paths via a patched
+`StreamingModelBuilder._build_pinned_source` + wrapping `StateDictLoader`.
+
+- **Must survive:** the `__blocks` sd_ops-name intercept contract; the LoRA-free capture
+  point (pre-fusion — LoRA changes never invalidate the sidecar); atomic writes (tmp +
+  `os.replace`) with free-space preflight; stamp validation (original path/size/mtime/model-id
+  + sd_ops chain + fp8 suffix list + exact key-set match) with delete-on-invalid.
+- Stale sidecars for deleted checkpoints are acceptable user-deletable residue next to the
+  models. Kill switch: `FP8_SIDECAR_CACHE=0`. **Tests:** `tests/test_fp8_sidecar_cache.py`.
+- Patch reads `builder.py` privates (`_build_pinned_source` signature, `_model_loader`,
+  `_filtered_sd_ops` naming) — re-verify on rev bumps.
+
 ### C. Qwen Multi-Angle
 Camera-angle tool using Qwen-Image-Edit + GGUF + angle/Lightning LoRAs.
 
