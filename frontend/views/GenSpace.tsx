@@ -775,6 +775,8 @@ function PromptBar({
             value={prompt}
             onChange={(e) => onPromptChange(e.target.value)}
             onKeyDown={handleKeyDown}
+            spellCheck
+            rows={3}
             onDragOver={(e) => {
               if (e.dataTransfer.types.includes(GPM_IMAGE_DND_TYPE) || e.dataTransfer.types.includes(FILE_DND) || e.dataTransfer.types.includes('asset')) e.preventDefault()
             }}
@@ -793,7 +795,7 @@ function PromptBar({
                 ? "A close-up of a woman talking on the phone..."
                 : "The woman sips from a cup of coffee..."
             }
-            className="w-full bg-transparent text-white text-sm placeholder:text-zinc-500 focus:outline-none px-2 py-2 resize-none overflow-y-auto h-[70px] leading-5"
+            className="w-full bg-transparent text-white text-sm placeholder:text-zinc-500 focus:outline-none px-2 py-2 resize-y overflow-y-auto h-[70px] min-h-[70px] max-h-[60vh] leading-5"
           />
         </div>
 

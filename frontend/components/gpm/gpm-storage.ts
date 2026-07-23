@@ -52,6 +52,33 @@ export interface GpmWorkflow {
   performance: { enabled: boolean }
 }
 
+/** A saved Performance Studio setting. Family stored by NAME, never index —
+ *  the emotion list is alphabetized and append-extensible, so an index would
+ *  silently repoint. */
+export interface GpmPerformance {
+  id: string
+  name: string
+  updatedAt: number
+  family: string
+  intensity: number
+  asymmetry: number
+  dialogue: string
+  delivery: string
+  dialogueAuto: boolean
+}
+
+/** The in-progress Performance state, autosaved so it survives closing the
+ *  dock (which unmounts it) and app restarts. Same shape minus the saved-record
+ *  identity fields. */
+export interface GpmWorkingPerf {
+  family: string
+  intensity: number
+  asymmetry: number
+  dialogue: string
+  delivery: string
+  dialogueAuto: boolean
+}
+
 export interface GpmPanorama {
   id: string
   name: string
@@ -85,6 +112,8 @@ const PANO_STORE = 'panoramas'
 const KEY_PROMPTS = 'gpm_data_v2'
 const KEY_IMG_FOLDERS = 'gpm_img_state_v1'
 const KEY_WORKFLOWS = 'gpm_workflows_v1'
+const KEY_PERFORMANCES = 'gpm_performances_v1'
+const KEY_PERF_WORKING = 'gpm_perf_working_v1'
 const KEY_PASSTHROUGH = 'gpm_backup_passthrough' // dl* kept for lossless re-export
 
 export const BACKUP_VERSION = '1.6'
@@ -194,6 +223,20 @@ export function loadWorkflows(): Promise<GpmWorkflow[]> {
 }
 export function saveWorkflows(list: GpmWorkflow[]): Promise<IDBValidKey> {
   return kvSet(KEY_WORKFLOWS, list)
+}
+
+/* ---- Saved performances + autosaved working performance ------------------ */
+export function loadPerformances(): Promise<GpmPerformance[]> {
+  return kvGet<GpmPerformance[]>(KEY_PERFORMANCES, [])
+}
+export function savePerformances(list: GpmPerformance[]): Promise<IDBValidKey> {
+  return kvSet(KEY_PERFORMANCES, list)
+}
+export function loadWorkingPerf(): Promise<GpmWorkingPerf | null> {
+  return kvGet<GpmWorkingPerf | null>(KEY_PERF_WORKING, null)
+}
+export function saveWorkingPerf(p: GpmWorkingPerf): Promise<IDBValidKey> {
+  return kvSet(KEY_PERF_WORKING, p)
 }
 
 /* ---- Panoramas (Plates) -------------------------------------------------- */

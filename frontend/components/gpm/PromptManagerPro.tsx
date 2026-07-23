@@ -12,7 +12,7 @@ import {
   Layers, Maximize2, Minimize2, Pencil, Plus, RotateCcw, Save, Search, Send, Trash2, Upload, Wand2, X,
 } from 'lucide-react'
 import {
-  PERF_FAMILIES, assemblePerformance, perfLabel, defaultDialogueForFamily, type PerfDelivery,
+  PERF_FAMILIES, assemblePerformance, perfLabel, defaultDialogueForFamily, familyIndexByName, type PerfDelivery,
   SHOT_PRESETS, SHOT_ANCHORS, buildShotPrompt, type ShotState,
   CAM_CATS, filterCameraCards, type CameraCategory,
   WF_ROLES, buildWorkflowPrompt, type WfState, type WfRole,
@@ -24,6 +24,7 @@ import {
   loadImages, putImage, deleteImage, exportBackup, importBackup, parseBackup,
   loadAllPromptThumbs, deletePromptThumb,
   type GpmWorkflow, loadWorkflows, saveWorkflows,
+  type GpmPerformance, loadPerformances, savePerformances, loadWorkingPerf, saveWorkingPerf,
   type GpmPanorama, loadPanoramas, putPanorama, deletePanorama, MAX_PANORAMAS,
 } from './gpm-storage'
 import { saveDataUrlToTempFile, GPM_IMAGE_DND_TYPE, type GpmDndImage } from './gpm-image-file'
@@ -211,12 +212,38 @@ function ActionRow({
 
 /* ---- Performance Studio --------------------------------------------------- */
 function PerformancePanel({
-  perf, setPerf, ctl, onCopy, onInject,
+  perf, setPerf, ctl, onCopy, onInject, flash,
 }: {
   perf: PerfState; setPerf: React.Dispatch<React.SetStateAction<PerfState>>
-  ctl: SectionCtl; onCopy: (t: string) => void; onInject: (t: string) => void
+  ctl: SectionCtl; onCopy: (t: string) => void; onInject: (t: string) => void; flash: (m: string) => void
 }) {
   const up = <K extends keyof PerfState>(k: K, v: PerfState[K]) => setPerf((p) => ({ ...p, [k]: v }))
+
+  // Saved performances (persisted in IndexedDB, mirroring saved Workflows).
+  const [savedPerfs, setSavedPerfs] = useState<GpmPerformance[]>([])
+  const [perfName, setPerfName] = useState('')
+  useEffect(() => { void loadPerformances().then(setSavedPerfs) }, [])
+  const persistPerfs = (list: GpmPerformance[]) => { setSavedPerfs(list); void savePerformances(list) }
+  const saveCurrentPerf = () => {
+    const fam = PERF_FAMILIES[perf.familyIndex]
+    const name = perfName.trim() || fam?.family || 'Untitled Performance'
+    const rec: GpmPerformance = {
+      id: gpmId(), name, updatedAt: Date.now(),
+      family: fam?.family ?? '', intensity: perf.intensity, asymmetry: perf.asymmetry,
+      dialogue: perf.dialogue, delivery: perf.delivery, dialogueAuto: perf.dialogueAuto,
+    }
+    persistPerfs([rec, ...savedPerfs])
+    setPerfName('')
+    flash(`Saved "${name}"`)
+  }
+  const loadPerf = (p: GpmPerformance) => {
+    setPerf({
+      familyIndex: familyIndexByName(p.family), intensity: p.intensity, asymmetry: p.asymmetry,
+      dialogue: p.dialogue, delivery: p.delivery as PerfDelivery, dialogueAuto: p.dialogueAuto,
+    })
+    flash(`Loaded "${p.name}"`)
+  }
+  const deletePerf = (id: string) => persistPerfs(savedPerfs.filter((p) => p.id !== id))
   // Mirrors the extension: the dialogue box shows the family's default as a
   // placeholder (not a real value) until clicked; if the box is still empty,
   // the assembled prompt falls back to the placeholder text too.
@@ -247,7 +274,7 @@ function PerformancePanel({
   return (
     <div>
       <p className="text-[11px] mb-3" style={{ color: C.muted }}>
-        24 emotion families with intensity, asymmetry, dialogue, and delivery pacing
+        {PERF_FAMILIES.length} emotion families with intensity, asymmetry, dialogue, and delivery pacing
       </p>
       <Section id="perf-controls" title="Controls" ctl={ctl}>
         <Label>Emotion Family</Label>
@@ -319,6 +346,39 @@ function PerformancePanel({
         </div>
       </Section>
       <ActionRow text={perfOut.text} onCopy={onCopy} onInject={onInject} />
+
+      <Section id="perf-saved" title={`Saved Performances (${savedPerfs.length})`} ctl={ctl}>
+        <div className="flex gap-2 mb-3">
+          <input
+            value={perfName} onChange={(e) => setPerfName(e.target.value)}
+            placeholder={`${PERF_FAMILIES[perf.familyIndex]?.family ?? 'Performance'} name…`}
+            className="flex-1 rounded-md px-2 py-1.5 text-xs outline-none"
+            style={{ background: C.elev, color: C.text, border: `1px solid ${C.border}` }}
+          />
+          <button onClick={saveCurrentPerf} className="flex items-center gap-1 rounded-md px-3 py-1.5 text-xs font-medium" style={{ background: C.blue, color: '#fff' }}>
+            <Save size={13} />Save
+          </button>
+        </div>
+        {savedPerfs.length === 0 && <p className="text-[11px]" style={{ color: C.faint }}>No saved performances yet. Name it above and Save.</p>}
+        <div className="space-y-2">
+          {savedPerfs.map((p) => {
+            const date = new Date(p.updatedAt).toLocaleDateString()
+            return (
+              <div key={p.id} className="rounded-lg p-2" style={{ background: C.elev, border: `1px solid ${C.border}` }}>
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-medium truncate" style={{ color: C.text }}>{p.name}</span>
+                  <span className="text-[9px] tabular-nums shrink-0 ml-2" style={{ color: C.faint }}>{p.family} · {date}</span>
+                </div>
+                {p.dialogue && <div className="text-[10px] mt-1 leading-snug italic" style={{ color: C.muted, maxHeight: 30, overflow: 'hidden' }}>“{p.dialogue}”</div>}
+                <div className="flex gap-1.5 mt-2">
+                  <button onClick={() => loadPerf(p)} className="flex items-center gap-1 rounded px-2 py-1 text-[10px] font-semibold" style={{ background: C.blue, color: '#fff' }}><RotateCcw size={11} />Load</button>
+                  <button onClick={() => deletePerf(p.id)} className="flex items-center gap-1 rounded px-2 py-1 text-[10px]" style={{ background: C.card, color: C.muted, border: `1px solid ${C.border}` }}><Trash2 size={11} />Delete</button>
+                </div>
+              </div>
+            )
+          })}
+        </div>
+      </Section>
     </div>
   )
 }
@@ -1383,6 +1443,29 @@ function Dock({ onClose }: { onClose: () => void }) {
     dialogue: '', delivery: 'natural', dialogueAuto: false,
   })
   const perfText = useMemo(() => assemblePerformance(perf).text, [perf])
+  // Persist the working performance so closing the dock (which unmounts it) and
+  // restarts don't reset it to the first emotion with an empty prompt. Family is
+  // stored by NAME (the list is alphabetized/extensible). Autosave only starts
+  // after hydration so the initial default state can't clobber the stored value.
+  const perfHydrated = useRef(false)
+  useEffect(() => {
+    void loadWorkingPerf().then((w) => {
+      if (w) {
+        setPerf({
+          familyIndex: familyIndexByName(w.family), intensity: w.intensity, asymmetry: w.asymmetry,
+          dialogue: w.dialogue, delivery: w.delivery as PerfDelivery, dialogueAuto: w.dialogueAuto,
+        })
+      }
+      perfHydrated.current = true
+    })
+  }, [])
+  useEffect(() => {
+    if (!perfHydrated.current) return
+    void saveWorkingPerf({
+      family: PERF_FAMILIES[perf.familyIndex]?.family ?? '', intensity: perf.intensity,
+      asymmetry: perf.asymmetry, dialogue: perf.dialogue, delivery: perf.delivery, dialogueAuto: perf.dialogueAuto,
+    })
+  }, [perf])
 
   const [shot, setShot] = useState<ShotState>({
     rot: 35, tilt: -8, zoom: 9, preset: SHOT_PRESETS[1], anchors: { faces: true },
@@ -1450,7 +1533,7 @@ function Dock({ onClose }: { onClose: () => void }) {
 
   const renderPanel = (tab: GpmTab) => (
     <>
-      {tab === 'performance' && <PerformancePanel perf={perf} setPerf={setPerf} ctl={ctl} onCopy={copyText} onInject={injectIntoPrompt} />}
+      {tab === 'performance' && <PerformancePanel perf={perf} setPerf={setPerf} ctl={ctl} onCopy={copyText} onInject={injectIntoPrompt} flash={flash} />}
       {tab === 'shot' && <ShotPanel shot={shot} setShot={setShot} ctl={ctl} onCopy={copyText} onInject={injectIntoPrompt} onUseImage={sendImageToGenSpace} flash={flash} srcImage={shotSrcImage} setSrcImage={setShotSrcImage} />}
       {tab === 'camera' && <CameraPanel search={search} setSearch={setSearch} camCat={camCat} setCamCat={setCamCat} onInject={injectIntoPrompt} flash={flash} />}
       {tab === 'workflow' && <WorkflowPanel wf={wf} setWf={setWf} perfText={perfText} ctl={ctl} onCopy={copyText} onInject={injectIntoPrompt} onUseImage={sendImageToGenSpace} flash={flash} />}

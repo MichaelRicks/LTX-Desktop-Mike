@@ -48,11 +48,42 @@ export function createAppMenu(window: BrowserWindow): void {
  * on every right-click with everything needed to build one (isEditable,
  * per-action editFlags), so no renderer/preload changes are required. */
 export function registerEditContextMenu(window: BrowserWindow): void {
+  // Ensure the spellchecker has a language so `context-menu` params carry
+  // misspelledWord + dictionarySuggestions. No-op / harmless on macOS, which
+  // uses the OS spellchecker and ignores an explicit language list.
+  try {
+    window.webContents.session.setSpellCheckerLanguages(['en-US'])
+  } catch {
+    // Some platforms reject an explicit list; the default language still works.
+  }
+
   window.webContents.on('context-menu', (_event, params) => {
     if (!params.isEditable) return
 
     const { editFlags } = params
-    Menu.buildFromTemplate([
+    const template: MenuItemConstructorOptions[] = []
+
+    // Spelling suggestions for a misspelled word under the cursor come first,
+    // then "Add to Dictionary", then the standard edit actions.
+    if (params.misspelledWord) {
+      if (params.dictionarySuggestions.length > 0) {
+        for (const suggestion of params.dictionarySuggestions) {
+          template.push({ label: suggestion, click: () => window.webContents.replaceMisspelling(suggestion) })
+        }
+      } else {
+        template.push({ label: 'No spelling suggestions', enabled: false })
+      }
+      template.push(
+        { type: 'separator' },
+        {
+          label: 'Add to Dictionary',
+          click: () => window.webContents.session.addWordToSpellCheckerDictionary(params.misspelledWord),
+        },
+        { type: 'separator' },
+      )
+    }
+
+    template.push(
       { role: 'undo', enabled: editFlags.canUndo },
       { role: 'redo', enabled: editFlags.canRedo },
       { type: 'separator' },
@@ -61,6 +92,8 @@ export function registerEditContextMenu(window: BrowserWindow): void {
       { role: 'paste', enabled: editFlags.canPaste },
       { type: 'separator' },
       { role: 'selectAll', enabled: editFlags.canSelectAll },
-    ]).popup()
+    )
+
+    Menu.buildFromTemplate(template).popup()
   })
 }

@@ -57,7 +57,7 @@ export interface PerfResult {
   text: string;
 }
 
-export const PERF_FAMILIES: PerfFamily[] = [
+const PERF_FAMILIES_UNSORTED: PerfFamily[] = [
   { family: "Sadness", subtext: "carrying weight that won't put down", waypoints: [
     { name: "Melancholy", va: { v: -0.4, a: -0.3 }, facs: ["AU1", "AU4", "AU15", "AU41"], anat: "inner brows subtly raised and drawn together, lip corners barely turned down, upper eyelids slightly heavy", perf: "stillness, slow blink rate, breath quiet and even, gaze unfocused on middle distance" },
     { name: "Grief Contained", va: { v: -0.85, a: 0.6 }, facs: ["AU1", "AU4", "AU15", "AU17"], anat: "inner brows knitted up and together with vertical furrow, mouth corners drawn down, chin pushed up beneath a tensed lower lip, eyes wet but not spilling", perf: "rigid stillness, breath held in the chest, jaw locked, single tear pooling without falling, micro-tremor in lower lip" },
@@ -189,7 +189,34 @@ export const PERF_FAMILIES: PerfFamily[] = [
     { name: "Mild Embarrassment", va: { v: -0.3, a: 0.5 }, facs: ["AU12", "AU24", "AU64", "AU54"], anat: "an awkward suppressed smile with lips pressed, eyes cast downward and away, head dipped, a faint wince at the mouth", perf: "nervous quick smile, gaze unable to settle, hand possibly touching neck or face, a small uncomfortable laugh, shoulders drawing in" },
     { name: "Mortification", va: { v: -0.6, a: 0.7 }, facs: ["AU7", "AU24", "AU54", "AU64"], anat: "face tightening with a pained grimace-smile, eyes squeezed partly shut or covered, head ducked low, cheeks visibly warm, brow furrowed in distress", perf: "hand rising to cover part of the face, head turning away, body shrinking, a strangled embarrassed laugh, gaze hunting for escape" },
   ] },
+  { family: "Content", subtext: "nothing is missing right now", waypoints: [
+    { name: "Settled Ease", va: { v: 0.5, a: -0.4 }, facs: ["AU12", "AU43"], anat: "a soft relaxed mouth with the faintest upward curve, eyelids gently lowered and easy, brow completely smooth, features fully at rest", perf: "slow deep unhurried breathing, long relaxed blinks, shoulders dropped and open, the whole body settled and unhurried" },
+    { name: "Warm Contentment", va: { v: 0.72, a: -0.15 }, facs: ["AU6", "AU12", "AU43"], anat: "a gentle genuine smile with cheeks softly raised, eyes warm and faintly crinkled at the corners, gaze soft and present, head at ease", perf: "an easy sigh of satisfaction, a small private nod to oneself, a settled stillness, the gaze resting warmly on what is here" },
+  ] },
+  { family: "Evil", subtext: "the harm is the point, not the means", waypoints: [
+    { name: "Cold Malevolence", va: { v: -0.6, a: -0.1 }, facs: ["AU4", "AU7", "AU43"], anat: "brows low and level over flat, dead eyes, lids slightly tightened, a faint humorless set to a closed mouth, the face unnervingly still", perf: "absolute stillness, a slow unblinking gaze, breath shallow and even, no warmth reaching any part of the face" },
+    { name: "Gleeful Cruelty", va: { v: -0.5, a: 0.55 }, facs: ["AU6", "AU7", "AU10", "AU12"], anat: "a wide sharp smile with cheeks raised but the eyes hard and glittering, upper lip faintly raised, teeth beginning to show", perf: "a slow delighted lean toward the other's pain, a soft exhale of pleasure, the head tilting to savor, eyes bright with appetite" },
+    { name: "Monstrous Evil", va: { v: -0.95, a: 0.9 }, facs: ["AU4", "AU5", "AU7", "AU9", "AU10", "AU23", "AU25"], anat: "brows driven down over wide, blazing eyes, nose wrinkled, lips pulled back baring clenched teeth in a rictus between grin and snarl", perf: "looming forward with radiating menace, breath heavy with appetite, every trace of mercy gone, the body a threat about to land" },
+  ] },
 ];
+
+/**
+ * The list Michael edits is authored append-only (new families go at the end of
+ * ``PERF_FAMILIES_UNSORTED``); the UI consumes this alphabetized copy so the
+ * dropdown, default selection, and assembly all share one index space. Saved
+ * performances reference families by NAME (see gpm-storage), so re-sorting can
+ * never silently repoint them.
+ */
+export const PERF_FAMILIES: PerfFamily[] = [...PERF_FAMILIES_UNSORTED].sort((a, b) =>
+  a.family.localeCompare(b.family),
+);
+
+/** Resolve a family name to its index in the alphabetized ``PERF_FAMILIES``
+ *  (0 if not found), for restoring a saved/persisted performance by name. */
+export function familyIndexByName(name: string): number {
+  const i = PERF_FAMILIES.findIndex((f) => f.family === name);
+  return i < 0 ? 0 : i;
+}
 
 /**
  * Per-family default dialogue — pre-filled into the dialogue box for each
@@ -228,6 +255,8 @@ export const PERF_DEFAULT_DIALOGUE: Record<string, string> = {
   Vulnerability: "I don't know how to ask for this.",
   Jealousy: "No, it's fine. I'm happy for you.",
   Embarrassment: 'Can we just— forget I said that?',
+  Content: 'This is exactly where I want to be.',
+  Evil: 'There is no one coming to save you.',
 };
 
 /** Default dialogue for a family index (empty string if none). */
