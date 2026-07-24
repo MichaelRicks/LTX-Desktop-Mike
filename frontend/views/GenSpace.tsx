@@ -209,6 +209,9 @@ function AssetCard({
       }`}>
         {/* Top buttons */}
         <div className="absolute top-2 left-2 right-2 flex items-center justify-between flex-wrap gap-y-1.5">
+          {/* Left actions: originals stay on row 1; Regenerate sits on its own
+              row below so it can't push IC-LoRA off a narrow card. */}
+          <div className="flex flex-col items-start gap-1.5">
           <div className="flex items-center gap-1.5">
             <button
               onClick={(e) => { e.stopPropagation(); onToggleFavorite?.() }}
@@ -218,17 +221,7 @@ function AssetCard({
             >
               <Heart className={`h-3.5 w-3.5 ${isFavorite ? 'fill-current' : ''}`} />
             </button>
-            
-            {onRegenerate && canRegenerateAsset(asset) && (
-              <button
-                onClick={(e) => { e.stopPropagation(); onRegenerate(asset) }}
-                title="Load this generation's image, prompt and settings back into Gen Space"
-                className="px-2.5 py-1.5 rounded-lg bg-black/40 backdrop-blur-md text-white hover:bg-black/60 transition-colors flex items-center gap-1.5 text-xs font-medium whitespace-nowrap"
-              >
-                <RefreshCw className="h-3 w-3" />
-                Regenerate
-              </button>
-            )}
+
             {asset.type === 'image' && (
               <>
                 <button
@@ -270,7 +263,19 @@ function AssetCard({
               </>
             )}
           </div>
-          
+
+          {onRegenerate && canRegenerateAsset(asset) && (
+            <button
+              onClick={(e) => { e.stopPropagation(); onRegenerate(asset) }}
+              title="Load this generation's image, prompt and settings back into Gen Space"
+              className="px-2.5 py-1.5 rounded-lg bg-black/40 backdrop-blur-md text-white hover:bg-black/60 transition-colors flex items-center gap-1.5 text-xs font-medium whitespace-nowrap"
+            >
+              <RefreshCw className="h-3 w-3" />
+              Regenerate
+            </button>
+          )}
+          </div>
+
           <div className="flex items-center gap-1.5">
             {asset.type === 'video' && (
               <button
