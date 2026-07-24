@@ -3,7 +3,7 @@ import {
   Trash2, Download, Image, Video, X,
   Heart, Film, Volume2, VolumeX, Sparkles,
   Clock, Monitor, ChevronUp, Scissors, Music,
-  ChevronLeft, ChevronRight, Copy, Check, Tag, Eraser, Square, MoveHorizontal
+  ChevronLeft, ChevronRight, Copy, Check, Tag, Eraser, Square, MoveHorizontal, RefreshCw
 } from 'lucide-react'
 import { useProjects } from '../contexts/ProjectContext'
 import type { GenSpaceRetakeSource } from '../contexts/ProjectContext'
@@ -62,6 +62,17 @@ function formatClock(ms: number): string {
   return `${m}:${s.toString().padStart(2, '0')}`
 }
 
+// Plain generations carry a complete recipe (prompt + source image + settings +
+// LoRAs) in `generationParams`, so they can be restored into Gen Space wholesale.
+// Retake/Extend/IC-LoRA depend on their source-video panel state instead, and
+// keep using their own flows.
+const REGENERABLE_MODES = new Set<string>([
+  'text-to-video', 'image-to-video', 'audio-to-video', 'text-to-image', 'image-edit',
+])
+function canRegenerateAsset(asset: Asset): boolean {
+  return !!asset.generationParams && REGENERABLE_MODES.has(asset.generationParams.mode)
+}
+
 // Asset card with hover overlays
 function AssetCard({
   asset,
@@ -69,6 +80,7 @@ function AssetCard({
   onPlay,
   onDragStart,
   onCreateVideo,
+  onRegenerate,
   onRetake,
   onExtend,
   onIcLora,
@@ -82,6 +94,7 @@ function AssetCard({
   onPlay: () => void
   onDragStart: (e: React.DragEvent, asset: Asset) => void
   onCreateVideo?: (asset: Asset) => void
+  onRegenerate?: (asset: Asset) => void
   onRetake?: (asset: Asset) => void
   onExtend?: (asset: Asset) => void
   onIcLora?: (asset: Asset) => void
@@ -206,6 +219,16 @@ function AssetCard({
               <Heart className={`h-3.5 w-3.5 ${isFavorite ? 'fill-current' : ''}`} />
             </button>
             
+            {onRegenerate && canRegenerateAsset(asset) && (
+              <button
+                onClick={(e) => { e.stopPropagation(); onRegenerate(asset) }}
+                title="Load this generation's image, prompt and settings back into Gen Space"
+                className="px-2.5 py-1.5 rounded-lg bg-black/40 backdrop-blur-md text-white hover:bg-black/60 transition-colors flex items-center gap-1.5 text-xs font-medium whitespace-nowrap"
+              >
+                <RefreshCw className="h-3 w-3" />
+                Regenerate
+              </button>
+            )}
             {asset.type === 'image' && (
               <>
                 <button
@@ -2224,6 +2247,45 @@ export function GenSpace() {
     setPrompt(`${imageAsset.prompt || 'The scene comes to life...'}`)
   }
 
+  // Restore a past generation's full recipe into Gen Space so a re-run is one
+  // click away — no re-picking the source image or retyping the prompt. The user
+  // can tweak anything before hitting Generate; seed behaviour follows the
+  // existing Lock Seed setting (unlocked = a fresh variation).
+  const handleRegenerate = (asset: Asset) => {
+    const params = asset.generationParams
+    if (!params || !REGENERABLE_MODES.has(params.mode)) return
+    const isImageGen = params.mode === 'text-to-image' || params.mode === 'image-edit'
+
+    // Leave any retake/extend/IC-LoRA panel behind — this is a plain generation.
+    setActiveRetakeSource(null)
+    setActiveIcLoraSource(null)
+    setMode(isImageGen ? 'image' : 'video')
+    setPrompt(params.prompt)
+    setInputImage(params.inputImageUrl ?? null)
+    setInputAudio(params.inputAudioUrl ?? null)
+    setSettings((prev) => sanitizeVideoSettings({
+      ...prev,
+      model: params.model || prev.model,
+      duration: params.duration || prev.duration,
+      videoResolution: params.resolution || prev.videoResolution,
+      fps: params.fps || prev.fps,
+      audio: params.audio,
+      aspectRatio: params.imageAspectRatio || prev.aspectRatio,
+    }))
+    // Saved LoRA refs are models-dir-relative; re-select only those still installed.
+    setSelectedLoras(
+      (params.loras ?? []).flatMap((saved) => {
+        const match = loraLibrary.items.find(
+          (e) => e.installedPath
+            && toModelsDirRelativeRef(e.installedPath, appSettings.modelsDir) === saved.ref,
+        )
+        return match?.installedPath
+          ? [{ ref: match.installedPath, name: saved.name, scale: saved.scale }]
+          : []
+      }),
+    )
+  }
+
   const handleRetake = (videoAsset: Asset) => {
     setMode('retake')
     setPrompt('')
@@ -2590,6 +2652,7 @@ export function GenSpace() {
                   onPlay={() => setSelectedAsset(asset)}
                   onDragStart={handleDragStart}
                   onCreateVideo={handleCreateVideo}
+                  onRegenerate={handleRegenerate}
                   onRetake={handleRetake}
                   onExtend={handleExtend}
                   onIcLora={!forceApiGenerations ? handleIcLora : undefined}
@@ -2833,6 +2896,9 @@ export function GenSpace() {
                 onContextMenu={(e) => onVideoSaveContextMenu(e, {
                   sourcePath: selectedAsset.path,
                   name: selectedAsset.prompt,
+                  onRegenerate: canRegenerateAsset(selectedAsset)
+                    ? () => { setSelectedAsset(null); handleRegenerate(selectedAsset) }
+                    : undefined,
                 })}
               />
             ) : (

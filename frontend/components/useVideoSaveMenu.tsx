@@ -14,21 +14,31 @@ interface MenuState {
   video: HTMLVideoElement
   sourcePath: string
   name?: string
+  /** Optional per-video action: restore this generation's recipe into Gen Space. */
+  onRegenerate?: () => void
 }
 
 const MENU_W = 168
 const MENU_H = 76
+const ITEM_H = 31
 
 export function useVideoSaveMenu() {
   const [menu, setMenu] = useState<MenuState | null>(null)
 
   const onContextMenu = useCallback(
-    (e: React.MouseEvent<HTMLVideoElement>, opts: { sourcePath: string; name?: string }) => {
+    (
+      e: React.MouseEvent<HTMLVideoElement>,
+      opts: { sourcePath: string; name?: string; onRegenerate?: () => void },
+    ) => {
       e.preventDefault()
       // Clamp so the menu stays on-screen near the cursor.
+      const height = MENU_H + (opts.onRegenerate ? ITEM_H : 0)
       const x = Math.min(e.clientX, window.innerWidth - MENU_W - 8)
-      const y = Math.min(e.clientY, window.innerHeight - MENU_H - 8)
-      setMenu({ x, y, video: e.currentTarget, sourcePath: opts.sourcePath, name: opts.name })
+      const y = Math.min(e.clientY, window.innerHeight - height - 8)
+      setMenu({
+        x, y, video: e.currentTarget,
+        sourcePath: opts.sourcePath, name: opts.name, onRegenerate: opts.onRegenerate,
+      })
     },
     [],
   )
@@ -66,6 +76,16 @@ export function useVideoSaveMenu() {
           onClick={(e) => e.stopPropagation()}
           onContextMenu={(e) => e.preventDefault()}
         >
+          {menu.onRegenerate && (
+            <button
+              style={itemStyle}
+              onMouseEnter={(e) => (e.currentTarget.style.background = '#27272a')}
+              onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
+              onClick={() => { menu.onRegenerate?.(); setMenu(null) }}
+            >
+              Regenerate
+            </button>
+          )}
           <button
             style={itemStyle}
             onMouseEnter={(e) => (e.currentTarget.style.background = '#27272a')}
