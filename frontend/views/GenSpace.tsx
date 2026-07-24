@@ -1237,9 +1237,15 @@ export function GenSpace() {
     }
   } | null>(null)
   const [settings, setSettings] = useState(() => ({ ...DEFAULT_VIDEO_SETTINGS }))
-  const videoModelSpecs = getVideoGenerationModelSpecs(videoGenerationModelSpecsResponse, {
-    useApiSpecs: shouldVideoGenerateWithLtxApi,
-  })
+  // Memoized: this fed sanitizeVideoSettings -> handleRegenerate -> the gallery's
+  // useMemo, so rebuilding it every render silently defeated that memo and made
+  // every prompt keystroke re-render all thumbnails.
+  const videoModelSpecs = useMemo(
+    () => getVideoGenerationModelSpecs(videoGenerationModelSpecsResponse, {
+      useApiSpecs: shouldVideoGenerateWithLtxApi,
+    }),
+    [videoGenerationModelSpecsResponse, shouldVideoGenerateWithLtxApi],
+  )
   const videoSettingsMessage = isLoadingVideoGenerationModelSpecs
     ? 'Loading generation settings...'
     : videoGenerationModelSpecsErrorMessage
@@ -1618,7 +1624,13 @@ export function GenSpace() {
   }, [icLoraError])
 
   // Only show assets that were generated (have generationParams), not imported files
-  const assets = (activeProject?.assets || []).filter(a => a.generationParams)
+  // Memoized: this `.filter()` built a fresh array every render, which was the
+  // input to filteredAssets -> assetCards, so it defeated those memos and made
+  // every prompt keystroke re-render the whole thumbnail gallery.
+  const assets = useMemo(
+    () => (activeProject?.assets || []).filter(a => a.generationParams),
+    [activeProject?.assets],
+  )
   const [lastPrompt, setLastPrompt] = useState('')
 
   // On mount: recover any generation that was still running when the frontend reloaded.
@@ -2234,29 +2246,32 @@ export function GenSpace() {
     }
   }
   
-  const handleDelete = (assetId: string) => {
+  // These asset-card handlers are memoized (stable identity) so the gallery grid
+  // below can be memoized too — otherwise every prompt keystroke re-renders all
+  // asset thumbnails, which grows into perceptible typing lag as clips pile up.
+  const handleDelete = useCallback((assetId: string) => {
     if (currentProjectId) {
       deleteAsset(currentProjectId, assetId)
     }
-  }
-  
-  const handleDragStart = (e: React.DragEvent, asset: Asset) => {
+  }, [currentProjectId, deleteAsset])
+
+  const handleDragStart = useCallback((e: React.DragEvent, asset: Asset) => {
     e.dataTransfer.setData('asset', JSON.stringify(asset))
     e.dataTransfer.setData('assetId', asset.id)
     e.dataTransfer.effectAllowed = 'copy'
-  }
-  
-  const handleCreateVideo = (imageAsset: Asset) => {
+  }, [])
+
+  const handleCreateVideo = useCallback((imageAsset: Asset) => {
     setMode('video')
     setInputImage(imageAsset.path)
     setPrompt(`${imageAsset.prompt || 'The scene comes to life...'}`)
-  }
+  }, [])
 
   // Restore a past generation's full recipe into Gen Space so a re-run is one
   // click away — no re-picking the source image or retyping the prompt. The user
   // can tweak anything before hitting Generate; seed behaviour follows the
   // existing Lock Seed setting (unlocked = a fresh variation).
-  const handleRegenerate = (asset: Asset) => {
+  const handleRegenerate = useCallback((asset: Asset) => {
     const params = asset.generationParams
     if (!params || !REGENERABLE_MODES.has(params.mode)) return
     const isImageGen = params.mode === 'text-to-image' || params.mode === 'image-edit'
@@ -2289,9 +2304,9 @@ export function GenSpace() {
           : []
       }),
     )
-  }
+  }, [sanitizeVideoSettings, loraLibrary.items, appSettings.modelsDir])
 
-  const handleRetake = (videoAsset: Asset) => {
+  const handleRetake = useCallback((videoAsset: Asset) => {
     setMode('retake')
     setPrompt('')
     setActiveRetakeSource(null)
@@ -2301,9 +2316,9 @@ export function GenSpace() {
       duration: videoAsset.duration,
     })
     setRetakePanelKey((prev) => prev + 1)
-  }
+  }, [])
 
-  const handleExtend = (videoAsset: Asset) => {
+  const handleExtend = useCallback((videoAsset: Asset) => {
     setMode('extend')
     setPrompt('')
     setExtendDirection('end')
@@ -2314,16 +2329,16 @@ export function GenSpace() {
       duration: videoAsset.duration,
     })
     setExtendPanelKey((prev) => prev + 1)
-  }
+  }, [])
 
-  const handleIcLora = (videoAsset: Asset) => {
+  const handleIcLora = useCallback((videoAsset: Asset) => {
     if (forceApiGenerations) return
     setMode('ic-lora')
     setPrompt('')
     setActiveIcLoraSource(null)
     setIcLoraInitial({ videoPath: videoAsset.path })
     setIcLoraPanelKey((prev) => prev + 1)
-  }
+  }, [forceApiGenerations])
 
   const isRetakeMode = mode === 'retake'
   const isExtendMode = mode === 'extend'
@@ -2368,15 +2383,41 @@ export function GenSpace() {
     return () => document.removeEventListener('mousedown', handleClickOutside)
   }, [showSizeMenu])
 
-  const bins = activeProject?.bins ?? {}
-  const filteredAssets = assets.filter(a => {
+  const bins = useMemo(() => activeProject?.bins ?? {}, [activeProject?.bins])
+  const filteredAssets = useMemo(() => assets.filter(a => {
     if (showFavorites && !a.favorite) return false
     if (binFilter === ALL_BINS_FILTER) return true
     if (binFilter === null) return !a.binId
     return a.binId === binFilter
-  })
-  const favoriteCount = assets.filter(a => a.favorite).length
+  }), [assets, showFavorites, binFilter])
+  const favoriteCount = useMemo(() => assets.filter(a => a.favorite).length, [assets])
   const isLibraryMode = mode === 'video' || mode === 'image'
+
+  // Memoized so typing in the prompt box (which re-renders GenSpace) doesn't
+  // rebuild every thumbnail. Recomputes only when the assets or a card handler
+  // actually change — all deps are stable (useCallback/useMemo/stable setters).
+  const assetCards = useMemo(() => filteredAssets.map(asset => (
+    <AssetCard
+      key={asset.id}
+      asset={asset}
+      onDelete={() => handleDelete(asset.id)}
+      onPlay={() => setSelectedAsset(asset)}
+      onDragStart={handleDragStart}
+      onCreateVideo={handleCreateVideo}
+      onRegenerate={handleRegenerate}
+      onRetake={handleRetake}
+      onExtend={handleExtend}
+      onIcLora={!forceApiGenerations ? handleIcLora : undefined}
+      onToggleFavorite={() => currentProjectId && toggleFavorite(currentProjectId, asset.id)}
+      bins={bins}
+      onTag={(binId) => currentProjectId && updateAsset(currentProjectId, asset.id, { binId: binId ?? undefined })}
+      onRequestNewTag={() => setCreatingTagFor(asset.id)}
+    />
+  )), [
+    filteredAssets, bins, handleDelete, handleDragStart, handleCreateVideo, handleRegenerate,
+    handleRetake, handleExtend, handleIcLora, forceApiGenerations, currentProjectId,
+    toggleFavorite, updateAsset, setSelectedAsset, setCreatingTagFor,
+  ])
 
   // Navigation for the asset preview modal
   const selectedIndex = selectedAsset ? filteredAssets.findIndex(a => a.id === selectedAsset.id) : -1
@@ -2649,24 +2690,7 @@ export function GenSpace() {
                   </div>
                 </div>
               )}
-              {filteredAssets.map(asset => (
-                <AssetCard
-                  key={asset.id}
-                  asset={asset}
-                  onDelete={() => handleDelete(asset.id)}
-                  onPlay={() => setSelectedAsset(asset)}
-                  onDragStart={handleDragStart}
-                  onCreateVideo={handleCreateVideo}
-                  onRegenerate={handleRegenerate}
-                  onRetake={handleRetake}
-                  onExtend={handleExtend}
-                  onIcLora={!forceApiGenerations ? handleIcLora : undefined}
-                  onToggleFavorite={() => currentProjectId && toggleFavorite(currentProjectId, asset.id)}
-                  bins={bins}
-                  onTag={(binId) => currentProjectId && updateAsset(currentProjectId, asset.id, { binId: binId ?? undefined })}
-                  onRequestNewTag={() => setCreatingTagFor(asset.id)}
-                />
-              ))}
+              {assetCards}
             </div>
           </div>
         </div>
