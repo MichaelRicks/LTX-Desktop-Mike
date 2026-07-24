@@ -1,10 +1,10 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react'
-import { Play, Pause, Square, SkipBack, SkipForward, ChevronLeft, ChevronRight, Repeat, Video, Music, X } from 'lucide-react'
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react'
+import { Play, Pause, Square, SkipBack, SkipForward, ChevronLeft, ChevronRight, Repeat, Video, Music, X, Check } from 'lucide-react'
 import type { Asset } from '../../types/project-model'
 import { formatTime } from './video-editor-utils'
 import { Tooltip } from '../../components/ui/tooltip'
 import { pathToFileUrl } from '../../lib/file-url'
-import { selectAssets, selectHasSourceAsset } from './editor-selectors'
+import { selectAssets, selectClips, selectHasSourceAsset } from './editor-selectors'
 import { useEditorActions, useEditorStore } from './editor-store'
 import { isDroppedMediaEvent, isNativeAssetDragEvent, readDroppedAsset, readDroppedMediaAsset } from './dropped-media-asset'
 
@@ -64,10 +64,12 @@ export const VideoEditorSourceMonitor = React.forwardRef<VideoEditorSourceMonito
     overwriteSourceEdit,
     pause: pauseTimelinePlayback,
     setHasSourceAsset,
+    setSourceAssetId,
     stopShuttle,
   } = useEditorActions()
   const hasSourceAsset = useEditorStore(selectHasSourceAsset)
   const assets = useEditorStore(selectAssets)
+  const clips = useEditorStore(selectClips)
   const [sourceAsset, setSourceAsset] = useState<Asset | null>(null)
   const [sourceTime, setSourceTime] = useState(0)
   const [sourceIsPlaying, setSourceIsPlaying] = useState(false)
@@ -261,9 +263,22 @@ export const VideoEditorSourceMonitor = React.forwardRef<VideoEditorSourceMonito
     setHasSourceAsset(hasAsset)
   }, [hasSourceAsset, setHasSourceAsset, sourceAsset])
 
+  // Publish which asset is loaded so the Assets panel can keep it ringed. Runs on
+  // every source change (not gated by the boolean above, which misses A->B swaps).
+  useEffect(() => {
+    setSourceAssetId(sourceAsset?.id ?? null)
+  }, [sourceAsset, setSourceAssetId])
+
   useEffect(() => () => {
     setHasSourceAsset(false)
-  }, [setHasSourceAsset])
+    setSourceAssetId(null)
+  }, [setHasSourceAsset, setSourceAssetId])
+
+  // Whether the loaded clip already sits on the active timeline (the "Used" note).
+  const sourceIsUsed = useMemo(
+    () => !!sourceAsset && clips.some(c => c.assetId === sourceAsset.id),
+    [clips, sourceAsset],
+  )
 
   useEffect(() => {
     if (!sourceAsset || sourceAsset.type !== 'video') return
@@ -403,6 +418,12 @@ export const VideoEditorSourceMonitor = React.forwardRef<VideoEditorSourceMonito
       >
         {sourceAsset ? (
           <>
+            {sourceIsUsed && (
+              <div className="absolute top-2 right-2 z-10 flex items-center gap-1 px-2 py-0.5 rounded-md bg-emerald-500/90 text-white text-[10px] font-semibold shadow-lg pointer-events-none">
+                <Check className="h-3 w-3" />
+                Used
+              </div>
+            )}
             {sourceAsset.type === 'video' ? (
               <video
                 ref={sourceVideoRef}

@@ -398,6 +398,10 @@ export function selectHasSourceAsset(state: EditorState): boolean {
   return state.session.ui.hasSourceAsset
 }
 
+export function selectSourceAssetId(state: EditorState): string | null {
+  return state.session.ui.sourceAssetId
+}
+
 export function selectTimelineRenameState(state: EditorState): Pick<EditorState['session']['ui'], 'renamingTimelineId' | 'renameValue' | 'renameSource'> {
   return {
     renamingTimelineId: state.session.ui.renamingTimelineId,

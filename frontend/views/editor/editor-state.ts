@@ -82,6 +82,9 @@ export interface EditorUiState {
   showSourceMonitor: boolean
   showPropertiesPanel: boolean
   showEffectsBrowser: boolean
+  /** Asset currently loaded in the Clip Viewer (source monitor), so the Assets
+   *  panel can keep it highlighted even after the selection moves elsewhere. */
+  sourceAssetId: string | null
   activeFocusArea: 'source' | 'timeline'
   sourceSplitPercent: number
   hasSourceAsset: boolean
@@ -282,6 +285,7 @@ export function createInitialEditorState(
         showSourceMonitor: false,
         showPropertiesPanel: false,
         showEffectsBrowser: false,
+        sourceAssetId: null,
         activeFocusArea: 'timeline',
         sourceSplitPercent: 50,
         hasSourceAsset: false,

@@ -2289,6 +2289,17 @@ export function setHasSourceAsset(state: EditorState, value: boolean): EditorSta
   }))
 }
 
+export function setSourceAssetId(state: EditorState, assetId: string | null): EditorState {
+  if (state.session.ui.sourceAssetId === assetId) return state
+  return updateSession(state, session => ({
+    ...session,
+    ui: {
+      ...session.ui,
+      sourceAssetId: assetId,
+    },
+  }))
+}
+
 export function openImportTimelineModal(state: EditorState): EditorState {
   return updateSession(state, session => ({
     ...session,

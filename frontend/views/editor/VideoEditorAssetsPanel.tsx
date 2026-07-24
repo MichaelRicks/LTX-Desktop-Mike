@@ -4,7 +4,7 @@ import React, {
 import {
   FolderPlus, Folder, Upload, ChevronLeft, ChevronDown, ChevronRight, ChevronUp,
   X, RefreshCw, Loader2, Trash2, Music, Layers, Video, Image,
-  LayoutGrid, List, ArrowUpDown, Pencil,
+  LayoutGrid, List, ArrowUpDown, Pencil, Check,
 } from 'lucide-react'
 import { shallow } from 'zustand/vanilla/shallow'
 import { createAssetBinId, type Asset } from '../../types/project-model'
@@ -15,7 +15,7 @@ import { AssetContextMenu } from './AssetContextMenu'
 import { TakeContextMenu } from './TakeContextMenu'
 import { pathToFileUrl } from '../../lib/file-url'
 import type { AssetListFilters } from './editor-state'
-import { equalAssetBins, selectAssetBins, selectAssets, selectVisibleAssets } from './editor-selectors'
+import { equalAssetBins, selectAssetBins, selectAssets, selectClips, selectSourceAssetId, selectVisibleAssets } from './editor-selectors'
 import { useEditorActions, useEditorStore } from './editor-store'
 import { isDroppedMediaEvent, readDroppedMediaAsset } from './dropped-media-asset'
 
@@ -50,6 +50,15 @@ export const VideoEditorAssetsPanel = forwardRef<VideoEditorAssetsPanelHandle, V
   } = props
   const actions = useEditorActions()
   const assets = useEditorStore(selectAssets)
+  // The clip loaded in the Clip Viewer stays ringed here; assets already on the
+  // active timeline get a "Used" badge (both CapCut-style affordances).
+  const sourceAssetId = useEditorStore(selectSourceAssetId)
+  const clips = useEditorStore(selectClips)
+  const usedAssetIds = useMemo(() => {
+    const used = new Set<string>()
+    for (const clip of clips) if (clip.assetId) used.add(clip.assetId)
+    return used
+  }, [clips])
 
   const [takesViewAssetId, setTakesViewAssetId] = useState<string | null>(null)
   const [creatingBin, setCreatingBin] = useState(false)
@@ -776,9 +785,11 @@ export const VideoEditorAssetsPanel = forwardRef<VideoEditorAssetsPanelHandle, V
                     data-asset-card
                     data-asset-id={asset.id}
                     className={`relative group cursor-pointer rounded-lg overflow-hidden border-2 transition-all ${
-                      selectedAssetIds.has(asset.id)
-                        ? 'border-blue-500 ring-2 ring-blue-500/40 shadow-lg shadow-blue-500/20'
-                        : 'border-zinc-800 hover:border-zinc-600'
+                      asset.id === sourceAssetId
+                        ? 'border-emerald-400 ring-2 ring-emerald-400/50 shadow-lg shadow-emerald-500/20'
+                        : selectedAssetIds.has(asset.id)
+                          ? 'border-blue-500 ring-2 ring-blue-500/40 shadow-lg shadow-blue-500/20'
+                          : 'border-zinc-800 hover:border-zinc-600'
                     }`}
                     draggable
                     onDragStart={(e) => {
@@ -867,6 +878,16 @@ export const VideoEditorAssetsPanel = forwardRef<VideoEditorAssetsPanelHandle, V
                       ) : (
                         <div className="w-full aspect-video bg-zinc-800" />
                       )
+                    )}
+                    {usedAssetIds.has(asset.id) && (
+                      // Sits bottom-right; lifts above the take-nav pill (also bottom-right)
+                      // when this asset has multiple takes, so the two never overlap.
+                      <div className={`absolute right-1 z-10 flex items-center gap-0.5 px-1 py-0.5 rounded bg-emerald-500/90 text-white text-[8px] font-semibold leading-none shadow pointer-events-none ${
+                        asset.takes && asset.takes.length > 1 ? 'bottom-7' : 'bottom-1'
+                      }`}>
+                        <Check className="h-2 w-2" />
+                        Used
+                      </div>
                     )}
                     {selectedAssetIds.has(asset.id) && <div className="absolute inset-0 bg-blue-600/25 pointer-events-none z-[1]" />}
                     {!selectedAssetIds.has(asset.id) && (
