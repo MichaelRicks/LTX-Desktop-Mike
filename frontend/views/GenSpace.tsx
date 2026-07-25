@@ -203,9 +203,10 @@ function AssetCard({
         </button>
       )}
       
-      {/* Hover overlay */}
+      {/* Hover overlay. Held below full opacity so the controls read as a gentle
+          layer over the media rather than a harsh bright bar. */}
       <div className={`absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-black/30 transition-opacity duration-200 ${
-        isHovered ? 'opacity-100' : 'opacity-0'
+        isHovered ? 'opacity-75' : 'opacity-0'
       }`}>
         {/* Top buttons */}
         <div className="absolute top-2 left-2 right-2 flex items-center justify-between flex-wrap gap-y-1.5">

@@ -91,7 +91,13 @@ export async function saveVideoFrame(
     return
   }
   const srcPath = fileUrlToPath(pathOrUrl)
-  const t = Number.isFinite(videoEl.currentTime) ? Math.max(0, videoEl.currentTime) : 0
+  const duration = Number.isFinite(videoEl.duration) && videoEl.duration > 0 ? videoEl.duration : 0
+  let t = Number.isFinite(videoEl.currentTime) ? Math.max(0, videoEl.currentTime) : 0
+  // A video paused/ended at its exact duration has no frame to decode AT that
+  // timestamp — the accurate seek lands past the final frame and ffmpeg writes
+  // nothing. Previews autoplay to the end, so this was failing almost every time.
+  // Back off ~one frame from the end so there's always a real frame to grab.
+  if (duration > 0 && t > duration - 0.05) t = Math.max(0, duration - 0.05)
   const stem = `${toStem(suggestedName, srcPath)}_frame_${t.toFixed(2).replace('.', '_')}`
   try {
     const dest = await api.showSaveDialog({

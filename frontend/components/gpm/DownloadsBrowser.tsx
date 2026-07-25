@@ -7,7 +7,7 @@
  * there's no directory-handle permission dance — it's the real filesystem.
  */
 import { useEffect, useRef, useState } from 'react'
-import { ChevronLeft, ChevronsDownUp, FolderInput, FolderPlus, FolderOpen, GripVertical, Pencil, RefreshCw, RotateCcw, Send, Trash2, Upload, X } from 'lucide-react'
+import { ChevronLeft, ChevronsDownUp, FolderInput, FolderPlus, FolderOpen, GripVertical, Pencil, RefreshCw, Send, Trash2, Upload, X } from 'lucide-react'
 import { pathToFileUrl } from '../../lib/file-url'
 import { useProjects } from '../../contexts/ProjectContext'
 import { MediaThumb } from './MediaThumb'
@@ -57,7 +57,6 @@ function Dock({ onClose }: { onClose: () => void }) {
   const [dropLine, setDropLine] = useState<{ target: string; before: boolean } | null>(null)
   const [typeFilter, setTypeFilter] = useState<TypeFilter>('all')
   const [rootPath, setRootPath] = useState('')
-  const [rootIsDefault, setRootIsDefault] = useState(true)
   const dragFolder = useRef<string | null>(null)
   const flash = (m: string) => { setToast(m); setTimeout(() => setToast(null), 1600) }
 
@@ -70,9 +69,21 @@ function Dock({ onClose }: { onClose: () => void }) {
     setFiles(d.files)
     setOpenFolders((prev) => new Set([...prev].filter((f) => ordered.includes(f))))
     const r = await api.gpmLibGetRoot()
-    setRootPath(r.root); setRootIsDefault(r.isDefault)
+    setRootPath(r.root)
   }
   useEffect(() => { void refresh() }, [])
+
+  // Auto-refresh when the app window regains focus — e.g. after the native Save
+  // dialog closes from a "Save video"/"Save frame" into this folder, so newly
+  // saved files appear right away without hitting Refresh. A ref keeps the
+  // listener pinned to the latest refresh without re-subscribing each render.
+  const refreshRef = useRef(refresh)
+  refreshRef.current = refresh
+  useEffect(() => {
+    const onFocus = () => void refreshRef.current()
+    window.addEventListener('focus', onFocus)
+    return () => window.removeEventListener('focus', onFocus)
+  }, [])
 
   const chooseFolder = async () => {
     if (!api) return
@@ -80,13 +91,6 @@ function Dock({ onClose }: { onClose: () => void }) {
     if (!r.root) return
     setOpenFolders(new Set())
     flash(`Library set to ${r.root}`)
-    await refresh()
-  }
-  const resetFolder = async () => {
-    if (!api) return
-    await api.gpmLibResetRoot()
-    setOpenFolders(new Set())
-    flash('Library reset to default')
     await refresh()
   }
 
@@ -194,9 +198,6 @@ function Dock({ onClose }: { onClose: () => void }) {
 
       <div className="flex items-center gap-2 px-3 py-2 shrink-0" style={{ borderBottom: `1px solid ${C.border}` }}>
         <span className="flex-1 text-[10px] truncate" title={rootPath} style={{ color: C.faint }}>{rootPath}</span>
-        {!rootIsDefault && (
-          <button onClick={() => void resetFolder()} title="Reset to default Downloads folder" className="h-6 w-6 flex items-center justify-center rounded-md shrink-0" style={{ color: C.muted }}><RotateCcw size={12} /></button>
-        )}
         <button onClick={() => void chooseFolder()} title="Choose a different folder for the Studio Assets panel" className="flex items-center gap-1 rounded-md px-2 py-1 text-[10px] font-medium shrink-0" style={{ background: C.elev, color: C.text, border: `1px solid ${C.border}` }}>
           <FolderInput size={11} />Set Folder
         </button>
