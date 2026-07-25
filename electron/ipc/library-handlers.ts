@@ -29,6 +29,31 @@ function libRoot(): string {
   return root
 }
 
+// Watch the library root so the Studio Assets panel refreshes the moment files
+// are added/removed on disk (e.g. a "Save video" into the folder), instead of
+// only on manual refresh. Debounced because fs.watch fires several events per
+// operation; recursive so changes inside subfolders (Inbox, etc.) are seen.
+let libWatcher: fs.FSWatcher | null = null
+let watchDebounce: ReturnType<typeof setTimeout> | null = null
+
+function notifyLibChanged(): void {
+  if (watchDebounce) clearTimeout(watchDebounce)
+  watchDebounce = setTimeout(() => {
+    getMainWindow()?.webContents.send('gpm-lib-changed')
+  }, 250)
+}
+
+function startLibWatch(): void {
+  if (libWatcher) { libWatcher.close(); libWatcher = null }
+  try {
+    libWatcher = fs.watch(libRoot(), { recursive: true }, () => notifyLibChanged())
+  } catch (e) {
+    // recursive watch is unsupported on some platforms (e.g. Linux) — the panel
+    // still works via manual Refresh; just no live updates there.
+    logger.warn(`gpm library watch failed: ${e}`)
+  }
+}
+
 function safeName(name: string): string {
   if (!name || name.includes('/') || name.includes('\\') || name.includes('..')) {
     throw new Error(`Invalid name: ${name}`)
@@ -148,11 +173,16 @@ export function registerLibraryHandlers(): void {
     const chosen = result.filePaths[0]
     setLibraryRootOverride(chosen)
     fs.mkdirSync(chosen, { recursive: true })
+    startLibWatch() // re-point the watcher at the newly chosen folder
     return { root: chosen }
   })
 
   handle('gpmLibResetRoot', () => {
     setLibraryRootOverride(null)
-    return { root: libRoot() }
+    const root = libRoot()
+    startLibWatch()
+    return { root }
   })
+
+  startLibWatch()
 }

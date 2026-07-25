@@ -73,16 +73,15 @@ function Dock({ onClose }: { onClose: () => void }) {
   }
   useEffect(() => { void refresh() }, [])
 
-  // Auto-refresh when the app window regains focus — e.g. after the native Save
-  // dialog closes from a "Save video"/"Save frame" into this folder, so newly
-  // saved files appear right away without hitting Refresh. A ref keeps the
-  // listener pinned to the latest refresh without re-subscribing each render.
+  // Live-refresh from a filesystem watch on the library folder: files saved into
+  // it (e.g. "Save video"/"Save frame") appear immediately, and only on real
+  // disk changes — no re-listing on every window focus. A ref keeps the
+  // subscription pinned to the latest refresh without re-subscribing each render.
   const refreshRef = useRef(refresh)
   refreshRef.current = refresh
   useEffect(() => {
-    const onFocus = () => void refreshRef.current()
-    window.addEventListener('focus', onFocus)
-    return () => window.removeEventListener('focus', onFocus)
+    const unsubscribe = api?.onGpmLibChanged?.(() => void refreshRef.current())
+    return () => unsubscribe?.()
   }, [])
 
   const chooseFolder = async () => {

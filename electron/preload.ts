@@ -32,6 +32,14 @@ api.onMenuAction = (cb: (action: string) => void) => {
   }
 }
 
+api.onGpmLibChanged = (cb: () => void) => {
+  const listener = () => cb()
+  ipcRenderer.on('gpm-lib-changed', listener)
+  return () => {
+    ipcRenderer.removeListener('gpm-lib-changed', listener)
+  }
+}
+
 api.getPathForFile = (file: File) => webUtils.getPathForFile(file)
 
 api.platform = process.platform

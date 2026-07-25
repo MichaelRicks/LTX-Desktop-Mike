@@ -384,6 +384,8 @@ export type ElectronAPI = InvokeAPI & {
   removePythonSetupProgress: () => void
   onBackendHealthStatus: (cb: (data: BackendHealthStatus) => void) => (() => void)
   onMenuAction: (cb: (action: string) => void) => (() => void)
+  /** Fires (debounced) when the Studio Assets library folder changes on disk. */
+  onGpmLibChanged: (cb: () => void) => (() => void)
   getPathForFile: (file: File) => string
   platform: string
 }
