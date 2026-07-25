@@ -46,6 +46,7 @@ class QwenMultiAngleHandler(StateHandlerBase):
 
         source_image = _decode_data_url(req.image_data_url)
         source_image = _model_resize(source_image)
+        extra_images = [_model_resize(_decode_data_url(u)) for u in req.extra_image_data_urls]
 
         seed = req.seed
         if req.randomize_seed:
@@ -68,6 +69,7 @@ class QwenMultiAngleHandler(StateHandlerBase):
 
             result_image = pipeline_state.pipeline.generate(
                 image=source_image,
+                extra_images=extra_images,
                 azimuth_deg=req.azimuth_deg,
                 elevation_deg=req.elevation_deg,
                 zoom=req.zoom,

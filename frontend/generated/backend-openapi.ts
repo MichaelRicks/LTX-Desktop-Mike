@@ -1797,6 +1797,8 @@ export interface components {
             azimuth_deg: number;
             /** Elevation Deg */
             elevation_deg: number;
+            /** Extra Image Data Urls */
+            extra_image_data_urls?: string[];
             /**
              * Extra Prompt
              * @default
@@ -1907,7 +1909,7 @@ export interface components {
             activeLtxModelId?: ("ltx-2.3-22b-distilled-1.1" | "ltx-2.3-22b-distilled") | null;
             /**
              * Diffusionstagecacheenabled
-             * @default false
+             * @default true
              */
             diffusionStageCacheEnabled: boolean;
             /**

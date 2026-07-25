@@ -107,6 +107,7 @@ class GGUFQwenMultiAnglePipeline:
         self,
         *,
         image: "PILImage",
+        extra_images: "list[PILImage] | None" = None,
         azimuth_deg: float,
         elevation_deg: float,
         zoom: float,
@@ -147,7 +148,9 @@ class GGUFQwenMultiAnglePipeline:
         F.scaled_dot_product_attention = torch._C._nn.scaled_dot_product_attention  # type: ignore[assignment]
         try:
             result = self._pipe(  # type: ignore[reportCallIssue]
-                image=image,
+                # Plus pipeline (2511) accepts a list; subject first, then the
+                # extra references (prop/location) it composes from.
+                image=[image, *extra_images] if extra_images else image,
                 prompt=prompt,
                 negative_prompt=" ",
                 true_cfg_scale=cfg,

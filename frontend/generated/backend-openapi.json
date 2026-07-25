@@ -3070,6 +3070,13 @@
             "title": "Elevation Deg",
             "type": "number"
           },
+          "extra_image_data_urls": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Extra Image Data Urls",
+            "type": "array"
+          },
           "extra_prompt": {
             "default": "",
             "title": "Extra Prompt",
@@ -3286,7 +3293,7 @@
             "title": "Activeltxmodelid"
           },
           "diffusionStageCacheEnabled": {
-            "default": false,
+            "default": true,
             "title": "Diffusionstagecacheenabled",
             "type": "boolean"
           },

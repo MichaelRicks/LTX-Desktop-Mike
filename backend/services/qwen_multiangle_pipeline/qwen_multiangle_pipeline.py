@@ -32,6 +32,7 @@ class QwenMultiAnglePipeline(Protocol):
         self,
         *,
         image: "PILImage",
+        extra_images: "list[PILImage] | None" = None,
         azimuth_deg: float,
         elevation_deg: float,
         zoom: float,

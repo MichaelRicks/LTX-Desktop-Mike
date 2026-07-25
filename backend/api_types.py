@@ -506,6 +506,10 @@ class QwenMultiAngleGenerateRequest(BaseModel):
     model_config = ConfigDict(strict=True)
 
     image_data_url: str
+    # Compose mode: additional reference images (prop, location, wardrobe) fed to
+    # Qwen alongside the subject. image_data_url is the subject being re-angled;
+    # these are extra context the model composes from. Empty = classic single-image.
+    extra_image_data_urls: list[str] = Field(default_factory=list)
     azimuth_deg: float
     elevation_deg: float
     zoom: float

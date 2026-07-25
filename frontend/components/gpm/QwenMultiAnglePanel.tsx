@@ -16,6 +16,10 @@ const ELEVATION_SHORT_LABELS = ['Low', 'Eye', 'Elevated', 'High']
 
 const SAVE_FOLDER_KEY = 'gpm_qwen_angle_save_folder'
 
+// Qwen-Image-Edit-2511 accepts ~3 input images total; the subject is one, so
+// cap extra references at 2. Also keeps the panel's in-memory state light.
+const MAX_EXTRA_REFS = 2
+
 /* Theme tokens — matches PromptManagerPro.tsx's C object exactly. */
 const C = {
   panel: '#0e0e12', card: '#16161b', elev: '#1c1c22',
@@ -40,6 +44,7 @@ export interface ResultEntry {
    (busy, save status) stay local — resetting those on remount is fine. */
 export interface QwenAngleState {
   source: { name: string; dataUrl: string } | null
+  extraRefs: { name: string; dataUrl: string }[]
   view: 'dial' | '3d'
   azDeg: number
   elDeg: number
@@ -54,6 +59,7 @@ export interface QwenAngleState {
 
 export const DEFAULT_QWEN_ANGLE_STATE: QwenAngleState = {
   source: null,
+  extraRefs: [],
   view: '3d',
   azDeg: 135,
   elDeg: 0,
@@ -135,8 +141,9 @@ export function QwenMultiAnglePanel({ state, setState, onUse, flash }: {
   onUse: (img: GpmImage) => void
   flash: (m: string) => void
 }) {
-  const { source, view, azDeg, elDeg, znIdx, extraPrompt, seed, randomizeSeed, useLightning, history, histIdx } = state
+  const { source, extraRefs, view, azDeg, elDeg, znIdx, extraPrompt, seed, randomizeSeed, useLightning, history, histIdx } = state
   const setSource = makeFieldSetter(setState, 'source')
+  const setExtraRefs = makeFieldSetter(setState, 'extraRefs')
   const setView = makeFieldSetter(setState, 'view')
   const setAzDeg = makeFieldSetter(setState, 'azDeg')
   const setElDeg = makeFieldSetter(setState, 'elDeg')
@@ -153,6 +160,7 @@ export function QwenMultiAnglePanel({ state, setState, onUse, flash }: {
   const [saveStatus, setSaveStatus] = useState<string | null>(null)
 
   const fileRef = useRef<HTMLInputElement | null>(null)
+  const extraFileRef = useRef<HTMLInputElement | null>(null)
   const backCanvasRef = useRef<HTMLCanvasElement | null>(null)
   const frontCanvasRef = useRef<HTMLCanvasElement | null>(null)
   const dragState = useRef<{ lastX: number; lastY: number } | null>(null)
@@ -190,6 +198,39 @@ export function QwenMultiAnglePanel({ state, setState, onUse, flash }: {
     const file = e.target.files?.[0]; e.target.value = ''
     if (file) setSource({ name: file.name, dataUrl: await readDataUrl(file) })
   }
+
+  /* ---- extra reference images (prop, location, wardrobe) ----
+     Mirrors onSourceDrop's extraction but appends to the extraRefs list
+     instead of replacing the single subject. Kept as a separate extractor so
+     the working single-source path is untouched. */
+  const extractRefFromDrag = async (e: React.DragEvent): Promise<{ name: string; dataUrl: string } | null> => {
+    const gpm = e.dataTransfer.getData(GPM_IMAGE_DND_TYPE)
+    if (gpm) { const d = JSON.parse(gpm) as GpmDndImage; return { name: d.name, dataUrl: d.dataUrl } }
+    const lib = e.dataTransfer.getData(FILE_DND)
+    if (lib) {
+      const d = JSON.parse(lib) as LibFile
+      if (!d.isVideo && !d.isAudio) {
+        const file = await window.electronAPI?.readLocalFile?.({ filePath: d.path })
+        if (file) return { name: d.name, dataUrl: `data:${file.mimeType};base64,${file.data}` }
+      }
+      return null
+    }
+    const file = e.dataTransfer.files?.[0]
+    if (file?.type.startsWith('image/')) return { name: file.name, dataUrl: await readDataUrl(file) }
+    return null
+  }
+  const onExtraDrop = async (e: React.DragEvent) => {
+    e.preventDefault()
+    const ref = await extractRefFromDrag(e)
+    if (ref) setExtraRefs((rs) => (rs.length >= MAX_EXTRA_REFS ? rs : [...rs, ref]))
+  }
+  const onExtraPick = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files; e.target.value = ''
+    if (!files?.length) return
+    const refs = await Promise.all(Array.from(files).map(async (f) => ({ name: f.name, dataUrl: await readDataUrl(f) })))
+    setExtraRefs((rs) => [...rs, ...refs].slice(0, MAX_EXTRA_REFS))
+  }
+  const removeExtra = (i: number) => setExtraRefs((rs) => rs.filter((_, idx) => idx !== i))
 
   /* ---- 3D canvas draw ---- */
   useEffect(() => {
@@ -286,6 +327,7 @@ export function QwenMultiAnglePanel({ state, setState, onUse, flash }: {
     try {
       const result = await ApiClient.qwenMultiAngleGenerate({
         image_data_url: source.dataUrl,
+        extra_image_data_urls: extraRefs.map((r) => r.dataUrl),
         azimuth_deg: azDeg,
         elevation_deg: elDeg,
         zoom: DISTANCE_BUCKETS[znIdx].zoom,
@@ -396,6 +438,35 @@ export function QwenMultiAnglePanel({ state, setState, onUse, flash }: {
           </div>
           <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={(e) => void onSourcePick(e)} />
 
+          {/* extra reference images — prop, location, wardrobe. Fed to Qwen
+             alongside the subject (above) so it composes from full-fidelity
+             separate refs instead of one crammed sheet. */}
+          <div className="mt-2">
+            <div className="text-[10px] mb-1" style={{ color: C.muted }}>References — prop, location, wardrobe · {extraRefs.length}/{MAX_EXTRA_REFS}</div>
+            <div className="flex flex-wrap gap-1.5">
+              {extraRefs.map((r, i) => (
+                <div key={i} className="relative rounded overflow-hidden" style={{ width: 48, height: 48, border: `1px solid ${C.border}` }} title={r.name}>
+                  <img src={r.dataUrl} alt={r.name} style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
+                  <button
+                    onClick={() => removeExtra(i)}
+                    className="absolute top-0 right-0 h-4 w-4 flex items-center justify-center"
+                    style={{ background: 'rgba(0,0,0,0.6)', color: '#fff' }} title="Remove"
+                  ><X size={9} /></button>
+                </div>
+              ))}
+              {extraRefs.length < MAX_EXTRA_REFS && (
+                <div
+                  onDragOver={(e) => e.preventDefault()} onDrop={(e) => void onExtraDrop(e)}
+                  onClick={() => extraFileRef.current?.click()}
+                  className="flex items-center justify-center rounded cursor-pointer"
+                  style={{ width: 48, height: 48, border: `1px dashed ${C.borderLt}`, color: C.faint }}
+                  title="Add reference image (prop, location, wardrobe)"
+                ><Upload size={14} /></div>
+              )}
+            </div>
+          </div>
+          <input ref={extraFileRef} type="file" accept="image/*" multiple className="hidden" onChange={(e) => void onExtraPick(e)} />
+
           {/* extra prompt — sits under the preview image to fill the space
              left over now that the image is a short 16:9 box. */}
           <div className="relative mt-2">
@@ -473,7 +544,7 @@ export function QwenMultiAnglePanel({ state, setState, onUse, flash }: {
           <div className="flex gap-1 mb-2">
             {DISTANCE_BUCKETS.map((b, i) => (
               <button
-                key={b.zoom} onClick={() => setZnIdx(i)}
+                key={b.zoom} onClick={() => { setZnIdx(i); setExtraPrompt((p) => p.replace(/,?\s*extreme close-up/ig, '').trim()) }}
                 className="flex-1 text-[10px] py-1.5 rounded"
                 style={{ background: i === znIdx && !isEcu ? C.blue : C.card, color: i === znIdx && !isEcu ? '#fff' : C.muted, border: `1px solid ${i === znIdx && !isEcu ? C.blue : C.border}` }}
               >{b.phrase}</button>

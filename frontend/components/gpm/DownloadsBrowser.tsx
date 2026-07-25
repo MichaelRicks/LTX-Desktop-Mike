@@ -21,7 +21,7 @@ const C = {
   blue: '#1f8fff', green: '#28c76f',
 }
 
-export interface LibFile { folder: string; name: string; path: string; isVideo: boolean; isAudio: boolean }
+export interface LibFile { folder: string; name: string; path: string; isVideo: boolean; isAudio: boolean; mtimeMs: number }
 type TypeFilter = 'all' | 'image' | 'video' | 'audio'
 const ORDER_KEY = 'gpm_dl_order'
 export const FILE_DND = 'application/x-gpm-dl-file'
@@ -224,7 +224,10 @@ function Dock({ onClose }: { onClose: () => void }) {
       {/* Folders — accordion: click a folder to expand its files inline. */}
       <div className="flex-1 overflow-y-auto">
         {folders.map((f) => {
-          const folderFiles = filterFiles(files.filter((x) => x.folder === f))
+          // Newest first: most-recently-saved/added files appear at the top of
+          // each folder instead of the bottom (mtime desc), so fresh saves don't
+          // require scrolling past the whole folder to find.
+          const folderFiles = filterFiles(files.filter((x) => x.folder === f)).sort((a, b) => b.mtimeMs - a.mtimeMs)
           const isOpen = openFolders.has(f)
           return (
             <div

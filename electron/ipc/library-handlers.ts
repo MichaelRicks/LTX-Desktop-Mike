@@ -86,14 +86,15 @@ export function registerLibraryHandlers(): void {
       fs.mkdirSync(path.join(root, 'Inbox'), { recursive: true })
       folders = ['Inbox']
     }
-    const files: Array<{ folder: string; name: string; path: string; isVideo: boolean; isAudio: boolean }> = []
+    const files: Array<{ folder: string; name: string; path: string; isVideo: boolean; isAudio: boolean; mtimeMs: number }> = []
     for (const folder of folders) {
       const fp = path.join(root, folder)
       for (const entry of fs.readdirSync(fp, { withFileTypes: true })) {
         if (!entry.isFile()) continue
         const ext = path.extname(entry.name).toLowerCase()
         if (!MEDIA_EXT.has(ext)) continue
-        files.push({ folder, name: entry.name, path: path.join(fp, entry.name), isVideo: VIDEO_EXT.has(ext), isAudio: AUDIO_EXT.has(ext) })
+        const full = path.join(fp, entry.name)
+        files.push({ folder, name: entry.name, path: full, isVideo: VIDEO_EXT.has(ext), isAudio: AUDIO_EXT.has(ext), mtimeMs: fs.statSync(full).mtimeMs })
       }
     }
     return { root, folders, files }
