@@ -37,10 +37,15 @@ export function registerVideoProcessingHandlers(): void {
 
   // "Continue as new shot" — extract the clip's last frame into Continuations to
   // seed an i2v continuation, and report the source dims/fps so the next gen matches.
-  handle('continuationExtractLastFrame', async ({ videoPath }) => {
+  handle('continuationExtractLastFrame', async ({ videoPath, seekTime }) => {
     const dir = ensureLibFolder(CONTINUATIONS_FOLDER)
     const framePath = path.join(dir, `continuation_frame_${stamp()}.png`)
-    extractLastFrameToFile({ videoPath, outputPath: framePath })
+    if (seekTime != null) {
+      // Scrubbed "Continue from this frame": grab the exact frame (accurate seek).
+      extractVideoFrameToFile({ videoPath, seekTime, outputPath: framePath, accurate: true, timeoutMs: 15000 })
+    } else {
+      extractLastFrameToFile({ videoPath, outputPath: framePath })
+    }
     const { width, height } = getVideoDimensions(videoPath)
     const ffmpegPath = findFfmpegPath()
     const fps = ffmpegPath ? getVideoFps(ffmpegPath, videoPath) : 24

@@ -1227,6 +1227,7 @@ export function GenSpace() {
   const [inputAudio, setInputAudio] = useState<string | null>(null)
   const [localError, setLocalError] = useState<GenerationError | null>(null)
   const [selectedAsset, setSelectedAsset] = useState<Asset | null>(null)
+  const enlargedVideoRef = useRef<HTMLVideoElement | null>(null)
   const [copiedPrompt, setCopiedPrompt] = useState(false)
   // Live render stopwatch: elapsedMs ticks while generating and freezes on
   // completion; generationStartRef feeds the render time stored on the asset.
@@ -2387,12 +2388,12 @@ export function GenSpace() {
   // "Continue as new shot": extract the clip's last frame, seed a fresh i2v gen
   // with it, and match the source's geometry/fps. The user tweaks the prompt and
   // hits Generate; the completion effect above trims + saves to Continuations.
-  const handleContinue = useCallback(async (videoAsset: Asset) => {
+  const handleContinue = useCallback(async (videoAsset: Asset, seekTime?: number) => {
     if (videoAsset.type !== 'video') return
     const api = window.electronAPI
     if (!api) return
     try {
-      const res = await api.continuationExtractLastFrame({ videoPath: videoAsset.path })
+      const res = await api.continuationExtractLastFrame({ videoPath: videoAsset.path, seekTime })
       setMode('video')
       setInputImage(res.framePath)
       setPrompt(videoAsset.prompt || '')
@@ -2997,6 +2998,7 @@ export function GenSpace() {
             {selectedAsset.type === 'video' ? (
               <video
                 key={selectedAsset.id}
+                ref={enlargedVideoRef}
                 src={pathToFileUrl(selectedAsset.path)}
                 controls
                 autoPlay
@@ -3016,6 +3018,26 @@ export function GenSpace() {
                 alt=""
                 className="w-full rounded-xl object-contain max-h-[75vh]"
               />
+            )}
+            {selectedAsset.type === 'video' && (
+              <div className="mt-3 flex justify-center">
+                <button
+                  onClick={() => {
+                    const asset = selectedAsset
+                    if (!asset) return
+                    // Grab the frame currently shown (scrub position); the modal
+                    // <video> has native controls so the user pauses where they want.
+                    const t = enlargedVideoRef.current?.currentTime
+                    setSelectedAsset(null)
+                    void handleContinue(asset, t)
+                  }}
+                  title="Seed a new clip from the exact frame shown here"
+                  className="px-3 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-sm font-medium flex items-center gap-2 transition-colors"
+                >
+                  <Clapperboard className="h-4 w-4" />
+                  Continue from this frame
+                </button>
+              </div>
             )}
             <div className="mt-4 text-center">
               <div className="inline-flex items-start gap-2 max-w-full">

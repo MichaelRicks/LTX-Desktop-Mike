@@ -318,7 +318,9 @@ export const electronAPISchemas = {
   // library folder to seed an i2v continuation; returns source dims/fps so the
   // next gen matches (clips must cut together cleanly on the timeline).
   continuationExtractLastFrame: {
-    input: z.object({ videoPath: z.string() }),
+    // seekTime present = "Continue from this frame" (enlarged-player scrub);
+    // absent = the clip's last frame.
+    input: z.object({ videoPath: z.string(), seekTime: z.number().optional() }),
     output: z.object({ framePath: z.string(), width: z.number(), height: z.number(), fps: z.number() }),
   },
   // Drop the duplicate lead frame from a freshly generated continuation and save
