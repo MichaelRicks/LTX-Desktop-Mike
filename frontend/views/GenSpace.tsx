@@ -3,7 +3,7 @@ import {
   Trash2, Download, Image, Video, X,
   Heart, Film, Volume2, VolumeX, Sparkles,
   Clock, Monitor, ChevronUp, Scissors, Music,
-  ChevronLeft, ChevronRight, Copy, Check, Tag, Eraser, Square, MoveHorizontal, RefreshCw
+  ChevronLeft, ChevronRight, Copy, Check, Tag, Eraser, Square, MoveHorizontal, RefreshCw, Clapperboard
 } from 'lucide-react'
 import { useProjects } from '../contexts/ProjectContext'
 import type { GenSpaceRetakeSource } from '../contexts/ProjectContext'
@@ -83,6 +83,7 @@ function AssetCard({
   onRegenerate,
   onRetake,
   onExtend,
+  onContinue,
   onIcLora,
   onToggleFavorite,
   bins,
@@ -97,6 +98,7 @@ function AssetCard({
   onRegenerate?: (asset: Asset) => void
   onRetake?: (asset: Asset) => void
   onExtend?: (asset: Asset) => void
+  onContinue?: (asset: Asset) => void
   onIcLora?: (asset: Asset) => void
   onToggleFavorite?: () => void
   bins: Record<string, string>
@@ -213,7 +215,7 @@ function AssetCard({
           {/* Left actions: originals stay on row 1; Regenerate sits on its own
               row below so it can't push IC-LoRA off a narrow card. */}
           <div className="flex flex-col items-start gap-1.5">
-          <div className="flex items-center gap-1.5">
+          <div className="flex items-center gap-1.5 flex-wrap">
             <button
               onClick={(e) => { e.stopPropagation(); onToggleFavorite?.() }}
               className={`p-1.5 rounded-lg backdrop-blur-md transition-colors ${
@@ -250,6 +252,16 @@ function AssetCard({
                   >
                     <MoveHorizontal className="h-3 w-3" />
                     Extend
+                  </button>
+                )}
+                {onContinue && (
+                  <button
+                    onClick={(e) => { e.stopPropagation(); onContinue(asset) }}
+                    title="Continue as a new clip — seeds a fresh generation from this shot's last frame"
+                    className="px-2.5 py-1.5 rounded-lg bg-black/40 backdrop-blur-md text-white hover:bg-black/60 transition-colors flex items-center gap-1.5 text-xs font-medium whitespace-nowrap"
+                  >
+                    <Clapperboard className="h-3 w-3" />
+                    Continue
                   </button>
                 )}
                 {onIcLora && (
@@ -1148,6 +1160,20 @@ const gallerySizeClasses: Record<GallerySize, string> = {
   large: 'grid-cols-[repeat(auto-fill,minmax(380px,1fr))]',
 }
 
+// Map a source clip's geometry to Gen Space's discrete video settings so a
+// "Continue as new shot" continuation renders at a matching size/fps — the
+// separate clips must cut together cleanly on the timeline.
+function continuationAspectRatio(width: number, height: number): string {
+  const r = width / height
+  const opts: Array<[string, number]> = [['16:9', 16 / 9], ['9:16', 9 / 16], ['21:9', 21 / 9]]
+  return opts.reduce((best, o) => (Math.abs(o[1] - r) < Math.abs(best[1] - r) ? o : best))[0]
+}
+function continuationResolution(shortSide: number): string {
+  if (shortSide <= 560) return '540p'
+  if (shortSide <= 760) return '720p'
+  return '1080p'
+}
+
 const DEFAULT_VIDEO_SETTINGS = {
   model: 'fast',
   duration: 5,
@@ -1238,6 +1264,10 @@ export function GenSpace() {
     }
   } | null>(null)
   const [settings, setSettings] = useState(() => ({ ...DEFAULT_VIDEO_SETTINGS }))
+  // "Continue as new shot": pending = the next completed gen is a continuation
+  // whose duplicate lead frame should be trimmed; processed dedupes per output.
+  const continuationPendingRef = useRef(false)
+  const continuationProcessedRef = useRef<string | null>(null)
   // Memoized: this fed sanitizeVideoSettings -> handleRegenerate -> the gallery's
   // useMemo, so rebuilding it every render silently defeated that memo and made
   // every prompt keystroke re-render all thumbnails.
@@ -1770,6 +1800,28 @@ export function GenSpace() {
       }
     })()
   }, [videoPath, currentProjectId, isGenerating, sanitizeVideoSettings, settings, inputImage, inputAudio, lastPrompt, addAsset, reset, selectedLoras, isLocalMode, appSettings.modelsDir])
+
+  // "Continue as new shot": once the seeded continuation finishes, drop the
+  // duplicate lead frame (a copy of the source's last frame the i2v conditioning
+  // reproduces) and save the clean clip into the Continuations library folder,
+  // ready to butt-join the source with no stutter. Independent of the persist
+  // effect above; guarded by refs so it runs once per output.
+  useEffect(() => {
+    if (!videoPath || !continuationPendingRef.current) return
+    if (continuationProcessedRef.current === videoPath) return
+    continuationProcessedRef.current = videoPath
+    continuationPendingRef.current = false
+    const api = window.electronAPI
+    if (!api) return
+    const src = videoPath
+    void (async () => {
+      try {
+        await api.continuationSaveTrimmed({ videoPath: src })
+      } catch (err) {
+        logger.error(`Continuation trim/save failed: ${err}`)
+      }
+    })()
+  }, [videoPath])
 
   // When retake completes, add as take or new asset
   useEffect(() => {
@@ -2332,6 +2384,31 @@ export function GenSpace() {
     setExtendPanelKey((prev) => prev + 1)
   }, [])
 
+  // "Continue as new shot": extract the clip's last frame, seed a fresh i2v gen
+  // with it, and match the source's geometry/fps. The user tweaks the prompt and
+  // hits Generate; the completion effect above trims + saves to Continuations.
+  const handleContinue = useCallback(async (videoAsset: Asset) => {
+    if (videoAsset.type !== 'video') return
+    const api = window.electronAPI
+    if (!api) return
+    try {
+      const res = await api.continuationExtractLastFrame({ videoPath: videoAsset.path })
+      setMode('video')
+      setInputImage(res.framePath)
+      setPrompt(videoAsset.prompt || '')
+      setLastPrompt(videoAsset.prompt || '')
+      setSettings((prev) => ({
+        ...prev,
+        aspectRatio: continuationAspectRatio(res.width, res.height),
+        videoResolution: continuationResolution(Math.min(res.width, res.height)),
+        fps: Math.round(res.fps) || prev.fps,
+      }))
+      continuationPendingRef.current = true
+    } catch (err) {
+      logger.error(`Continue-from-last-frame setup failed: ${err}`)
+    }
+  }, [])
+
   const handleIcLora = useCallback((videoAsset: Asset) => {
     if (forceApiGenerations) return
     setMode('ic-lora')
@@ -2408,6 +2485,7 @@ export function GenSpace() {
       onRegenerate={handleRegenerate}
       onRetake={handleRetake}
       onExtend={handleExtend}
+      onContinue={handleContinue}
       onIcLora={!forceApiGenerations ? handleIcLora : undefined}
       onToggleFavorite={() => currentProjectId && toggleFavorite(currentProjectId, asset.id)}
       bins={bins}

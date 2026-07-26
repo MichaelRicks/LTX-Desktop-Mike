@@ -182,6 +182,72 @@ export function getVideoDimensions(videoPath: string): { width: number; height: 
   return { width, height }
 }
 
+/** Parse the video stream's fps from ffmpeg -i output; falls back to 24. */
+export function getVideoFps(ffmpegPath: string, videoPath: string): number {
+  try {
+    const result = spawnSync(ffmpegPath, ['-i', videoPath, '-hide_banner'], { encoding: 'utf8', timeout: 5000 })
+    const output = (result.stdout || '') + (result.stderr || '')
+    const m = output.match(/(\d+(?:\.\d+)?)\s*fps/)
+    const fps = m ? Number(m[1]) : NaN
+    return Number.isFinite(fps) && fps > 0 ? fps : 24
+  } catch {
+    return 24
+  }
+}
+
+/**
+ * Extract the final frame of a video to a full-resolution PNG. Reads only the
+ * last second (`-sseof -1`) and reverses it so `-frames:v 1` yields the true
+ * last frame — robust across variable frame counts, no fps math needed.
+ */
+export function extractLastFrameToFile({ videoPath, outputPath, timeoutMs = 15000 }: {
+  videoPath: string
+  outputPath: string
+  timeoutMs?: number
+}): string {
+  const ffmpegPath = findFfmpegPath()
+  if (!ffmpegPath) throw new Error('ffmpeg not found')
+  if (!fs.existsSync(videoPath)) throw new Error(`Video file not found: ${videoPath}`)
+
+  const args = ['-sseof', '-1', '-i', videoPath, '-vf', 'reverse', '-frames:v', '1', '-y', outputPath]
+  logger.info(`[extract-last-frame] ${args.join(' ').slice(0, 300)}`)
+  runFfmpegSyncOrThrow(ffmpegPath, args, timeoutMs)
+  if (!fs.existsSync(outputPath)) throw new Error('ffmpeg produced no output file')
+  return outputPath
+}
+
+/**
+ * Re-encode a video with its first frame removed (and the matching audio slice
+ * dropped so A/V stays in sync). Used by "Continue as new shot" to delete the
+ * duplicate lead frame the i2v conditioning reproduces from the source's last
+ * frame, so the continuation butt-joins the source with no stutter.
+ */
+export function trimFirstFrameToFile({ videoPath, outputPath, timeoutMs = 120000 }: {
+  videoPath: string
+  outputPath: string
+  timeoutMs?: number
+}): string {
+  const ffmpegPath = findFfmpegPath()
+  if (!ffmpegPath) throw new Error('ffmpeg not found')
+  if (!fs.existsSync(videoPath)) throw new Error(`Video file not found: ${videoPath}`)
+
+  const hasAudio = fileHasAudio(ffmpegPath, videoPath)
+  const fps = getVideoFps(ffmpegPath, videoPath)
+  const args: string[] = [
+    '-i', videoPath,
+    '-vf', 'trim=start_frame=1,setpts=PTS-STARTPTS',
+    ...(hasAudio
+      ? ['-af', `atrim=start=${(1 / fps).toFixed(6)},asetpts=PTS-STARTPTS`, '-c:a', 'aac', '-b:a', '192k']
+      : ['-an']),
+    '-c:v', 'libx264', '-crf', '18', '-preset', 'veryfast', '-pix_fmt', 'yuv420p',
+    '-y', outputPath,
+  ]
+  logger.info(`[trim-first-frame] ${args.join(' ').slice(0, 300)}`)
+  runFfmpegSyncOrThrow(ffmpegPath, args, timeoutMs)
+  if (!fs.existsSync(outputPath)) throw new Error('ffmpeg produced no output file')
+  return outputPath
+}
+
 export function stopExportProcess(): void {
   if (activeExportProcess) {
     logger.info( 'Stopping active export process...')

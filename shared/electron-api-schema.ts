@@ -314,6 +314,20 @@ export const electronAPISchemas = {
     output: z.object({ path: z.string() }),
   },
 
+  // "Continue as new shot": extract a clip's last frame into the Continuations
+  // library folder to seed an i2v continuation; returns source dims/fps so the
+  // next gen matches (clips must cut together cleanly on the timeline).
+  continuationExtractLastFrame: {
+    input: z.object({ videoPath: z.string() }),
+    output: z.object({ framePath: z.string(), width: z.number(), height: z.number(), fps: z.number() }),
+  },
+  // Drop the duplicate lead frame from a freshly generated continuation and save
+  // the clean clip into Continuations, ready to butt-join the source.
+  continuationSaveTrimmed: {
+    input: z.object({ videoPath: z.string() }),
+    output: z.object({ path: z.string() }),
+  },
+
   // Logging
   writeLog: {
     input: z.object({ level: z.string(), message: z.string() }),

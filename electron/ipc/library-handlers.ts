@@ -61,6 +61,15 @@ function safeName(name: string): string {
   return name.trim()
 }
 
+/** Ensure a named library subfolder exists and return its absolute path. Used by
+ *  features that write generated assets straight into the library (e.g. "Continue
+ *  as new shot" saving the extracted frame + trimmed clip into Continuations). */
+export function ensureLibFolder(name: string): string {
+  const p = folderPath(name)
+  fs.mkdirSync(p, { recursive: true })
+  return p
+}
+
 function folderPath(name: string): string {
   const p = path.join(libRoot(), safeName(name))
   validatePath(p, getAllowedRoots())
