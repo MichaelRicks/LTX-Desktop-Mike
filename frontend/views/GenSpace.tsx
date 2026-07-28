@@ -49,6 +49,7 @@ import { IcLoraSettingsControls, type IcLoraControlsProps } from '../components/
 import { IcLoraAdvancedPanel } from '../components/IcLoraAdvancedPanel'
 import { FreeApiKeyBubble } from '../components/FreeApiKeyBubble'
 import { useVideoSaveMenu } from '../components/useVideoSaveMenu'
+import { useImageSaveMenu } from '../components/useImageSaveMenu'
 
 // Sentinel binFilter value meaning "show every asset" (vs. a real binId, or
 // null for the default untagged-only view).
@@ -746,7 +747,7 @@ function PromptBar({
         {/* Input image drop zone — video mode only (I2V) */}
         {mode === 'video' && !isRetake && !isIcLora && (
           <div
-            className={`relative w-20 h-20 mx-2 mt-2 rounded-lg border-2 border-dashed transition-colors flex items-center justify-center flex-shrink-0 cursor-pointer ${
+            className={`relative w-32 aspect-video mx-2 mt-2 rounded-lg border-2 border-dashed transition-colors flex items-center justify-center flex-shrink-0 cursor-pointer ${
               isDragOver ? 'border-blue-500 bg-blue-500/10' : 'border-zinc-700 hover:border-zinc-500'
             }`}
             onDragOver={(e) => { e.preventDefault(); setIsDragOver(true) }}
@@ -756,7 +757,7 @@ function PromptBar({
           >
             {inputImage ? (
               <>
-                <img src={pathToFileUrl(inputImage)} alt="" className="w-full h-full object-cover rounded-md" />
+                <img src={pathToFileUrl(inputImage)} alt="" className="w-full h-full object-contain rounded-md" />
                 <button
                   onClick={(e) => { e.stopPropagation(); onInputImageChange(null) }}
                   className="absolute -top-1 -right-1 p-1 rounded-full bg-zinc-800 text-zinc-400 hover:text-white z-10"
@@ -1234,6 +1235,7 @@ export function GenSpace() {
   const [elapsedMs, setElapsedMs] = useState(0)
   const generationStartRef = useRef<number | null>(null)
   const { onContextMenu: onVideoSaveContextMenu, menu: videoSaveMenu } = useVideoSaveMenu()
+  const { onContextMenu: onImageSaveContextMenu, menu: imageSaveMenu } = useImageSaveMenu()
   const [showFavorites, setShowFavorites] = useState(false)
   // null = default view (untagged only); ALL_BINS_FILTER = every asset; otherwise a specific binId.
   const [binFilter, setBinFilter] = useState<string | null>(null)
@@ -3017,6 +3019,13 @@ export function GenSpace() {
                 src={pathToFileUrl(selectedAsset.path)}
                 alt=""
                 className="w-full rounded-xl object-contain max-h-[75vh]"
+                onContextMenu={(e) => onImageSaveContextMenu(e, {
+                  sourcePath: selectedAsset.path,
+                  name: selectedAsset.prompt,
+                  onRegenerate: canRegenerateAsset(selectedAsset)
+                    ? () => { setSelectedAsset(null); handleRegenerate(selectedAsset) }
+                    : undefined,
+                })}
               />
             )}
             {selectedAsset.type === 'video' && (
@@ -3025,9 +3034,18 @@ export function GenSpace() {
                   onClick={() => {
                     const asset = selectedAsset
                     if (!asset) return
-                    // Grab the frame currently shown (scrub position); the modal
-                    // <video> has native controls so the user pauses where they want.
-                    const t = enlargedVideoRef.current?.currentTime
+                    // Grab the currently shown frame. The modal <video> autoplays,
+                    // so it's usually AT the end when clicked — seeking exactly at
+                    // duration decodes no frame (ffmpeg writes nothing), which is
+                    // why this failed. Back off ~one frame from the end, matching
+                    // saveVideoFrame's fix.
+                    const v = enlargedVideoRef.current
+                    let t: number | undefined
+                    if (v) {
+                      const dur = Number.isFinite(v.duration) && v.duration > 0 ? v.duration : 0
+                      t = Number.isFinite(v.currentTime) ? Math.max(0, v.currentTime) : 0
+                      if (dur > 0 && t > dur - 0.05) t = Math.max(0, dur - 0.05)
+                    }
                     setSelectedAsset(null)
                     void handleContinue(asset, t)
                   }}
@@ -3069,6 +3087,7 @@ export function GenSpace() {
       )}
 
       {videoSaveMenu}
+      {imageSaveMenu}
 
       {creatingTagFor !== null && (
         <div

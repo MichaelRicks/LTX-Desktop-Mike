@@ -76,6 +76,36 @@ export async function saveVideoFile(pathOrUrl: string, suggestedName?: string): 
 }
 
 /**
+ * Copy an image to a user-chosen location. Mirrors saveVideoFile — the copy is
+ * format-agnostic; only the dialog title/filters differ. Used by the image
+ * lightbox's right-click "Save image".
+ */
+export async function saveImageFile(pathOrUrl: string, suggestedName?: string): Promise<void> {
+  const api = window.electronAPI
+  if (!api?.showSaveDialog || !api?.copyFileToPath) {
+    flashToast('Save unavailable — please restart the app', true)
+    return
+  }
+  const srcPath = fileUrlToPath(pathOrUrl)
+  const ext = extOf(srcPath) || '.png'
+  try {
+    const dest = await api.showSaveDialog({
+      title: 'Save Image',
+      defaultPath: `${toStem(suggestedName, srcPath)}${ext}`,
+      filters: [
+        { name: 'Image', extensions: [ext.slice(1)] },
+        { name: 'All Files', extensions: ['*'] },
+      ],
+    })
+    if (!dest) return // user cancelled
+    const res = await api.copyFileToPath({ srcPath, destPath: dest })
+    flashToast(res?.success ? 'Image saved' : 'Could not save image', !res?.success)
+  } catch {
+    flashToast('Could not save image', true)
+  }
+}
+
+/**
  * Save the frame currently shown in `videoEl` as an image at a user-chosen path.
  * Uses ffmpeg (frame-accurate) in the main process rather than a canvas grab,
  * which would taint under production webSecurity.

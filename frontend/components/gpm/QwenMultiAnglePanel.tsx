@@ -60,10 +60,10 @@ export interface QwenAngleState {
 export const DEFAULT_QWEN_ANGLE_STATE: QwenAngleState = {
   source: null,
   extraRefs: [],
-  view: '3d',
-  azDeg: 135,
+  view: 'dial',
+  azDeg: 0,
   elDeg: 0,
-  znIdx: 0,
+  znIdx: 2,
   extraPrompt: '',
   seed: 42,
   randomizeSeed: false,
