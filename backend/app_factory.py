@@ -21,6 +21,7 @@ from _routes.health import router as health_router
 from _routes.ic_lora import router as ic_lora_router
 from _routes.lora_catalog import router as lora_catalog_router
 from _routes.image_gen import router as image_gen_router
+from _routes.prompt_enhancement import router as prompt_enhancement_router
 from _routes.models import router as models_router
 from _routes.qwen_multiangle import router as qwen_multiangle_router
 from _routes.suggest_gap_prompt import router as suggest_gap_prompt_router
@@ -165,6 +166,7 @@ def create_app(
     app.include_router(extend_router)
     app.include_router(ic_lora_router)
     app.include_router(lora_catalog_router)
+    app.include_router(prompt_enhancement_router)
     app.include_router(runtime_policy_router)
     app.include_router(hf_auth_router)
 

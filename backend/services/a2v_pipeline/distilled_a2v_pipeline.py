@@ -8,7 +8,7 @@ video-only denoising with frozen audio, returning original audio).
 from __future__ import annotations
 
 from collections.abc import Iterator, Sequence
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, Protocol, cast
 
 import torch
 
@@ -17,6 +17,53 @@ from services.services_utils import AudioOrNone, TilingConfigType
 
 if TYPE_CHECKING:
     from ltx_core.loader.primitives import LoraPathStrengthAndSDOps
+    from ltx_pipelines.utils.args import ImageConditioningInput as LtxImageInput
+    from ltx_pipelines.utils.model_paths import ModelPaths
+
+
+class _ImageCrfResolver(Protocol):
+    def resolve_crf(self, images: Sequence[LtxImageInput]) -> list[LtxImageInput]: ...
+
+
+def resolve_image_conditionings(
+    images: Sequence[tuple[str, int, float]],
+    image_conditioner: _ImageCrfResolver,
+) -> list[LtxImageInput]:
+    """Build LTX image inputs and fill checkpoint CRF via ImageConditioner.resolve_crf."""
+    from ltx_pipelines.utils.args import ImageConditioningInput as LtxImageInput
+
+    ltx_images = [LtxImageInput(path, frame_idx, strength) for path, frame_idx, strength in images]
+    return image_conditioner.resolve_crf(ltx_images)
+
+
+def encode_stage_image_conditionings(
+    images: list[LtxImageInput],
+    *,
+    height: int,
+    width: int,
+    video_encoder: Any,
+    dtype: torch.dtype,
+    device: torch.device,
+) -> list[Any]:
+    """Pixel-index image conds for distilled A2V stages.
+
+    Same helper as DistilledPipeline and a2vid_two_stage: frame 0 replaces latent 0;
+    later frames are keyframes at that pixel index.
+
+    Do not use image_conditionings_by_replacing_latent — it treats frame_idx as a
+    latent index. Last pixel frame (num_frames-1, e.g. 240 at 10s/24fps) is past the
+    VAE-compressed sequence (~31 latents) and apply_to empty-slices.
+    """
+    from ltx_pipelines.utils.helpers import combined_image_conditionings
+
+    return combined_image_conditionings(
+        images=images,
+        height=height,
+        width=width,
+        video_encoder=video_encoder,
+        dtype=dtype,
+        device=device,
+    )
 
 
 class DistilledA2VPipeline:
@@ -29,8 +76,7 @@ class DistilledA2VPipeline:
 
     def __init__(
         self,
-        distilled_checkpoint_path: str,
-        gemma_root: str,
+        model_paths: ModelPaths,
         spatial_upsampler_path: str,
         loras: Sequence[LoraPathStrengthAndSDOps] | None = None,
         device: torch.device | None = None,
@@ -55,16 +101,16 @@ class DistilledA2VPipeline:
         offload_mode = offload_mode_for_prefetch_count(streaming_prefetch_count, device)
 
         self.prompt_encoder = PromptEncoder(
-            distilled_checkpoint_path, gemma_root, self.dtype, device, offload_mode=offload_mode,
+            model_paths, self.dtype, device, offload_mode=offload_mode,
         )
         self.image_conditioner = ImageConditioner(
-            distilled_checkpoint_path, self.dtype, device,
+            model_paths.video_vae(), self.dtype, device,
         )
         self.audio_conditioner = AudioConditioner(
-            distilled_checkpoint_path, self.dtype, device,
+            model_paths.audio_vae(), self.dtype, device,
         )
         self.stage = DiffusionStage.from_checkpoint(  # type: ignore[reportUnknownMemberType]
-            distilled_checkpoint_path,
+            model_paths.transformer(),
             self.dtype,
             device,
             loras=tuple(loras) if loras else (),
@@ -72,10 +118,10 @@ class DistilledA2VPipeline:
             offload_mode=offload_mode,
         )
         self.upsampler = VideoUpsampler(
-            distilled_checkpoint_path, spatial_upsampler_path, self.dtype, device,
+            model_paths.video_vae(), spatial_upsampler_path, self.dtype, device,
         )
         self.video_decoder = VideoDecoder(
-            distilled_checkpoint_path, self.dtype, device,
+            model_paths.video_vae(), self.dtype, device,
         )
 
     @torch.inference_mode()
@@ -96,19 +142,15 @@ class DistilledA2VPipeline:
         from ltx_core.components.noisers import GaussianNoiser
         from ltx_core.model.audio_vae import encode_audio as vae_encode_audio
         from ltx_core.types import Audio, AudioLatentShape
-        from ltx_pipelines.utils.args import ImageConditioningInput as LtxImageInput
         from ltx_pipelines.utils.constants import DISTILLED_SIGMA_VALUES, STAGE_2_DISTILLED_SIGMA_VALUES
         from ltx_pipelines.utils.denoisers import SimpleDenoiser
-        from ltx_pipelines.utils.helpers import (
-            assert_resolution,
-            image_conditionings_by_replacing_latent,
-        )
+        from ltx_pipelines.utils.helpers import assert_resolution
         from ltx_pipelines.utils.media_io import decode_audio_from_file
         from ltx_pipelines.utils.types import ModalitySpec
 
         assert_resolution(height=height, width=width, is_two_stage=True)
 
-        ltx_images = [LtxImageInput(path, frame_idx, strength) for path, frame_idx, strength in images]
+        ltx_images = resolve_image_conditionings(images, self.image_conditioner)
         generator = torch.Generator(device=self.device).manual_seed(seed)
         noiser = GaussianNoiser(generator=generator)
         dtype = torch.bfloat16
@@ -137,8 +179,8 @@ class DistilledA2VPipeline:
         stage_1_sigmas = torch.Tensor(DISTILLED_SIGMA_VALUES).to(self.device)
         stage_1_w, stage_1_h = width // 2, height // 2
         stage_1_conditionings = self.image_conditioner(
-            lambda enc: image_conditionings_by_replacing_latent(
-                images=ltx_images,
+            lambda enc: encode_stage_image_conditionings(
+                ltx_images,
                 height=stage_1_h,
                 width=stage_1_w,
                 video_encoder=enc,
@@ -174,8 +216,8 @@ class DistilledA2VPipeline:
         # Stage 2: Full-resolution refinement with frozen audio.
         stage_2_sigmas = torch.Tensor(STAGE_2_DISTILLED_SIGMA_VALUES).to(self.device)
         stage_2_conditionings = self.image_conditioner(
-            lambda enc: image_conditionings_by_replacing_latent(
-                images=ltx_images,
+            lambda enc: encode_stage_image_conditionings(
+                ltx_images,
                 height=height,
                 width=width,
                 video_encoder=enc,

@@ -1,5 +1,6 @@
 import { useCallback, useState } from 'react'
 import { ApiClient, type ApiRequestBodyOf } from '../lib/api-client'
+import { withGenerationActive } from '../lib/generation-active'
 import { logger } from '../lib/logger'
 
 export type IcLoraConditioningType = 'canny' | 'depth' | 'custom'
@@ -54,6 +55,7 @@ export interface IcLoraResult {
 
 interface UseIcLoraState {
   isGenerating: boolean
+  canCancel: boolean
   status: string
   error: string | null
   result: IcLoraResult | null
@@ -64,6 +66,7 @@ type GenerateIcLoraBody = ApiRequestBodyOf<'generateIcLora'>
 export function useIcLora() {
   const [state, setState] = useState<UseIcLoraState>({
     isGenerating: false,
+    canCancel: false,
     status: '',
     error: null,
     result: null,
@@ -77,72 +80,81 @@ export function useIcLora() {
 
     setState({
       isGenerating: true,
+      // IC-LoRA is always local GPU (the tab is hidden when forceApiGenerations).
+      // Do not gate on shouldVideoGenerateWithLtxApi — that flag is for t2v/i2v.
+      canCancel: true,
       status: 'Generating',
       error: null,
       result: null,
     })
 
-    const result = await ApiClient.generateIcLora({
-      video_path: params.videoPath,
-      conditioning_type: params.conditioningType,
-      conditioning_strength: params.conditioningStrength,
-      prompt: params.prompt,
-      custom_lora_ref: params.customLoraRef,
-      control_video_path: params.controlVideoPath,
-      skip_stage_2: params.skipStage2,
-      use_lora_in_stage_2: params.useLoraInStage2,
-      resolution: params.resolution,
-      resolution_factor: params.resolutionFactor,
-      audio_mode: params.audioMode,
-      lora_strength: params.loraStrength,
-      fps_override: params.fpsOverride,
-      ic_lora_id: params.icLoraId,
-      variant_id: params.variantId,
-      input_path: params.inputPath,
-      control_values: params.controlValues,
-      outpaint_pads: params.outpaintPads,
-      images: params.referenceImagePath
-        ? [{ path: params.referenceImagePath, frame: 0, strength: 1.0 }]
-        : [],
-    } as GenerateIcLoraBody)
-    if (!result.ok) {
-      logger.error(`IC-LoRA error: ${result.error.message}`)
-      setState({
-        isGenerating: false,
-        status: '',
-        error: result.error.message,
-        result: null,
-      })
-      return
-    }
+    await withGenerationActive(async () => {
+      const result = await ApiClient.generateIcLora({
+        video_path: params.videoPath,
+        conditioning_type: params.conditioningType,
+        conditioning_strength: params.conditioningStrength,
+        prompt: params.prompt,
+        custom_lora_ref: params.customLoraRef,
+        control_video_path: params.controlVideoPath,
+        skip_stage_2: params.skipStage2,
+        use_lora_in_stage_2: params.useLoraInStage2,
+        resolution: params.resolution,
+        resolution_factor: params.resolutionFactor,
+        audio_mode: params.audioMode,
+        lora_strength: params.loraStrength,
+        fps_override: params.fpsOverride,
+        ic_lora_id: params.icLoraId,
+        variant_id: params.variantId,
+        input_path: params.inputPath,
+        control_values: params.controlValues,
+        outpaint_pads: params.outpaintPads,
+        images: params.referenceImagePath
+          ? [{ path: params.referenceImagePath, frame: 0, strength: 1.0 }]
+          : [],
+      } as GenerateIcLoraBody)
+      if (!result.ok) {
+        logger.error(`IC-LoRA error: ${result.error.message}`)
+        setState({
+          isGenerating: false,
+          canCancel: false,
+          status: '',
+          error: result.error.message,
+          result: null,
+        })
+        return
+      }
 
-    const payload = result.data
-    if (payload.status === 'cancelled') {
-      setState({
-        isGenerating: false,
-        status: 'Cancelled',
-        error: null,
-        result: null,
-      })
-      return
-    }
+      const payload = result.data
+      if (payload.status === 'cancelled') {
+        setState({
+          isGenerating: false,
+          canCancel: false,
+          status: 'Cancelled',
+          error: null,
+          result: null,
+        })
+        return
+      }
 
-    if (payload.status === 'complete') {
-      setState({
-        isGenerating: false,
-        status: 'Generation complete!',
-        error: null,
-        result: {
-          videoPath: payload.video_path,
-        },
-      })
-      return
-    }
+      if (payload.status === 'complete') {
+        setState({
+          isGenerating: false,
+          canCancel: false,
+          status: 'Generation complete!',
+          error: null,
+          result: {
+            videoPath: payload.video_path,
+          },
+        })
+        return
+      }
+    })
   }, [])
 
   const reset = useCallback(() => {
     setState({
       isGenerating: false,
+      canCancel: false,
       status: '',
       error: null,
       result: null,
@@ -153,6 +165,7 @@ export function useIcLora() {
     submitIcLora,
     resetIcLora: reset,
     isIcLoraGenerating: state.isGenerating,
+    canCancel: state.canCancel,
     icLoraStatus: state.status,
     icLoraError: state.error,
     icLoraResult: state.result,

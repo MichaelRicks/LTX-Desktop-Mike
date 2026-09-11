@@ -50,7 +50,7 @@ class LTXAPIClient(Protocol):
         prompt: str,
         model: str,
         resolution: str,
-        duration: float,
+        duration: float | None,
         fps: float,
         generate_audio: bool,
         camera_motion: VideoCameraMotion = "none",
@@ -65,10 +65,11 @@ class LTXAPIClient(Protocol):
         image_uri: str,
         model: str,
         resolution: str,
-        duration: float,
+        duration: float | None,
         fps: float,
         generate_audio: bool,
         camera_motion: VideoCameraMotion = "none",
+        last_frame_uri: str | None = None,
     ) -> bytes:
         ...
 
@@ -81,6 +82,7 @@ class LTXAPIClient(Protocol):
         image_uri: str | None,
         model: str,
         resolution: str,
+        last_frame_uri: str | None = None,
     ) -> bytes:
         ...
 
@@ -93,6 +95,7 @@ class LTXAPIClient(Protocol):
         duration: float,
         prompt: str,
         mode: RetakeMode,
+        model: str,
     ) -> LTXRetakeResult:
         ...
 
@@ -104,5 +107,6 @@ class LTXAPIClient(Protocol):
         duration: float,
         prompt: str,
         mode: ExtendMode,
+        model: str,
     ) -> LTXRetakeResult:
         ...

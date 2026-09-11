@@ -11,10 +11,18 @@
                 "ltx-2.3-spatial-upscaler-x2-1.0",
                 "ltx-2.3-spatial-upscaler-x2-1.1",
                 "ltx-2.3-22b-ic-lora-union-control-ref0.5",
+                "ltx-2.5-22b-distilled",
+                "ltx-2.5-spatial-upscaler-x2-1.0",
+                "ltx-2.5-video-vae",
+                "ltx-2.5-video-vae-conv",
+                "ltx-2.5-audio-vae",
+                "ltx-2.5-duration-head",
                 "dpt-hybrid-midas",
                 "yolox-l-torchscript",
                 "dw-ll-ucoco-384-bs5",
                 "gemma-3-12b-it-qat-q4_0-unquantized",
+                "gemma4-12b-with-proj-ltx-2.5",
+                "gemma-4-e2b-it",
                 "z-image-turbo",
                 "krea-2-turbo"
               ],
@@ -49,6 +57,7 @@
             "anyOf": [
               {
                 "enum": [
+                  "ltx-2.5-22b-distilled",
                   "ltx-2.3-22b-distilled-1.1",
                   "ltx-2.3-22b-distilled"
                 ],
@@ -92,6 +101,17 @@
               }
             ],
             "title": "Geminiapikey"
+          },
+          "geminiModel": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Geminimodel"
           },
           "lockedSeed": {
             "anyOf": [
@@ -159,6 +179,21 @@
             ],
             "title": "Promptenhancerenabledt2V"
           },
+          "promptEnhancerProviderPreference": {
+            "anyOf": [
+              {
+                "enum": [
+                  "local",
+                  "api"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Promptenhancerproviderpreference"
+          },
           "seedLocked": {
             "anyOf": [
               {
@@ -169,6 +204,17 @@
               }
             ],
             "title": "Seedlocked"
+          },
+          "useConvVae": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Useconvvae"
           },
           "useLocalTextEncoder": {
             "anyOf": [
@@ -191,6 +237,17 @@
               }
             ],
             "title": "Usetorchcompile"
+          },
+          "userPrefersFalApiImageGenerations": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Userprefersfalapiimagegenerations"
           },
           "userPrefersLtxApiVideoGenerations": {
             "anyOf": [
@@ -301,10 +358,18 @@
                 "ltx-2.3-spatial-upscaler-x2-1.0",
                 "ltx-2.3-spatial-upscaler-x2-1.1",
                 "ltx-2.3-22b-ic-lora-union-control-ref0.5",
+                "ltx-2.5-22b-distilled",
+                "ltx-2.5-spatial-upscaler-x2-1.0",
+                "ltx-2.5-video-vae",
+                "ltx-2.5-video-vae-conv",
+                "ltx-2.5-audio-vae",
+                "ltx-2.5-duration-head",
                 "dpt-hybrid-midas",
                 "yolox-l-torchscript",
                 "dw-ll-ucoco-384-bs5",
                 "gemma-3-12b-it-qat-q4_0-unquantized",
+                "gemma4-12b-with-proj-ltx-2.5",
+                "gemma-4-e2b-it",
                 "z-image-turbo",
                 "krea-2-turbo"
               ],
@@ -347,10 +412,18 @@
               "ltx-2.3-spatial-upscaler-x2-1.0",
               "ltx-2.3-spatial-upscaler-x2-1.1",
               "ltx-2.3-22b-ic-lora-union-control-ref0.5",
+              "ltx-2.5-22b-distilled",
+              "ltx-2.5-spatial-upscaler-x2-1.0",
+              "ltx-2.5-video-vae",
+              "ltx-2.5-video-vae-conv",
+              "ltx-2.5-audio-vae",
+              "ltx-2.5-duration-head",
               "dpt-hybrid-midas",
               "yolox-l-torchscript",
               "dw-ll-ucoco-384-bs5",
               "gemma-3-12b-it-qat-q4_0-unquantized",
+              "gemma4-12b-with-proj-ltx-2.5",
+              "gemma-4-e2b-it",
               "z-image-turbo",
               "krea-2-turbo"
             ],
@@ -370,6 +443,7 @@
               "base",
               "upscaler",
               "text_encoder",
+              "vae",
               "image",
               "support"
             ],
@@ -401,10 +475,18 @@
                 "ltx-2.3-spatial-upscaler-x2-1.0",
                 "ltx-2.3-spatial-upscaler-x2-1.1",
                 "ltx-2.3-22b-ic-lora-union-control-ref0.5",
+                "ltx-2.5-22b-distilled",
+                "ltx-2.5-spatial-upscaler-x2-1.0",
+                "ltx-2.5-video-vae",
+                "ltx-2.5-video-vae-conv",
+                "ltx-2.5-audio-vae",
+                "ltx-2.5-duration-head",
                 "dpt-hybrid-midas",
                 "yolox-l-torchscript",
                 "dw-ll-ucoco-384-bs5",
                 "gemma-3-12b-it-qat-q4_0-unquantized",
+                "gemma4-12b-with-proj-ltx-2.5",
+                "gemma-4-e2b-it",
                 "z-image-turbo",
                 "krea-2-turbo"
               ],
@@ -479,10 +561,18 @@
                 "ltx-2.3-spatial-upscaler-x2-1.0",
                 "ltx-2.3-spatial-upscaler-x2-1.1",
                 "ltx-2.3-22b-ic-lora-union-control-ref0.5",
+                "ltx-2.5-22b-distilled",
+                "ltx-2.5-spatial-upscaler-x2-1.0",
+                "ltx-2.5-video-vae",
+                "ltx-2.5-video-vae-conv",
+                "ltx-2.5-audio-vae",
+                "ltx-2.5-duration-head",
                 "dpt-hybrid-midas",
                 "yolox-l-torchscript",
                 "dw-ll-ucoco-384-bs5",
                 "gemma-3-12b-it-qat-q4_0-unquantized",
+                "gemma4-12b-with-proj-ltx-2.5",
+                "gemma-4-e2b-it",
                 "z-image-turbo",
                 "krea-2-turbo"
               ],
@@ -500,10 +590,18 @@
                 "ltx-2.3-spatial-upscaler-x2-1.0",
                 "ltx-2.3-spatial-upscaler-x2-1.1",
                 "ltx-2.3-22b-ic-lora-union-control-ref0.5",
+                "ltx-2.5-22b-distilled",
+                "ltx-2.5-spatial-upscaler-x2-1.0",
+                "ltx-2.5-video-vae",
+                "ltx-2.5-video-vae-conv",
+                "ltx-2.5-audio-vae",
+                "ltx-2.5-duration-head",
                 "dpt-hybrid-midas",
                 "yolox-l-torchscript",
                 "dw-ll-ucoco-384-bs5",
                 "gemma-3-12b-it-qat-q4_0-unquantized",
+                "gemma4-12b-with-proj-ltx-2.5",
+                "gemma-4-e2b-it",
                 "z-image-turbo",
                 "krea-2-turbo"
               ],
@@ -522,10 +620,18 @@
                   "ltx-2.3-spatial-upscaler-x2-1.0",
                   "ltx-2.3-spatial-upscaler-x2-1.1",
                   "ltx-2.3-22b-ic-lora-union-control-ref0.5",
+                  "ltx-2.5-22b-distilled",
+                  "ltx-2.5-spatial-upscaler-x2-1.0",
+                  "ltx-2.5-video-vae",
+                  "ltx-2.5-video-vae-conv",
+                  "ltx-2.5-audio-vae",
+                  "ltx-2.5-duration-head",
                   "dpt-hybrid-midas",
                   "yolox-l-torchscript",
                   "dw-ll-ucoco-384-bs5",
                   "gemma-3-12b-it-qat-q4_0-unquantized",
+                  "gemma4-12b-with-proj-ltx-2.5",
+                  "gemma-4-e2b-it",
                   "z-image-turbo",
                   "krea-2-turbo"
                 ],
@@ -632,6 +738,137 @@
         "title": "DownloadVariant",
         "type": "object"
       },
+      "EnhancePromptRequest": {
+        "description": "Regular-LoRA, IC-LoRA, and built-in conditioning-type selection are mutually exclusive UI\nsurfaces — a request never carries more than one of loraCatalogIds/icLoraId/conditioningType.",
+        "properties": {
+          "conditioningType": {
+            "anyOf": [
+              {
+                "enum": [
+                  "canny",
+                  "depth"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Conditioningtype"
+          },
+          "duration": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Duration"
+          },
+          "fps": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fps"
+          },
+          "icLoraId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Icloraid"
+          },
+          "imagePath": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Imagepath"
+          },
+          "keyframes": {
+            "items": {
+              "$ref": "#/components/schemas/KeyframeInput"
+            },
+            "title": "Keyframes",
+            "type": "array"
+          },
+          "lastImagePath": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lastimagepath"
+          },
+          "loraCatalogIds": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Loracatalogids",
+            "type": "array"
+          },
+          "mediaType": {
+            "default": "video",
+            "enum": [
+              "video",
+              "image"
+            ],
+            "title": "Mediatype",
+            "type": "string"
+          },
+          "prompt": {
+            "title": "Prompt",
+            "type": "string"
+          },
+          "provider": {
+            "default": "local",
+            "enum": [
+              "local",
+              "api"
+            ],
+            "title": "Provider",
+            "type": "string"
+          }
+        },
+        "required": [
+          "prompt"
+        ],
+        "title": "EnhancePromptRequest",
+        "type": "object"
+      },
+      "EnhancePromptResponse": {
+        "properties": {
+          "enhancedPrompt": {
+            "title": "Enhancedprompt",
+            "type": "string"
+          }
+        },
+        "required": [
+          "enhancedPrompt"
+        ],
+        "title": "EnhancePromptResponse",
+        "type": "object"
+      },
       "ExtendRequest": {
         "properties": {
           "duration": {
@@ -646,6 +883,12 @@
               "end"
             ],
             "title": "Mode",
+            "type": "string"
+          },
+          "model": {
+            "const": "pro",
+            "default": "pro",
+            "title": "Model",
             "type": "string"
           },
           "prompt": {
@@ -673,6 +916,50 @@
           "duration"
         ],
         "title": "ExtendRequest",
+        "type": "object"
+      },
+      "GeminiModelOptionPayload": {
+        "properties": {
+          "description": {
+            "default": "",
+            "title": "Description",
+            "type": "string"
+          },
+          "displayName": {
+            "title": "Displayname",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "displayName"
+        ],
+        "title": "GeminiModelOptionPayload",
+        "type": "object"
+      },
+      "GeminiModelsResponsePayload": {
+        "properties": {
+          "models": {
+            "items": {
+              "$ref": "#/components/schemas/GeminiModelOptionPayload"
+            },
+            "title": "Models",
+            "type": "array"
+          },
+          "resolvedModel": {
+            "title": "Resolvedmodel",
+            "type": "string"
+          }
+        },
+        "required": [
+          "models",
+          "resolvedModel"
+        ],
+        "title": "GeminiModelsResponsePayload",
         "type": "object"
       },
       "GenerateImageCancelledResponse": {
@@ -719,6 +1006,17 @@
             "title": "Height",
             "type": "integer"
           },
+          "imagePath": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Imagepath"
+          },
           "model": {
             "default": "z-image-turbo",
             "enum": [
@@ -744,6 +1042,13 @@
             "minLength": 1,
             "title": "Prompt",
             "type": "string"
+          },
+          "strength": {
+            "default": 0.6,
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Strength",
+            "type": "number"
           },
           "width": {
             "default": 1024,
@@ -860,20 +1165,30 @@
             "type": "string"
           },
           "duration": {
-            "default": 5,
-            "enum": [
-              5,
-              6,
-              8,
-              10,
-              12,
-              14,
-              16,
-              18,
-              20
+            "anyOf": [
+              {
+                "enum": [
+                  2,
+                  3,
+                  4,
+                  5,
+                  6,
+                  8,
+                  10,
+                  12,
+                  14,
+                  16,
+                  18,
+                  20
+                ],
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
             ],
-            "title": "Duration",
-            "type": "integer"
+            "default": 5,
+            "title": "Duration"
           },
           "fps": {
             "default": 24,
@@ -897,6 +1212,24 @@
             ],
             "title": "Imagepath"
           },
+          "keyframes": {
+            "items": {
+              "$ref": "#/components/schemas/KeyframeInput"
+            },
+            "title": "Keyframes",
+            "type": "array"
+          },
+          "lastImagePath": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lastimagepath"
+          },
           "loras": {
             "items": {
               "$ref": "#/components/schemas/LoraEntry"
@@ -908,7 +1241,9 @@
             "default": "fast",
             "enum": [
               "fast",
-              "pro"
+              "pro",
+              "fast-2.5",
+              "pro-2.5"
             ],
             "title": "Model",
             "type": "string"
@@ -955,6 +1290,10 @@
       },
       "GenerationProgressResponse": {
         "properties": {
+          "cancellable": {
+            "title": "Cancellable",
+            "type": "boolean"
+          },
           "currentStep": {
             "anyOf": [
               {
@@ -965,6 +1304,17 @@
               }
             ],
             "title": "Currentstep"
+          },
+          "id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Id"
           },
           "phase": {
             "title": "Phase",
@@ -1019,7 +1369,8 @@
           "phase",
           "progress",
           "currentStep",
-          "totalSteps"
+          "totalSteps",
+          "cancellable"
         ],
         "title": "GenerationProgressResponse",
         "type": "object"
@@ -1296,6 +1647,13 @@
           "download": {
             "$ref": "#/components/schemas/DownloadSpec"
           },
+          "enhancement_examples": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Enhancement Examples",
+            "type": "array"
+          },
           "id": {
             "title": "Id",
             "type": "string"
@@ -1348,6 +1706,16 @@
             "title": "Preprocessing",
             "type": "array"
           },
+          "prompt_template": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PromptTemplateSpec"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "recommended_strength": {
             "anyOf": [
               {
@@ -1362,6 +1730,17 @@
           "requires_hf_login": {
             "title": "Requires Hf Login",
             "type": "boolean"
+          },
+          "supported_models": {
+            "items": {
+              "enum": [
+                "LTX-2.3",
+                "LTX-2.5"
+              ],
+              "type": "string"
+            },
+            "title": "Supported Models",
+            "type": "array"
           },
           "tags": {
             "items": {
@@ -1380,6 +1759,21 @@
               }
             ],
             "title": "Trigger"
+          },
+          "trigger_placement": {
+            "anyOf": [
+              {
+                "enum": [
+                  "first_token",
+                  "anywhere"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Trigger Placement"
           }
         },
         "required": [
@@ -2005,10 +2399,18 @@
                   "ltx-2.3-spatial-upscaler-x2-1.0",
                   "ltx-2.3-spatial-upscaler-x2-1.1",
                   "ltx-2.3-22b-ic-lora-union-control-ref0.5",
+                  "ltx-2.5-22b-distilled",
+                  "ltx-2.5-spatial-upscaler-x2-1.0",
+                  "ltx-2.5-video-vae",
+                  "ltx-2.5-video-vae-conv",
+                  "ltx-2.5-audio-vae",
+                  "ltx-2.5-duration-head",
                   "dpt-hybrid-midas",
                   "yolox-l-torchscript",
                   "dw-ll-ucoco-384-bs5",
                   "gemma-3-12b-it-qat-q4_0-unquantized",
+                  "gemma4-12b-with-proj-ltx-2.5",
+                  "gemma-4-e2b-it",
                   "z-image-turbo",
                   "krea-2-turbo"
                 ],
@@ -2036,6 +2438,11 @@
             ],
             "title": "Kind",
             "type": "string"
+          },
+          "optional": {
+            "default": false,
+            "title": "Optional",
+            "type": "boolean"
           }
         },
         "required": [
@@ -2114,6 +2521,16 @@
             ],
             "title": "Body"
           },
+          "kind": {
+            "enum": [
+              "summary",
+              "prompting",
+              "tips",
+              "input"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
           "title": {
             "enum": [
               "What it does",
@@ -2127,6 +2544,7 @@
           }
         },
         "required": [
+          "kind",
           "title",
           "body"
         ],
@@ -2134,12 +2552,105 @@
         "type": "object"
       },
       "JsonValue": {},
+      "KeyframeInput": {
+        "description": "CamelCase of LTXV keyframe-edit `{image_uri, frame_index, strength}`.",
+        "properties": {
+          "frameIndex": {
+            "minimum": 0.0,
+            "title": "Frameindex",
+            "type": "integer"
+          },
+          "imagePath": {
+            "title": "Imagepath",
+            "type": "string"
+          },
+          "strength": {
+            "default": 1.0,
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Strength",
+            "type": "number"
+          }
+        },
+        "required": [
+          "imagePath",
+          "frameIndex"
+        ],
+        "title": "KeyframeInput",
+        "type": "object"
+      },
+      "LTXOfferingCapabilitiesSpec": {
+        "description": "Feature flags for one local model or API pipeline. Pixel maps stay backend-only.",
+        "properties": {
+          "a2v": {
+            "title": "A2V",
+            "type": "boolean"
+          },
+          "auto_duration": {
+            "title": "Auto Duration",
+            "type": "boolean"
+          },
+          "camera_motion": {
+            "title": "Camera Motion",
+            "type": "boolean"
+          },
+          "extend": {
+            "title": "Extend",
+            "type": "boolean"
+          },
+          "i2v": {
+            "title": "I2V",
+            "type": "boolean"
+          },
+          "ic_lora": {
+            "title": "Ic Lora",
+            "type": "boolean"
+          },
+          "multi_keyframe": {
+            "title": "Multi Keyframe",
+            "type": "boolean"
+          },
+          "multi_keyframe_max_count": {
+            "title": "Multi Keyframe Max Count",
+            "type": "integer"
+          },
+          "retake": {
+            "title": "Retake",
+            "type": "boolean"
+          },
+          "t2v": {
+            "title": "T2V",
+            "type": "boolean"
+          },
+          "user_loras": {
+            "title": "User Loras",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "t2v",
+          "i2v",
+          "a2v",
+          "ic_lora",
+          "retake",
+          "extend",
+          "multi_keyframe",
+          "multi_keyframe_max_count",
+          "user_loras",
+          "camera_motion",
+          "auto_duration"
+        ],
+        "title": "LTXOfferingCapabilitiesSpec",
+        "type": "object"
+      },
       "LTXVideoGenerationModelSpecItem": {
         "properties": {
           "pipeline": {
             "enum": [
               "fast",
-              "pro"
+              "pro",
+              "fast-2.5",
+              "pro-2.5"
             ],
             "title": "Pipeline",
             "type": "string"
@@ -2161,6 +2672,9 @@
             "additionalProperties": {
               "items": {
                 "enum": [
+                  2,
+                  3,
+                  4,
                   5,
                   6,
                   8,
@@ -2209,6 +2723,16 @@
               }
             ],
             "title": "A2V Supported Resolutions Durations"
+          },
+          "capabilities": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/LTXOfferingCapabilitiesSpec"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "display_name": {
             "title": "Display Name",
@@ -2309,6 +2833,13 @@
           "download": {
             "$ref": "#/components/schemas/DownloadSpec"
           },
+          "enhancement_examples": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Enhancement Examples",
+            "type": "array"
+          },
           "id": {
             "title": "Id",
             "type": "string"
@@ -2354,6 +2885,16 @@
             "title": "Name",
             "type": "string"
           },
+          "prompt_template": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PromptTemplateSpec"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "recommended_strength": {
             "anyOf": [
               {
@@ -2368,6 +2909,17 @@
           "requires_hf_login": {
             "title": "Requires Hf Login",
             "type": "boolean"
+          },
+          "supported_models": {
+            "items": {
+              "enum": [
+                "LTX-2.3",
+                "LTX-2.5"
+              ],
+              "type": "string"
+            },
+            "title": "Supported Models",
+            "type": "array"
           },
           "tags": {
             "items": {
@@ -2386,6 +2938,21 @@
               }
             ],
             "title": "Trigger"
+          },
+          "trigger_placement": {
+            "anyOf": [
+              {
+                "enum": [
+                  "first_token",
+                  "anywhere"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Trigger Placement"
           }
         },
         "required": [
@@ -2557,16 +3124,53 @@
                 "ltx-2.3-spatial-upscaler-x2-1.0",
                 "ltx-2.3-spatial-upscaler-x2-1.1",
                 "ltx-2.3-22b-ic-lora-union-control-ref0.5",
+                "ltx-2.5-22b-distilled",
+                "ltx-2.5-spatial-upscaler-x2-1.0",
+                "ltx-2.5-video-vae",
+                "ltx-2.5-video-vae-conv",
+                "ltx-2.5-audio-vae",
+                "ltx-2.5-duration-head",
                 "dpt-hybrid-midas",
                 "yolox-l-torchscript",
                 "dw-ll-ucoco-384-bs5",
                 "gemma-3-12b-it-qat-q4_0-unquantized",
+                "gemma4-12b-with-proj-ltx-2.5",
+                "gemma-4-e2b-it",
                 "z-image-turbo",
                 "krea-2-turbo"
               ],
               "type": "string"
             },
             "title": "Cps To Download",
+            "type": "array"
+          },
+          "optional_cp_ids": {
+            "default": [],
+            "items": {
+              "enum": [
+                "ltx-2.3-22b-distilled",
+                "ltx-2.3-22b-distilled-1.1",
+                "ltx-2.3-spatial-upscaler-x2-1.0",
+                "ltx-2.3-spatial-upscaler-x2-1.1",
+                "ltx-2.3-22b-ic-lora-union-control-ref0.5",
+                "ltx-2.5-22b-distilled",
+                "ltx-2.5-spatial-upscaler-x2-1.0",
+                "ltx-2.5-video-vae",
+                "ltx-2.5-video-vae-conv",
+                "ltx-2.5-audio-vae",
+                "ltx-2.5-duration-head",
+                "dpt-hybrid-midas",
+                "yolox-l-torchscript",
+                "dw-ll-ucoco-384-bs5",
+                "gemma-3-12b-it-qat-q4_0-unquantized",
+                "gemma4-12b-with-proj-ltx-2.5",
+                "gemma-4-e2b-it",
+                "z-image-turbo",
+                "krea-2-turbo"
+              ],
+              "type": "string"
+            },
+            "title": "Optional Cp Ids",
             "type": "array"
           },
           "status": {
@@ -2592,10 +3196,18 @@
                 "ltx-2.3-spatial-upscaler-x2-1.0",
                 "ltx-2.3-spatial-upscaler-x2-1.1",
                 "ltx-2.3-22b-ic-lora-union-control-ref0.5",
+                "ltx-2.5-22b-distilled",
+                "ltx-2.5-spatial-upscaler-x2-1.0",
+                "ltx-2.5-video-vae",
+                "ltx-2.5-video-vae-conv",
+                "ltx-2.5-audio-vae",
+                "ltx-2.5-duration-head",
                 "dpt-hybrid-midas",
                 "yolox-l-torchscript",
                 "dw-ll-ucoco-384-bs5",
                 "gemma-3-12b-it-qat-q4_0-unquantized",
+                "gemma4-12b-with-proj-ltx-2.5",
+                "gemma-4-e2b-it",
                 "z-image-turbo",
                 "krea-2-turbo"
               ],
@@ -2603,6 +3215,11 @@
             },
             "title": "Cps To Download",
             "type": "array"
+          },
+          "supported": {
+            "default": true,
+            "title": "Supported",
+            "type": "boolean"
           }
         },
         "required": [
@@ -2644,10 +3261,18 @@
                 "ltx-2.3-spatial-upscaler-x2-1.0",
                 "ltx-2.3-spatial-upscaler-x2-1.1",
                 "ltx-2.3-22b-ic-lora-union-control-ref0.5",
+                "ltx-2.5-22b-distilled",
+                "ltx-2.5-spatial-upscaler-x2-1.0",
+                "ltx-2.5-video-vae",
+                "ltx-2.5-video-vae-conv",
+                "ltx-2.5-audio-vae",
+                "ltx-2.5-duration-head",
                 "dpt-hybrid-midas",
                 "yolox-l-torchscript",
                 "dw-ll-ucoco-384-bs5",
                 "gemma-3-12b-it-qat-q4_0-unquantized",
+                "gemma4-12b-with-proj-ltx-2.5",
+                "gemma-4-e2b-it",
                 "z-image-turbo",
                 "krea-2-turbo"
               ],
@@ -2675,10 +3300,18 @@
               "ltx-2.3-spatial-upscaler-x2-1.0",
               "ltx-2.3-spatial-upscaler-x2-1.1",
               "ltx-2.3-22b-ic-lora-union-control-ref0.5",
+              "ltx-2.5-22b-distilled",
+              "ltx-2.5-spatial-upscaler-x2-1.0",
+              "ltx-2.5-video-vae",
+              "ltx-2.5-video-vae-conv",
+              "ltx-2.5-audio-vae",
+              "ltx-2.5-duration-head",
               "dpt-hybrid-midas",
               "yolox-l-torchscript",
               "dw-ll-ucoco-384-bs5",
               "gemma-3-12b-it-qat-q4_0-unquantized",
+              "gemma4-12b-with-proj-ltx-2.5",
+              "gemma-4-e2b-it",
               "z-image-turbo",
               "krea-2-turbo"
             ],
@@ -2687,6 +3320,7 @@
           },
           "model_id": {
             "enum": [
+              "ltx-2.5-22b-distilled",
               "ltx-2.3-22b-distilled-1.1",
               "ltx-2.3-22b-distilled"
             ],
@@ -2751,10 +3385,18 @@
                 "ltx-2.3-spatial-upscaler-x2-1.0",
                 "ltx-2.3-spatial-upscaler-x2-1.1",
                 "ltx-2.3-22b-ic-lora-union-control-ref0.5",
+                "ltx-2.5-22b-distilled",
+                "ltx-2.5-spatial-upscaler-x2-1.0",
+                "ltx-2.5-video-vae",
+                "ltx-2.5-video-vae-conv",
+                "ltx-2.5-audio-vae",
+                "ltx-2.5-duration-head",
                 "dpt-hybrid-midas",
                 "yolox-l-torchscript",
                 "dw-ll-ucoco-384-bs5",
                 "gemma-3-12b-it-qat-q4_0-unquantized",
+                "gemma4-12b-with-proj-ltx-2.5",
+                "gemma-4-e2b-it",
                 "z-image-turbo",
                 "krea-2-turbo"
               ],
@@ -2771,10 +3413,18 @@
                 "ltx-2.3-spatial-upscaler-x2-1.0",
                 "ltx-2.3-spatial-upscaler-x2-1.1",
                 "ltx-2.3-22b-ic-lora-union-control-ref0.5",
+                "ltx-2.5-22b-distilled",
+                "ltx-2.5-spatial-upscaler-x2-1.0",
+                "ltx-2.5-video-vae",
+                "ltx-2.5-video-vae-conv",
+                "ltx-2.5-audio-vae",
+                "ltx-2.5-duration-head",
                 "dpt-hybrid-midas",
                 "yolox-l-torchscript",
                 "dw-ll-ucoco-384-bs5",
                 "gemma-3-12b-it-qat-q4_0-unquantized",
+                "gemma4-12b-with-proj-ltx-2.5",
+                "gemma-4-e2b-it",
                 "z-image-turbo",
                 "krea-2-turbo"
               ],
@@ -2783,8 +3433,14 @@
             "title": "Cps To Download",
             "type": "array"
           },
+          "loses_built_in_control": {
+            "default": false,
+            "title": "Loses Built In Control",
+            "type": "boolean"
+          },
           "ltx_model_id": {
             "enum": [
+              "ltx-2.5-22b-distilled",
               "ltx-2.3-22b-distilled-1.1",
               "ltx-2.3-22b-distilled"
             ],
@@ -2855,10 +3511,18 @@
                 "ltx-2.3-spatial-upscaler-x2-1.0",
                 "ltx-2.3-spatial-upscaler-x2-1.1",
                 "ltx-2.3-22b-ic-lora-union-control-ref0.5",
+                "ltx-2.5-22b-distilled",
+                "ltx-2.5-spatial-upscaler-x2-1.0",
+                "ltx-2.5-video-vae",
+                "ltx-2.5-video-vae-conv",
+                "ltx-2.5-audio-vae",
+                "ltx-2.5-duration-head",
                 "dpt-hybrid-midas",
                 "yolox-l-torchscript",
                 "dw-ll-ucoco-384-bs5",
                 "gemma-3-12b-it-qat-q4_0-unquantized",
+                "gemma4-12b-with-proj-ltx-2.5",
+                "gemma-4-e2b-it",
                 "z-image-turbo",
                 "krea-2-turbo"
               ],
@@ -2882,10 +3546,18 @@
                 "ltx-2.3-spatial-upscaler-x2-1.0",
                 "ltx-2.3-spatial-upscaler-x2-1.1",
                 "ltx-2.3-22b-ic-lora-union-control-ref0.5",
+                "ltx-2.5-22b-distilled",
+                "ltx-2.5-spatial-upscaler-x2-1.0",
+                "ltx-2.5-video-vae",
+                "ltx-2.5-video-vae-conv",
+                "ltx-2.5-audio-vae",
+                "ltx-2.5-duration-head",
                 "dpt-hybrid-midas",
                 "yolox-l-torchscript",
                 "dw-ll-ucoco-384-bs5",
                 "gemma-3-12b-it-qat-q4_0-unquantized",
+                "gemma4-12b-with-proj-ltx-2.5",
+                "gemma-4-e2b-it",
                 "z-image-turbo",
                 "krea-2-turbo"
               ],
@@ -3060,6 +3732,47 @@
         "title": "PreprocessingStep",
         "type": "object"
       },
+      "PromptTemplatePlaceholder": {
+        "properties": {
+          "choices": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Choices"
+          }
+        },
+        "title": "PromptTemplatePlaceholder",
+        "type": "object"
+      },
+      "PromptTemplateSpec": {
+        "description": "A fixed prompt structure a LoRA/IC-LoRA requires verbatim (e.g. a two-part\n\"Reference shows X. Edited shows Y.\" restore template, or crossview's enum-constrained\ncamera vocabulary). `template` contains `{name}` placeholders; each must have a matching\nentry in `placeholders`. A degenerate template with no placeholders (e.g. \"upscale\") is a\nfixed, non-generated prompt.",
+        "properties": {
+          "placeholders": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/PromptTemplatePlaceholder"
+            },
+            "title": "Placeholders",
+            "type": "object"
+          },
+          "template": {
+            "title": "Template",
+            "type": "string"
+          }
+        },
+        "required": [
+          "template"
+        ],
+        "title": "PromptTemplateSpec",
+        "type": "object"
+      },
       "QwenMultiAngleGenerateRequest": {
         "properties": {
           "azimuth_deg": {
@@ -3194,6 +3907,12 @@
             "title": "Mode",
             "type": "string"
           },
+          "model": {
+            "const": "pro",
+            "default": "pro",
+            "title": "Model",
+            "type": "string"
+          },
           "prompt": {
             "default": "",
             "title": "Prompt",
@@ -3262,6 +3981,7 @@
         "properties": {
           "model_id": {
             "enum": [
+              "ltx-2.5-22b-distilled",
               "ltx-2.3-22b-distilled-1.1",
               "ltx-2.3-22b-distilled"
             ],
@@ -3281,6 +4001,7 @@
             "anyOf": [
               {
                 "enum": [
+                  "ltx-2.5-22b-distilled",
                   "ltx-2.3-22b-distilled-1.1",
                   "ltx-2.3-22b-distilled"
                 ],
@@ -3296,6 +4017,11 @@
             "default": true,
             "title": "Diffusionstagecacheenabled",
             "type": "boolean"
+          },
+          "geminiModel": {
+            "default": "",
+            "title": "Geminimodel",
+            "type": "string"
           },
           "hasFalApiKey": {
             "default": false,
@@ -3337,9 +4063,29 @@
             "title": "Promptenhancerenabledt2V",
             "type": "boolean"
           },
+          "promptEnhancerProviderPreference": {
+            "anyOf": [
+              {
+                "enum": [
+                  "local",
+                  "api"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Promptenhancerproviderpreference"
+          },
           "seedLocked": {
             "default": false,
             "title": "Seedlocked",
+            "type": "boolean"
+          },
+          "useConvVae": {
+            "default": false,
+            "title": "Useconvvae",
             "type": "boolean"
           },
           "useLocalTextEncoder": {
@@ -3350,6 +4096,11 @@
           "useTorchCompile": {
             "default": false,
             "title": "Usetorchcompile",
+            "type": "boolean"
+          },
+          "userPrefersFalApiImageGenerations": {
+            "default": false,
+            "title": "Userprefersfalapiimagegenerations",
             "type": "boolean"
           },
           "userPrefersLtxApiVideoGenerations": {
@@ -3480,6 +4231,42 @@
       },
       "TextEncoderRecommendationResponse": {
         "properties": {
+          "active_local_enhancer_cp": {
+            "anyOf": [
+              {
+                "enum": [
+                  "ltx-2.3-22b-distilled",
+                  "ltx-2.3-22b-distilled-1.1",
+                  "ltx-2.3-spatial-upscaler-x2-1.0",
+                  "ltx-2.3-spatial-upscaler-x2-1.1",
+                  "ltx-2.3-22b-ic-lora-union-control-ref0.5",
+                  "ltx-2.5-22b-distilled",
+                  "ltx-2.5-spatial-upscaler-x2-1.0",
+                  "ltx-2.5-video-vae",
+                  "ltx-2.5-video-vae-conv",
+                  "ltx-2.5-audio-vae",
+                  "ltx-2.5-duration-head",
+                  "dpt-hybrid-midas",
+                  "yolox-l-torchscript",
+                  "dw-ll-ucoco-384-bs5",
+                  "gemma-3-12b-it-qat-q4_0-unquantized",
+                  "gemma4-12b-with-proj-ltx-2.5",
+                  "gemma-4-e2b-it",
+                  "z-image-turbo",
+                  "krea-2-turbo"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Active Local Enhancer Cp"
+          },
+          "api_encoding_supported": {
+            "title": "Api Encoding Supported",
+            "type": "boolean"
+          },
           "cp_to_download": {
             "anyOf": [
               {
@@ -3489,10 +4276,18 @@
                   "ltx-2.3-spatial-upscaler-x2-1.0",
                   "ltx-2.3-spatial-upscaler-x2-1.1",
                   "ltx-2.3-22b-ic-lora-union-control-ref0.5",
+                  "ltx-2.5-22b-distilled",
+                  "ltx-2.5-spatial-upscaler-x2-1.0",
+                  "ltx-2.5-video-vae",
+                  "ltx-2.5-video-vae-conv",
+                  "ltx-2.5-audio-vae",
+                  "ltx-2.5-duration-head",
                   "dpt-hybrid-midas",
                   "yolox-l-torchscript",
                   "dw-ll-ucoco-384-bs5",
                   "gemma-3-12b-it-qat-q4_0-unquantized",
+                  "gemma4-12b-with-proj-ltx-2.5",
+                  "gemma-4-e2b-it",
                   "z-image-turbo",
                   "krea-2-turbo"
                 ],
@@ -3511,12 +4306,69 @@
           "expected_size_gb": {
             "title": "Expected Size Gb",
             "type": "number"
+          },
+          "local_enhancement_supported": {
+            "title": "Local Enhancement Supported",
+            "type": "boolean"
+          },
+          "local_enhancer_cp": {
+            "anyOf": [
+              {
+                "enum": [
+                  "ltx-2.3-22b-distilled",
+                  "ltx-2.3-22b-distilled-1.1",
+                  "ltx-2.3-spatial-upscaler-x2-1.0",
+                  "ltx-2.3-spatial-upscaler-x2-1.1",
+                  "ltx-2.3-22b-ic-lora-union-control-ref0.5",
+                  "ltx-2.5-22b-distilled",
+                  "ltx-2.5-spatial-upscaler-x2-1.0",
+                  "ltx-2.5-video-vae",
+                  "ltx-2.5-video-vae-conv",
+                  "ltx-2.5-audio-vae",
+                  "ltx-2.5-duration-head",
+                  "dpt-hybrid-midas",
+                  "yolox-l-torchscript",
+                  "dw-ll-ucoco-384-bs5",
+                  "gemma-3-12b-it-qat-q4_0-unquantized",
+                  "gemma4-12b-with-proj-ltx-2.5",
+                  "gemma-4-e2b-it",
+                  "z-image-turbo",
+                  "krea-2-turbo"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Local Enhancer Cp"
+          },
+          "local_enhancer_expected_size_gb": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Local Enhancer Expected Size Gb"
+          },
+          "ltx_version_label": {
+            "title": "Ltx Version Label",
+            "type": "string"
           }
         },
         "required": [
           "cp_to_download",
           "expected_size_bytes",
-          "expected_size_gb"
+          "expected_size_gb",
+          "api_encoding_supported",
+          "ltx_version_label",
+          "local_enhancement_supported",
+          "local_enhancer_cp",
+          "local_enhancer_expected_size_gb",
+          "active_local_enhancer_cp"
         ],
         "title": "TextEncoderRecommendationResponse",
         "type": "object"
@@ -3722,6 +4574,58 @@
         "summary": "Route Hf Auth Status",
         "tags": [
           "hf_auth"
+        ]
+      }
+    },
+    "/api/enhance-prompt": {
+      "post": {
+        "description": "POST /api/enhance-prompt.",
+        "operationId": "route_enhance_prompt_api_enhance_prompt_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EnhancePromptRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EnhancePromptResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "4XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPErrorResponse"
+                }
+              }
+            },
+            "description": "Client Error"
+          },
+          "5XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPErrorResponse"
+                }
+              }
+            },
+            "description": "Server Error"
+          }
+        },
+        "summary": "Route Enhance Prompt",
+        "tags": [
+          "prompt-enhancement"
         ]
       }
     },
@@ -5405,6 +6309,47 @@
           }
         },
         "summary": "Route Post Settings",
+        "tags": [
+          "settings"
+        ]
+      }
+    },
+    "/api/settings/gemini-models": {
+      "get": {
+        "operationId": "route_list_gemini_models_api_settings_gemini_models_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GeminiModelsResponsePayload"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "4XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPErrorResponse"
+                }
+              }
+            },
+            "description": "Client Error"
+          },
+          "5XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPErrorResponse"
+                }
+              }
+            },
+            "description": "Server Error"
+          }
+        },
+        "summary": "Route List Gemini Models",
         "tags": [
           "settings"
         ]

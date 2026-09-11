@@ -9,6 +9,7 @@ from threading import RLock
 
 from api_types import (
     RetakeCancelledResponse,
+    RetakeExtendModel,
     RetakeMode,
     RetakePayloadResponse,
     RetakeRequest,
@@ -17,6 +18,7 @@ from api_types import (
     TargetResolution,
 )
 from _routes._errors import HTTPError
+from api_model_specs import FORCED_API_MODEL_MAP
 from handlers.base import StateHandlerBase
 from handlers.generation_handler import GenerationHandler
 from handlers.pipelines_handler import PipelinesHandler
@@ -27,7 +29,10 @@ from handlers.video_resolution import (
     resolve_target_resolution,
     validate_source_video_path,
 )
+from runtime_config.ltx_capabilities import local_caps, supports
+from runtime_config.model_download_specs import resolve_active_ltx_model_id
 from runtime_config.runtime_config import RuntimeConfig
+from services.generation_interrupt import GenerationCancelledError, is_cancel_exception
 from services.ltx_api_client.ltx_api_client import LTXAPIClientError
 from services.interfaces import LTXAPIClient
 from state.app_state_types import AppState
@@ -73,6 +78,19 @@ class RetakeHandler(StateHandlerBase):
                 duration=duration,
                 prompt=prompt,
                 mode=mode,
+                model=req.model,
+            )
+
+        model_id = resolve_active_ltx_model_id(
+            self.models_dir, self.state.app_settings.active_ltx_model_id
+        )
+        if model_id is None:
+            raise HTTPError(409, "NO_DOWNLOADED_LTX_MODEL")
+        if not supports(local_caps(model_id), "retake"):
+            raise HTTPError(
+                409,
+                "Retake is not supported for the active LTX model.",
+                code="UNSUPPORTED_RETAKE",
             )
 
         return self._run_local_retake(
@@ -92,63 +110,64 @@ class RetakeHandler(StateHandlerBase):
         duration: float,
         prompt: str,
         mode: RetakeMode,
+        model: RetakeExtendModel,
     ) -> RetakeResponse:
         api_key = self.state.app_settings.ltx_api_key
         if not api_key:
             raise HTTPError(400, "LTX API key not configured. Set it in Settings.")
 
-        if self._generation.is_generation_running():
-            raise HTTPError(409, "Generation already in progress")
+        with self._generation.reserved_generation_start():
 
-        # Drive the generation state machine so the result is recoverable via
-        # /api/generation/progress if the page unmounts mid-generation (mirrors the
-        # forced-API video path). Without this, /progress stays idle and the finished
-        # retake is stranded in outputs/.
-        try:
-            self._generation.start_api_generation(uuid.uuid4().hex[:8])
-        except RuntimeError as exc:
-            # A concurrent generation started between the line-97 check and here; surface
-            # the same 409 as the guard above, not a bare 500 (don't fail_generation — the
-            # running generation we lost the race to owns the state now).
-            raise HTTPError(409, str(exc)) from exc
-        try:
-            self._generation.update_progress("inference", 55, None, None)
-            result = self._ltx_api_client.retake(
-                api_key=api_key,
-                video_path=str(video_file),
-                start_time=start_time,
-                duration=duration,
-                prompt=prompt,
-                mode=mode,
-            )
+            # Drive the generation state machine so the result is recoverable via
+            # /api/generation/progress if the page unmounts mid-generation (mirrors the
+            # forced-API video path). Without this, /progress stays idle and the finished
+            # retake is stranded in outputs/.
+            try:
+                self._generation.start_api_generation(uuid.uuid4().hex[:8])
+            except RuntimeError as exc:
+                # A concurrent generation started between the line-97 check and here; surface
+                # the same 409 as the guard above, not a bare 500 (don't fail_generation — the
+                # running generation we lost the race to owns the state now).
+                raise HTTPError(409, str(exc)) from exc
+            try:
+                self._generation.update_progress("inference", 55, None, None)
+                result = self._ltx_api_client.retake(
+                    api_key=api_key,
+                    video_path=str(video_file),
+                    start_time=start_time,
+                    duration=duration,
+                    prompt=prompt,
+                    mode=mode,
+                    model=FORCED_API_MODEL_MAP[model],
+                )
 
-            if result.video_bytes is not None:
-                self._generation.update_progress("downloading_output", 85, None, None)
-                output = self.config.outputs_dir / f"retake_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}.mp4"
-                with open(output, "wb") as out:
-                    out.write(result.video_bytes)
-                self._generation.update_progress("complete", 100, None, None)
-                self._generation.complete_generation(str(output))
-                return RetakeVideoResponse(status="complete", video_path=str(output))
+                if result.video_bytes is not None:
+                    self._generation.update_progress("downloading_output", 85, None, None)
+                    output = self.config.outputs_dir / f"retake_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}.mp4"
+                    with open(output, "wb") as out:
+                        out.write(result.video_bytes)
+                    self._generation.update_progress("complete", 100, None, None)
+                    self._generation.complete_generation(str(output))
+                    return RetakeVideoResponse(status="complete", video_path=str(output))
 
-            if result.result_payload is not None:
-                # Success, but a remote payload with no local file: complete the
-                # generation with no recoverable artifact (the caller already has the
-                # payload synchronously). Not fail_generation — the retake succeeded.
-                self._generation.update_progress("complete", 100, None, None)
-                self._generation.complete_generation(None)
-                return RetakePayloadResponse(status="complete", result=result.result_payload)
+                if result.result_payload is not None:
+                    # Success, but a remote payload with no local file: complete the
+                    # generation with no recoverable artifact (the caller already has the
+                    # payload synchronously). Not fail_generation — the retake succeeded.
+                    self._generation.update_progress("complete", 100, None, None)
+                    self._generation.complete_generation(None)
+                    return RetakePayloadResponse(status="complete", result=result.result_payload)
 
-            raise HTTPError(500, "Retake API returned no result")
-        except LTXAPIClientError as exc:
-            self._generation.fail_generation(exc.detail)
-            raise HTTPError(exc.status_code, exc.detail) from exc
-        except HTTPError as exc:
-            self._generation.fail_generation(exc.detail)
-            raise
-        except Exception as exc:
-            self._generation.fail_generation(str(exc))
-            raise
+                raise HTTPError(500, "Retake API returned no result")
+            except LTXAPIClientError as exc:
+                self._generation.fail_generation(exc.detail)
+                raise HTTPError(exc.status_code, exc.detail) from exc
+            except HTTPError as exc:
+                self._generation.fail_generation(exc.detail)
+                raise
+            except Exception as exc:
+                self._generation.fail_generation(str(exc))
+                raise
 
     def _run_local_retake(
         self,
@@ -160,73 +179,74 @@ class RetakeHandler(StateHandlerBase):
         mode: RetakeMode,
         resolution: TargetResolution | None,
     ) -> RetakeResponse:
-        if self._generation.is_generation_running():
-            raise HTTPError(409, "Generation already in progress")
+        with self._generation.reserved_generation_start():
 
-        fps, source_width, source_height, source_frames = read_source_metadata(str(video_file))
-        target_frames = correct_frame_count(source_frames)
-        # The clip is trimmed to target_frames; clamp the selection to the corrected length
-        # so region_end / the temporal mask can't reference frames past the latent.
-        corrected_duration = target_frames / fps
-        end_time = min(start_time + duration, corrected_duration)
-        if start_time >= end_time:
-            raise HTTPError(400, "Selection is outside the usable video range")
+            fps, source_width, source_height, source_frames = read_source_metadata(str(video_file))
+            target_frames = correct_frame_count(source_frames)
+            # The clip is trimmed to target_frames; clamp the selection to the corrected length
+            # so region_end / the temporal mask can't reference frames past the latent.
+            corrected_duration = target_frames / fps
+            end_time = min(start_time + duration, corrected_duration)
+            if start_time >= end_time:
+                raise HTTPError(400, "Selection is outside the usable video range")
 
-        target_width, target_height = resolve_target_resolution(resolution, source_width, source_height)
+            target_width, target_height = resolve_target_resolution(resolution, source_width, source_height)
 
-        try:
-            self._text.prepare_text_encoding(prompt, enhance_prompt=False)
-        except RuntimeError as exc:
-            raise HTTPError(400, str(exc)) from exc
+            try:
+                self._text.prepare_text_encoding(prompt, enhance_prompt=False)
+            except RuntimeError as exc:
+                raise HTTPError(400, str(exc)) from exc
 
-        generation_id = uuid.uuid4().hex[:8]
-        seed = self._resolve_seed()
-        output_path = self.config.outputs_dir / f"retake_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{generation_id}.mp4"
-        regenerate_video, regenerate_audio = self._resolve_retake_mode(mode)
+            generation_id = uuid.uuid4().hex[:8]
+            seed = self._resolve_seed()
+            output_path = self.config.outputs_dir / f"retake_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{generation_id}.mp4"
+            regenerate_video, regenerate_audio = self._resolve_retake_mode(mode)
 
-        try:
-            pipeline_state = self._pipelines.load_retake_pipeline(distilled=True)
-            self._generation.start_generation(generation_id)
-            self._generation.update_progress("loading_model", 5, 0, 1)
-            self._generation.update_progress("inference", 15, 0, 1)
+            try:
+                pipeline_state = self._pipelines.load_retake_pipeline(distilled=True)
+                self._generation.start_generation(generation_id)
+                self._generation.update_progress("loading_model", 5, 0, 1)
+                self._generation.update_progress("inference", 15, 0, 1)
 
-            pipeline_state.pipeline.generate(
-                video_path=str(video_file),
-                prompt=prompt,
-                start_time=start_time,
-                end_time=end_time,
-                seed=seed,
-                output_path=str(output_path),
-                negative_prompt=self.config.default_negative_prompt,
-                num_inference_steps=40,
-                video_guider_params=None,
-                audio_guider_params=None,
-                regenerate_video=regenerate_video,
-                regenerate_audio=regenerate_audio,
-                enhance_prompt=False,
-                distilled=True,
-                target_width=target_width,
-                target_height=target_height,
-                target_frames=target_frames,
-            )
+                pipeline_state.pipeline.generate(
+                    video_path=str(video_file),
+                    prompt=prompt,
+                    start_time=start_time,
+                    end_time=end_time,
+                    seed=seed,
+                    output_path=str(output_path),
+                    negative_prompt=self.config.default_negative_prompt,
+                    num_inference_steps=40,
+                    video_guider_params=None,
+                    audio_guider_params=None,
+                    regenerate_video=regenerate_video,
+                    regenerate_audio=regenerate_audio,
+                    enhance_prompt=False,
+                    distilled=True,
+                    target_width=target_width,
+                    target_height=target_height,
+                    target_frames=target_frames,
+                )
 
-            if self._generation.is_generation_cancelled():
-                output_path.unlink(missing_ok=True)
-                raise RuntimeError("Generation was cancelled")
+                # Denoiser interrupt cannot abort VAE decode / ffmpeg; a Stop after the last
+                # denoise step still finishes encode, then this check drops the file.
+                if self._generation.is_generation_cancelled():
+                    output_path.unlink(missing_ok=True)
+                    raise GenerationCancelledError()
 
-            self._generation.update_progress("complete", 100, 1, 1)
-            self._generation.complete_generation(str(output_path))
-            return RetakeVideoResponse(status="complete", video_path=str(output_path))
-        except HTTPError:
-            self._generation.fail_generation("Retake generation failed")
-            raise
-        except Exception as exc:
-            self._generation.fail_generation(str(exc))
-            if "cancelled" in str(exc).lower():
-                return RetakeCancelledResponse(status="cancelled")
-            raise HTTPError(500, f"Generation error: {exc}") from exc
-        finally:
-            self._text.clear_api_embeddings()
+                self._generation.update_progress("complete", 100, 1, 1)
+                self._generation.complete_generation(str(output_path))
+                return RetakeVideoResponse(status="complete", video_path=str(output_path))
+            except HTTPError:
+                self._generation.fail_generation("Retake generation failed")
+                raise
+            except Exception as exc:
+                self._generation.fail_generation(str(exc))
+                if is_cancel_exception(exc):
+                    return RetakeCancelledResponse(status="cancelled")
+                raise HTTPError(500, f"Generation error: {exc}") from exc
+            finally:
+                self._text.clear_api_embeddings()
 
     @staticmethod
     def _resolve_retake_mode(mode: RetakeMode) -> tuple[bool, bool]:

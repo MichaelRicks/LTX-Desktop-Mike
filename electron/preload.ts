@@ -1,4 +1,4 @@
-import { electronAPISchemas, type BackendHealthStatus } from '../shared/electron-api-schema'
+import { electronAPISchemas, type BackendHealthStatus, type UpdateStatePayload } from '../shared/electron-api-schema'
 
 const { contextBridge, ipcRenderer, webUtils } = require('electron')
 
@@ -38,6 +38,12 @@ api.onGpmLibChanged = (cb: () => void) => {
   return () => {
     ipcRenderer.removeListener('gpm-lib-changed', listener)
   }
+}
+
+api.onUpdateEvent = (cb: (data: UpdateStatePayload) => void) => {
+  const listener = (_: unknown, data: UpdateStatePayload) => cb(data)
+  ipcRenderer.on('update-event', listener)
+  return () => ipcRenderer.removeListener('update-event', listener)
 }
 
 api.getPathForFile = (file: File) => webUtils.getPathForFile(file)

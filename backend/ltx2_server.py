@@ -3,6 +3,11 @@ import faulthandler
 import os
 import sys
 
+from server_utils.win_dll_search import remove_cwd_from_dll_search_path
+
+# Before torch / native extensions: do not search CWD for DLLs (Windows hijack).
+remove_cwd_from_dll_search_path()
+
 faulthandler.enable(file=sys.stderr, all_threads=True)
 from typing import Any, cast
 
@@ -28,6 +33,16 @@ from pathlib import Path
 # ignores it there. Must be set before importing torch; setdefault lets an explicit env override.
 os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
 
+# Before any mps-sdpa import. Calibration benches the slow pyobjc backend at
+# L<=2048 and can cache fused_min_bytes=None ("always stock"). That then also
+# disables mpsgraph_zc, so video-length attention hits stock MPS SDPA, which
+# materializes S×S (~47 GiB at 720p/5s) and OOMs / wedged-U-state
+# (https://github.com/Lightricks/LTX-Desktop/issues/161). setdefault so a
+# developer override still wins. Remove once mps-sdpa treats None as "use
+# defaults" for large sequences, or calibrates against mpsgraph_zc / video L.
+if sys.platform == "darwin":
+    os.environ.setdefault("MPS_SDPA_SKIP_CALIBRATION", "1")
+
 import torch
 
 # macOS: stage mps-sdpa's prebuilt zero-copy attention extension cache before mps-sdpa
@@ -40,13 +55,19 @@ import torch
 import mps_prebuilt_ext as _mps_prebuilt_ext  # pyright: ignore[reportUnusedImport]
 _mps_prebuilt_ext.setup_prebuilt_mps_extension()
 
+# LLM: bumping ltx-core / ltx-pipelines (backend/pyproject.toml) MUST re-verify every
+# import below (and mps_sdpa_torch later in this file). These monkey-patch private
+# ltx-core / ltx-pipelines / safetensors symbols. For each module: confirm the
+# upstream symbol still exists, the replacement still matches the contract, drop it
+# if upstream now includes the fix (see that file's "Remove once ..." docstring),
+# and run tests/test_<patch>.py.
 import services.patches.record_stream_fix as _record_stream_fix  # pyright: ignore[reportUnusedImport]  # Remove once ltx-core includes the fix
 del _record_stream_fix
 import services.patches.safetensors_loader_fix as _safetensors_loader_fix  # pyright: ignore[reportUnusedImport]  # Remove once safetensors/PyTorch fix the mmap issue
 del _safetensors_loader_fix
 import services.patches.safetensors_metadata_fix as _safetensors_metadata_fix  # pyright: ignore[reportUnusedImport]  # Remove once safetensors supports read-only mmap
 del _safetensors_metadata_fix
-import services.patches.pinned_pool_fix as _pinned_pool_fix  # pyright: ignore[reportUnusedImport]  # Remove once ltx-core restores bounded pinned pool
+import services.patches.pinned_pool_fix as _pinned_pool_fix  # pyright: ignore[reportUnusedImport]  # Remove once ltx-core alloc_buffer does not report pinned-host failure as CUDA VRAM OOM (LTX-Desktop#141)
 del _pinned_pool_fix
 import services.patches.ic_lora_stage2_lora as _ic_lora_stage2_lora  # pyright: ignore[reportUnusedImport]  # EXPERIMENTAL: remove once upstream ships PR #494 (use_lora_in_stage_2)
 del _ic_lora_stage2_lora
@@ -56,6 +77,14 @@ import services.patches.aux_block_cache as _aux_block_cache_import  # pyright: i
 del _aux_block_cache_import
 import services.patches.fp8_sidecar_cache as _fp8_sidecar_cache  # pyright: ignore[reportUnusedImport]  # EXPERIMENTAL: remove if ltx-core caches post-sd_ops block weights on disk
 del _fp8_sidecar_cache
+import services.patches.diffvae_mps_tiling_budget as _diffvae_mps_tiling_budget  # pyright: ignore[reportUnusedImport]  # Remove once ltx-pipelines queries MPS/unified free memory
+del _diffvae_mps_tiling_budget
+import services.patches.diffvae_decode_vram as _diffvae_decode_vram  # pyright: ignore[reportUnusedImport]  # Remove once ltx-pipelines offloads the transformer before DiffVAE decode
+del _diffvae_decode_vram
+import services.patches.natten_libnatten_gate as _natten_libnatten_gate  # pyright: ignore[reportUnusedImport]  # Remove once ltx-core natten_available checks HAS_LIBNATTEN
+del _natten_libnatten_gate
+import services.patches.diffusion_interrupt as _diffusion_interrupt  # pyright: ignore[reportUnusedImport]  # Remove once ltx-pipelines denoiser/loop accepts an interrupt callback
+del _diffusion_interrupt
 
 from state.app_settings import AppSettings
 
@@ -151,6 +180,12 @@ if use_sage_attention:
         logger.warning("Failed to enable SageAttention", exc_info=True)
         use_sage_attention = False
 
+# Darwin: Diffusers/Z-Image call F.sdpa (stock MPS SDPA materializes S×S and can
+# freeze the machine). Video already uses mps-sdpa via ltx-core; this covers Z-Image.
+# Remove once Diffusers native attention on MPS uses a fused / mps-sdpa backend.
+import services.patches.mps_sdpa_torch as _mps_sdpa_torch
+_mps_sdpa_torch.install()
+
 # ============================================================
 # Constants & Paths
 # ============================================================
@@ -207,7 +242,7 @@ from app_factory import DEFAULT_ALLOWED_ORIGINS, create_app
 from state import RuntimeConfig, build_initial_state
 from runtime_config.runtime_policy import LocalGenerationMode, decide_local_generation_mode
 from server_utils.model_layout_migration import migrate_legacy_models_layout
-from services.gpu_info.gpu_info_impl import GpuInfoImpl
+from services.gpu_info.gpu_info_impl import GpuInfoImpl, platform_label
 
 migrate_legacy_models_layout(APP_DATA_DIR)
 
@@ -215,11 +250,14 @@ LTX_API_BASE_URL = "https://api.ltx.video"
 
 
 def _resolve_local_generations_mode() -> LocalGenerationMode:
+    from runtime_config.accelerator import accelerator_backend
+
     gpu_info = GpuInfoImpl()
     system = platform.system()
     cuda_available = gpu_info.get_cuda_available()
     mps_available = gpu_info.get_mps_available()
     vram_gb = gpu_info.get_vram_total_gb()
+    fp8_capable = accelerator_backend() == "cuda"
     # On Darwin there's no discrete VRAM (unified memory), so gate on *available* RAM,
     # not total — total overstates real headroom once the OS/Electron/app are running.
     # See GpuInfoImpl.get_available_ram_gb.
@@ -232,16 +270,18 @@ def _resolve_local_generations_mode() -> LocalGenerationMode:
         vram_gb=vram_gb,
         mps_available=mps_available,
         ram_gb=available_ram_gb,
+        fp8_capable=fp8_capable,
     )
     logger.info(
         "Runtime policy local_generations_mode=%s (system=%s cuda_available=%s mps_available=%s "
-        "vram_gb=%s available_ram_gb=%s)",
+        "vram_gb=%s available_ram_gb=%s fp8_capable=%s)",
         mode,
         system,
         cuda_available,
         mps_available,
         vram_gb,
         available_ram_gb,
+        fp8_capable,
     )
     return mode
 
@@ -253,11 +293,8 @@ LOCAL_GENERATIONS_MODE = _resolve_local_generations_mode()
 # a CPU-mode streaming stage_2 even on full-loading (5090) cards, which must NOT
 # get session-cached there -- see that module's TWO CACHED KINDS docstring section.
 import services.patches.aux_block_cache as _aux_block_cache_gate
-import services.patches.diffusion_stage_cache as _diffusion_stage_cache_gate
 
-_diffusion_stage_cache_gate.set_streaming_enabled(LOCAL_GENERATIONS_MODE == "streaming_models_loading")
 _aux_block_cache_gate.set_streaming_enabled(LOCAL_GENERATIONS_MODE == "streaming_models_loading")
-del _diffusion_stage_cache_gate
 del _aux_block_cache_gate
 
 CAMERA_MOTION_PROMPTS = {
@@ -274,7 +311,7 @@ CAMERA_MOTION_PROMPTS = {
 
 DEFAULT_NEGATIVE_PROMPT = """blurry, out of focus, overexposed, underexposed, low contrast, washed out colors, excessive noise, grainy texture, poor lighting, flickering, motion blur, distorted proportions, unnatural skin tones, deformed facial features, asymmetrical face, missing facial features, extra limbs, disfigured hands, wrong hand count, artifacts around text, inconsistent perspective, camera shake, incorrect depth of field"""
 
-HF_OAUTH_CLIENT_ID = "a8189e14-9246-4f19-bd6a-a307bdcb9276"
+HF_OAUTH_CLIENT_ID = "508843e5-65c3-4565-aeed-fb17e94cf394"
 
 runtime_config = RuntimeConfig(
     device=DEVICE,
@@ -324,7 +361,7 @@ def log_hardware_info() -> None:
     gpu_info = gpu.get_gpu_info()
     vram_gb = gpu_info["vram"] // 1024 if gpu_info["vram"] else 0
 
-    logger.info(f"Platform: {platform.system()} ({platform.machine()})")
+    logger.info(f"Platform: {platform_label()}")
     logger.info(f"Device: {DEVICE}  |  Dtype: {DTYPE}")
     gpu_line = f"GPU: {gpu_info['name']}  |  VRAM: {vram_gb} GB"
     # On Apple Silicon there's no discrete VRAM — the figure above is total unified
@@ -332,7 +369,12 @@ def log_hardware_info() -> None:
     if gpu.get_mps_available():
         avail = gpu.get_available_ram_gb()
         gpu_line += f"  |  Available RAM: {avail if avail is not None else '?'} GB"
+        logger.info(
+            "LTX 2.5 decode uses eager SDPA on Mac (no Triton; slower than Linux/Windows)."
+        )
     logger.info(gpu_line)
+    from runtime_config.accelerator import accelerator_backend
+    logger.info(f"Accelerator: {accelerator_backend()}  |  HIP: {getattr(torch.version, 'hip', None)}")
     logger.info(f"SageAttention: {'enabled' if use_sage_attention else 'disabled'}")
     logger.info(f"Python: {sys.version.split()[0]}  |  Torch: {torch.__version__}")
 

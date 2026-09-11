@@ -8,6 +8,7 @@ import { logger, writeLog } from './logger'
 import { getCurrentLogFilename } from './logging-management'
 import { getPythonDir } from './python-setup'
 import { getMainWindow } from './window'
+import { PY_REMOVE_CWD_FROM_DLL_SEARCH } from './win-dll-search'
 
 let pythonProcess: ChildProcess | null = null
 let isIntentionalShutdown = false
@@ -25,6 +26,41 @@ const LIVENESS_POLL_INTERVAL_MS = 10_000
 const LIVENESS_FAILURE_THRESHOLD = 5
 let livenessMonitorTimer: NodeJS.Timeout | null = null
 let livenessFailureCount = 0
+
+// A local generation can hold the Python process's GIL for long, uninterrupted stretches (MPS
+// PyTorch ops release it far less eagerly than CUDA), which starves the asyncio event loop that
+// would otherwise accept and dispatch the /health request — the backend isn't hung, it's just
+// busy, but the liveness probe can't tell the difference and would otherwise kill it mid-
+// generation. The renderer tells us when one is in flight so we can suspend the kill-on-failure
+// behavior for its duration. Bounded by MAX_SUPPRESSION_MS so a renderer crash/reload that never
+// clears the flag can't permanently disable the safety net for a genuinely hung backend.
+const MAX_SUPPRESSION_MS = 20 * 60_000
+let generationActiveSince: number | null = null
+// Ref-counted: withGenerationActive scopes can overlap (e.g. a second click that 409s fast
+// while the first generation is still running) — a plain boolean would let the loser's exit
+// clear suppression mid-generation. Depth also means only the 0->1 transition stamps
+// generationActiveSince, so an overlapping/looping notification can't keep resetting the
+// MAX_SUPPRESSION_MS clock the comment above promises.
+let activeGenerationCount = 0
+
+export function setGenerationActive(active: boolean): void {
+  if (active) {
+    activeGenerationCount += 1
+    if (generationActiveSince == null) generationActiveSince = Date.now()
+    livenessFailureCount = 0
+    return
+  }
+  activeGenerationCount = Math.max(0, activeGenerationCount - 1)
+  if (activeGenerationCount === 0) generationActiveSince = null
+}
+
+export function isGenerationActive(): boolean {
+  return activeGenerationCount > 0
+}
+
+function isLivenessSuppressed(): boolean {
+  return generationActiveSince != null && Date.now() - generationActiveSince < MAX_SUPPRESSION_MS
+}
 
 let backendUrl: string | null = null
 let authToken: string | null = null
@@ -135,6 +171,9 @@ function startLivenessMonitor(): void {
   livenessMonitorTimer = setInterval(() => {
     void (async () => {
       if (!pythonProcess || backendOwnership !== 'managed' || isIntentionalShutdown) {
+        return
+      }
+      if (isLivenessSuppressed()) {
         return
       }
       const healthy = await probeBackendHealth(2000)
@@ -274,7 +313,7 @@ export async function startPythonBackend(): Promise<void> {
     // can't be found. Use a -c wrapper to fix sys.path before running the server.
     let pythonArgs: string[]
     if (!isDev && process.platform === 'win32') {
-      const preamble = `import sys; sys.path.insert(0, r"${backendPath}"); import runpy; runpy.run_path(r"${mainPy}", run_name="__main__")`
+      const preamble = `${PY_REMOVE_CWD_FROM_DLL_SEARCH}import sys; sys.path.insert(0, r"${backendPath}"); import runpy; runpy.run_path(r"${mainPy}", run_name="__main__")`
       pythonArgs = ['-u', '-c', preamble]
     } else {
       pythonArgs = isDev ? ['-Xfrozen_modules=off', '-u', mainPy] : ['-u', mainPy]
@@ -297,6 +336,11 @@ export async function startPythonBackend(): Promise<void> {
         // can't shadow PATH entries for backend subprocesses on Windows/Linux.
         ...(process.platform === 'darwin' ? {
           PATH: `${path.dirname(pythonPath)}${path.delimiter}${process.env.PATH ?? ''}`,
+          // Skip mps-sdpa's import-time microbench: it can cache fused_min_bytes=None
+          // ("always stock"), which routes video-length attention through stock MPS
+          // SDPA and OOMs (https://github.com/Lightricks/LTX-Desktop/issues/161).
+          // Honor an explicit parent value (matches setdefault in ltx2_server.py).
+          MPS_SDPA_SKIP_CALIBRATION: process.env.MPS_SDPA_SKIP_CALIBRATION ?? '1',
         } : {}),
         // Only pass LTX_PORT when the developer explicitly set it
         ...(process.env.LTX_PORT ? { LTX_PORT: process.env.LTX_PORT } : {}),
@@ -412,8 +456,8 @@ export async function startPythonBackend(): Promise<void> {
       }
     })
 
-    pythonProcess.on('exit', async (code) => {
-      logger.info(`Python backend exited with code ${code}`)
+    pythonProcess.on('exit', async (code, signal) => {
+      logger.info(`Python backend exited with code ${code} signal ${signal}`)
       stopLivenessMonitor()
       pythonProcess = null
       backendUrl = null

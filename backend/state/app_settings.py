@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from typing import Any, TypeGuard, TypeVar, cast, get_args
+import sys
+from typing import Any, Literal, TypeGuard, TypeVar, cast, get_args
 
 from pydantic import BaseModel, ConfigDict, Field, create_model, field_validator
 
@@ -57,15 +58,26 @@ class AppSettings(SettingsBaseModel):
     ltx_api_key: str = ""
     user_prefers_ltx_api_video_generations: bool = False
     fal_api_key: str = ""
+    user_prefers_fal_api_image_generations: bool = False
     use_local_text_encoder: bool = False
     prompt_cache_size: int = 100
     prompt_enhancer_enabled_t2v: bool = True
     prompt_enhancer_enabled_i2v: bool = False
+    # The user's explicit choice, persisted so it survives restarts. None means no active choice
+    # has been made yet — the UI defaults to whichever provider is available, preferring local,
+    # without writing that default back here. Only an explicit user pick (not an automatic
+    # fallback when the preferred provider is temporarily unavailable) ever sets this.
+    prompt_enhancer_provider_preference: Literal["local", "api"] | None = None
     gemini_api_key: str = ""
+    # Empty string means "use DEFAULT_GEMINI_MODEL at generate time" — unlike API keys, an
+    # empty patch is persisted so the user can reset to the default without a tombstone value.
+    gemini_model: str = ""
     seed_locked: bool = False
     locked_seed: int = 42
     models_dir: str = ""
     active_ltx_model_id: LTXLocalModelId | None = None
+    # None = platform default (Mac on, CUDA/Linux off). An explicit bool is a user override.
+    use_conv_vae: bool | None = None
 
     @field_validator("prompt_cache_size", mode="before")
     @classmethod
@@ -129,15 +141,26 @@ class SettingsResponse(SettingsBaseModel):
     has_ltx_api_key: bool = False
     user_prefers_ltx_api_video_generations: bool = False
     has_fal_api_key: bool = False
+    user_prefers_fal_api_image_generations: bool = False
     use_local_text_encoder: bool = False
     prompt_cache_size: int = 100
     prompt_enhancer_enabled_t2v: bool = True
     prompt_enhancer_enabled_i2v: bool = False
+    prompt_enhancer_provider_preference: Literal["local", "api"] | None = None
     has_gemini_api_key: bool = False
+    gemini_model: str = ""
     seed_locked: bool = False
     locked_seed: int = 42
     models_dir: str = ""
     active_ltx_model_id: LTXLocalModelId | None = None
+    use_conv_vae: bool = False
+
+
+def resolved_use_conv_vae(settings: AppSettings) -> bool:
+    """Effective Fast decode setting: user override, else Mac on / CUDA off."""
+    if settings.use_conv_vae is not None:
+        return settings.use_conv_vae
+    return sys.platform == "darwin"
 
 
 def to_settings_response(settings: AppSettings) -> SettingsResponse:
@@ -148,7 +171,7 @@ def to_settings_response(settings: AppSettings) -> SettingsResponse:
     data["has_ltx_api_key"] = bool(ltx_key)
     data["has_fal_api_key"] = bool(fal_key)
     data["has_gemini_api_key"] = bool(gemini_key)
-    # models_dir passes through as-is (not secret)
+    data["use_conv_vae"] = resolved_use_conv_vae(settings)
     return SettingsResponse.model_validate(data)
 
 
@@ -156,4 +179,11 @@ def should_video_generate_with_ltx_api(*, force_api_generations: bool, settings:
     has_ltx_api_key = bool(settings.ltx_api_key.strip())
     return force_api_generations or (
         settings.user_prefers_ltx_api_video_generations and has_ltx_api_key
+    )
+
+
+def should_image_generate_with_fal_api(*, force_api_generations: bool, settings: AppSettings) -> bool:
+    has_fal_api_key = bool(settings.fal_api_key.strip())
+    return force_api_generations or (
+        settings.user_prefers_fal_api_image_generations and has_fal_api_key
     )

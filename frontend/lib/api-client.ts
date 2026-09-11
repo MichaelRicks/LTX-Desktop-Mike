@@ -363,6 +363,8 @@ export class ApiClient {
 
   static getSettings = makeEndpointClient('/api/settings', 'get')
 
+  static listGeminiModels = makeEndpointClient('/api/settings/gemini-models', 'get')
+
   static updateSettings = makeEndpointClient('/api/settings', 'post')
 
   static suggestGapPrompt = makeEndpointClient('/api/suggest-gap-prompt', 'post', {
@@ -380,6 +382,10 @@ export class ApiClient {
   static getGenerationProgress = makeEndpointClient('/api/generation/progress', 'get')
 
   static generateImage = makeEndpointClient('/api/generate-image', 'post')
+
+  static enhancePrompt = makeEndpointClient('/api/enhance-prompt', 'post', {
+    exactErrorStatuses: [404, 409] as const,
+  })
 
   static retake = makeEndpointClient('/api/retake', 'post')
 

@@ -26,13 +26,23 @@ import logging
 import os
 import sys
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable, cast
 
 from server_utils.units import gib
 
 logger = logging.getLogger(__name__)
 
 _EXT_NAME = "mps_sdpa_zc_ext"
+_GUARD_ATTR = "_ltx_coerces_none_fused_min"
+
+# Mirror of mps-sdpa's M4-tuned defaults (backends/_calibrate._DEFAULT_THRESHOLDS).
+# Used when calibration stored fused_min_bytes=None ("always stock") — that sentinel
+# is a speed conclusion at L<=2048, not a memory-safe choice for video attention.
+_FALLBACK_FUSED_MIN_BYTES = {
+    "bf16": 4 * 1024**2,
+    "fp16": 4 * 1024**2,
+    "fp32": 8 * 1024**2,
+}
 
 
 def _prebuilt_so() -> Path | None:
@@ -44,6 +54,79 @@ def _prebuilt_so() -> Path | None:
     return so if so.is_file() else None
 
 
+def coerce_mps_sdpa_thresholds(
+    thresholds: dict[str, Any],
+    *,
+    defaults: dict[str, int] | None = None,
+) -> dict[str, Any]:
+    """Replace fused_min_bytes=None ("always stock") with safe defaults.
+
+    mps-sdpa v0.2.0 calibration benches pyobjc mpsgraph vs stock at L<=2048. If
+    pyobjc never wins by 5%, it caches ``null``. Both ``mpsgraph_zc`` and
+    ``mpsgraph`` then treat ``fused_min is None`` as "use stock for every
+    shape", including ~14k-token video self-attention. Stock MPS SDPA
+    materializes the S×S score matrix (~47 GiB) and OOMs
+    (https://github.com/Lightricks/LTX-Desktop/issues/161).
+    """
+    fused_raw = thresholds.get("fused_min_bytes")
+    if not isinstance(fused_raw, dict):
+        return thresholds
+    fused = cast(dict[str, Any], fused_raw)
+    replacements = defaults or _FALLBACK_FUSED_MIN_BYTES
+    out_fused: dict[str, Any] = dict(fused)
+    changed = False
+    for key, default in replacements.items():
+        if out_fused.get(key) is None:
+            out_fused[key] = default
+            changed = True
+    if not changed:
+        return thresholds
+    return {**thresholds, "fused_min_bytes": out_fused}
+
+
+def install_mps_sdpa_threshold_guard() -> None:
+    """Wrap mps-sdpa ``get_thresholds()`` so None fused_min never reaches dispatch.
+
+    No-op off Darwin or when mps-sdpa isn't installed. Idempotent.
+    """
+    if sys.platform != "darwin":
+        return
+    try:
+        from mps_sdpa.backends import _calibrate  # noqa: PLC0415  # type: ignore[reportMissingModuleSource]
+    except ImportError:
+        return
+
+    current = cast(
+        Callable[[], dict[str, Any]],
+        _calibrate.get_thresholds,  # pyright: ignore[reportUnknownMemberType]
+    )
+    if getattr(current, _GUARD_ATTR, False):
+        return
+
+    def _set_cached(value: dict[str, Any]) -> None:
+        setattr(_calibrate, "_cached_thresholds", value)
+
+    def _guarded() -> dict[str, Any]:
+        raw = current()
+        thresholds = coerce_mps_sdpa_thresholds(raw)
+        if thresholds is not raw:
+            _set_cached(thresholds)
+            logger.warning(
+                "mps-sdpa fused_min_bytes had None (always-stock); using defaults %s "
+                "(raw=%s). Stock MPS SDPA OOMs video attention (LTX-Desktop#161).",
+                thresholds.get("fused_min_bytes"),
+                raw.get("fused_min_bytes"),
+            )
+        return thresholds
+
+    setattr(_guarded, _GUARD_ATTR, True)
+    _calibrate.get_thresholds = _guarded  # pyright: ignore[reportUnknownMemberType]
+    cached = getattr(_calibrate, "_cached_thresholds", None)
+    if isinstance(cached, dict):
+        _set_cached(coerce_mps_sdpa_thresholds(cast(dict[str, Any], cached)))
+    logger.info("mps_prebuilt_ext: installed fused_min_bytes=None → defaults guard")
+
+
 def setup_prebuilt_mps_extension() -> None:
     if sys.platform != "darwin":
         return
@@ -51,12 +134,14 @@ def setup_prebuilt_mps_extension() -> None:
     so = _prebuilt_so()
     if so is None:
         logger.info("mps_prebuilt_ext: no bundled prebuilt .so; torch will JIT-build if a compiler is present")
+        install_mps_sdpa_threshold_guard()
         return
 
     try:
         from torch.utils import cpp_extension as _cppext  # noqa: PLC0415
     except Exception:
         logger.warning("mps_prebuilt_ext: torch.utils.cpp_extension unavailable; skipping", exc_info=True)
+        install_mps_sdpa_threshold_guard()
         return
 
     _orig_load = _cppext.load  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
@@ -90,6 +175,7 @@ def setup_prebuilt_mps_extension() -> None:
 
     _cppext.load = _patched_load  # pyright: ignore[reportUnknownMemberType]
     logger.info("mps_prebuilt_ext: cpp_extension.load patched to direct-import bundled %s", so)
+    install_mps_sdpa_threshold_guard()
 
 
 def log_mps_backend_status() -> None:
@@ -103,8 +189,10 @@ def log_mps_backend_status() -> None:
     """
     if sys.platform != "darwin":
         return
+    install_mps_sdpa_threshold_guard()
     try:
         from mps_sdpa import api  # noqa: PLC0415  # type: ignore[reportMissingModuleSource]
+        from mps_sdpa.backends import _calibrate  # noqa: PLC0415  # type: ignore[reportMissingModuleSource]
 
         st = api.backend_status(backend="auto", device="mps")
         logger.info(
@@ -117,6 +205,16 @@ def log_mps_backend_status() -> None:
                 "attention may leak Metal memory. unavailable=%s",
                 st["picked"], st.get("unavailable"),
             )
+        get_thresholds = cast(
+            Callable[[], dict[str, Any]],
+            _calibrate.get_thresholds,  # pyright: ignore[reportUnknownMemberType]
+        )
+        thresholds = get_thresholds()
+        logger.info(
+            "mps-sdpa fused_min_bytes=%s calibrated=%s",
+            thresholds.get("fused_min_bytes"),
+            thresholds.get("calibrated"),
+        )
     except Exception:
         logger.warning("mps-sdpa: could not determine active attention backend", exc_info=True)
 
@@ -132,7 +230,13 @@ def _mps_sdpa_call_stats() -> str:
         from mps_sdpa import api  # noqa: PLC0415  # type: ignore[reportMissingModuleSource]
 
         stats = api.get_call_stats()
-        return " ".join(f"{k}={v}" for k, v in sorted(stats.items())) or "(no calls yet)"
+        parts = [" ".join(f"{k}={v}" for k, v in sorted(stats.items()))] if stats else []
+        get_fallback = getattr(api, "get_fallback_stats", None)
+        fallback = get_fallback() if callable(get_fallback) else None
+        if isinstance(fallback, dict) and fallback:
+            fb_items = cast(dict[str, Any], fallback)
+            parts.append("fb:" + " ".join(f"{k}={v}" for k, v in sorted(fb_items.items())))
+        return " ".join(parts) or "(no calls yet)"
     except Exception:
         return ""
 
@@ -147,6 +251,9 @@ def reset_mps_sdpa_stats() -> None:
         from mps_sdpa import api  # noqa: PLC0415  # type: ignore[reportMissingModuleSource]
 
         api.reset_call_stats()
+        reset_fallback = getattr(api, "reset_fallback_stats", None)
+        if callable(reset_fallback):
+            reset_fallback()
     except Exception:
         pass
 

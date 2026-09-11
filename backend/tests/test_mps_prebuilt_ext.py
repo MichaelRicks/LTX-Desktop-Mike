@@ -9,6 +9,8 @@ sys.platform) so these run deterministically on any CI OS.
 from __future__ import annotations
 
 from pathlib import Path
+import sys
+import types
 
 import mps_prebuilt_ext
 
@@ -54,3 +56,57 @@ def test_mps_memory_sample_none_off_darwin(monkeypatch) -> None:
 def test_reset_mps_sdpa_stats_noop_off_darwin(monkeypatch) -> None:
     monkeypatch.setattr(mps_prebuilt_ext.sys, "platform", "linux")
     mps_prebuilt_ext.reset_mps_sdpa_stats()  # must not raise
+
+
+def test_coerce_replaces_none_fused_min_with_defaults() -> None:
+    raw: dict = {"fused_min_bytes": {"bf16": None, "fp16": 1, "fp32": None}, "calibrated": True}
+    out = mps_prebuilt_ext.coerce_mps_sdpa_thresholds(raw)
+    assert out["fused_min_bytes"]["bf16"] == 4 * 1024**2
+    assert out["fused_min_bytes"]["fp16"] == 1
+    assert out["fused_min_bytes"]["fp32"] == 8 * 1024**2
+    assert raw["fused_min_bytes"]["bf16"] is None
+
+
+def test_coerce_is_noop_when_all_fused_min_are_set() -> None:
+    raw: dict = {"fused_min_bytes": {"bf16": 8, "fp16": 8, "fp32": 16}, "calibrated": True}
+    assert mps_prebuilt_ext.coerce_mps_sdpa_thresholds(raw) is raw
+
+
+def test_coerce_passthrough_when_fused_min_missing() -> None:
+    raw: dict = {"calibrated": False}
+    assert mps_prebuilt_ext.coerce_mps_sdpa_thresholds(raw) is raw
+
+
+def test_install_threshold_guard_noop_off_darwin(monkeypatch) -> None:
+    monkeypatch.setattr(mps_prebuilt_ext.sys, "platform", "linux")
+    mps_prebuilt_ext.install_mps_sdpa_threshold_guard()  # must not raise
+
+
+def test_threshold_guard_coerces_none_on_get_thresholds(monkeypatch) -> None:
+    monkeypatch.setattr(mps_prebuilt_ext.sys, "platform", "darwin")
+    unsafe: dict = {"fused_min_bytes": {"bf16": None, "fp16": None, "fp32": None}, "calibrated": True}
+
+    fake_cal = types.SimpleNamespace(get_thresholds=lambda: unsafe, _cached_thresholds=unsafe)
+    fake_backends = types.ModuleType("mps_sdpa.backends")
+    fake_backends._calibrate = fake_cal  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "mps_sdpa", types.ModuleType("mps_sdpa"))
+    monkeypatch.setitem(sys.modules, "mps_sdpa.backends", fake_backends)
+
+    mps_prebuilt_ext.install_mps_sdpa_threshold_guard()
+    out = fake_cal.get_thresholds()
+    assert out["fused_min_bytes"]["bf16"] == 4 * 1024**2
+    assert fake_cal._cached_thresholds["fused_min_bytes"]["bf16"] == 4 * 1024**2
+
+
+def test_mps_sdpa_call_stats_includes_fallback_reasons(monkeypatch) -> None:
+    fake_api = types.ModuleType("mps_sdpa.api")
+    fake_api.get_call_stats = lambda: {"stock_fallback": 12}  # type: ignore[attr-defined]
+    fake_api.get_fallback_stats = lambda: {"short-seq": 12}  # type: ignore[attr-defined]
+    fake_pkg = types.ModuleType("mps_sdpa")
+    fake_pkg.api = fake_api  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "mps_sdpa", fake_pkg)
+    monkeypatch.setitem(sys.modules, "mps_sdpa.api", fake_api)
+
+    text = mps_prebuilt_ext._mps_sdpa_call_stats()
+    assert "stock_fallback=12" in text
+    assert "fb:short-seq=12" in text

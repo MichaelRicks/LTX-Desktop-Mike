@@ -9,6 +9,7 @@ import { DevFlagsProvider } from './contexts/DevFlagsContext'
 import { KeyboardShortcutsModal } from './components/KeyboardShortcutsModal'
 import { DevPanel } from './components/DevPanel'
 import { useBackend } from './hooks/use-backend'
+import { useGenerationRecoveryWatcher } from './hooks/use-generation-recovery-watcher'
 import { logger } from './lib/logger'
 import { Home } from './views/Home'
 import { Project } from './views/Project'
@@ -16,7 +17,7 @@ import { LaunchGate } from './components/FirstRunSetup'
 import { LtxUpgradePrompt } from './components/LtxUpgradePrompt'
 import { dismissUpgrade, isUpgradeDismissed } from './lib/upgrade-prompt-dismissals'
 import { PythonSetup } from './components/PythonSetup'
-import { SettingsModal, type SettingsTabId } from './components/SettingsModal'
+import { SettingsModal, type SettingsInitialReason, type SettingsTabId } from './components/SettingsModal'
 import { LogViewer } from './components/LogViewer'
 import { ApiGatewayModal, type ApiGatewaySection } from './components/ApiGatewayModal'
 import { Button } from './components/ui/button'
@@ -24,6 +25,8 @@ import { PromptManagerPro } from './components/gpm/PromptManagerPro'
 import { DownloadsBrowser } from './components/gpm/DownloadsBrowser'
 import { useDownloadsBrowserOpen, getDownloadsBrowserOpen, setDownloadsBrowserOpen } from './components/gpm/downloads-browser-store'
 import { usePromptManagerProOpen, getPromptManagerProOpen, setPromptManagerProOpen } from './components/gpm/prompt-manager-pro-store'
+import { useAppUpdateModal } from './hooks/use-app-update'
+import { UpdateAvailableModal } from './components/UpdateAvailableModal'
 
 type SetupState = 'loading' | { needsSetup: boolean; needsLicense: boolean }
 type RequiredModelsGateState = 'checking' | 'missing' | 'ready'
@@ -63,13 +66,18 @@ function AppContent() {
     return () => window.removeEventListener('keydown', onKeyDown)
   }, [])
   const { connected, processStatus, isLoading: backendLoading } = useBackend()
-  const { settings, saveLtxApiKey, saveFalApiKey, forceApiGenerations, isLoaded, runtimePolicyLoaded } = useAppSettings()
+  const { settings, saveLtxApiKey, saveFalApiKey, forceApiGenerations, isLoaded, runtimePolicyLoaded, notifyModelsChanged } = useAppSettings()
+  // Always mounted here (unlike GenSpace, which unmounts on every view/tab switch) so a
+  // generation that finishes while its project isn't open still gets persisted.
+  useGenerationRecoveryWatcher()
 
   const [pythonReady, setPythonReady] = useState<boolean | null>(null)
   const [backendStarted, setBackendStarted] = useState(false)
   const [setupState, setSetupState] = useState<SetupState>('loading')
   const [isSettingsOpen, setIsSettingsOpen] = useState(false)
   const [settingsInitialTab, setSettingsInitialTab] = useState<SettingsTabId | undefined>(undefined)
+  const [settingsInitialReason, setSettingsInitialReason] = useState<SettingsInitialReason | undefined>(undefined)
+  const { update, isGenerationActive, isModalOpen, openModal, closeModal, checkForUpdates } = useAppUpdateModal()
   const [isLogViewerOpen, setIsLogViewerOpen] = useState(false)
   const [isFinalizingFirstRun, setIsFinalizingFirstRun] = useState(false)
   const [firstRunFinalizeError, setFirstRunFinalizeError] = useState<string | null>(null)
@@ -98,6 +106,7 @@ function AppContent() {
     const handler = (e: Event) => {
       const detail = (e as CustomEvent).detail
       if (detail?.tab) setSettingsInitialTab(detail.tab)
+      setSettingsInitialReason(detail?.reason === 'geminiKeyRequired' ? 'geminiKeyRequired' : undefined)
       setIsSettingsOpen(true)
     }
     window.addEventListener('open-settings', handler)
@@ -189,6 +198,7 @@ function AppContent() {
         throw new Error('Failed to complete setup.')
       }
       setSetupState({ needsSetup: false, needsLicense: false })
+      notifyModelsChanged()
     })()
 
     setupCompletionInFlightRef.current = inFlightPromise
@@ -203,7 +213,7 @@ function AppContent() {
       setupCompletionInFlightRef.current = null
       setIsFinalizingFirstRun(false)
     }
-  }, [])
+  }, [notifyModelsChanged])
 
   const handleAcceptLicense = useCallback(async () => {
     const ok = await window.electronAPI.acceptLicense()
@@ -390,8 +400,9 @@ function AppContent() {
 
   const handleCompleteLtxUpgradePrompt = useCallback(async () => {
     setDismissedUpgradeTargetId(null)
+    notifyModelsChanged()
     await refreshLtxUpgradeRecommendation()
-  }, [refreshLtxUpgradeRecommendation])
+  }, [notifyModelsChanged, refreshLtxUpgradeRecommendation])
 
   const restartingOverlay = isBackendRestarting ? (
     <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 backdrop-blur-sm">
@@ -452,7 +463,7 @@ function AppContent() {
       {
         keyType: 'fal',
         title: 'FAL AI',
-        description: 'Required to generate images with Z Image Turbo.',
+        description: 'Required to generate or edit images with Z Image Turbo.',
         required: apiGatewayRequest.requiredKeys.includes('fal'),
         isConfigured: settings.hasFalApiKey,
         inputLabel: 'FAL AI API key',
@@ -609,8 +620,13 @@ function AppContent() {
         onClose={() => {
           setIsSettingsOpen(false)
           setSettingsInitialTab(undefined)
+          setSettingsInitialReason(undefined)
         }}
         initialTab={settingsInitialTab}
+        initialReason={settingsInitialReason}
+        update={update}
+        onOpenUpdate={openModal}
+        onCheckForUpdates={checkForUpdates}
       />
       <ApiGatewayModal
         isOpen={shouldShowGateway}
@@ -626,6 +642,13 @@ function AppContent() {
           onClose={handleDismissLtxUpgradePrompt}
           onDontShowAgain={handleDontShowLtxUpgradeAgain}
           onComplete={handleCompleteLtxUpgradePrompt}
+        />
+      )}
+      {isModalOpen && (
+        <UpdateAvailableModal
+          update={update}
+          isGenerationActive={isGenerationActive}
+          onClose={closeModal}
         />
       )}
 

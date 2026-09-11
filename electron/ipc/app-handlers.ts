@@ -3,9 +3,15 @@ import path from 'path'
 import fs from 'fs'
 import { checkGPU } from '../gpu'
 import { isPythonReady, downloadPythonEmbed } from '../python-setup'
-import { getBackendHealthStatus, getBackendUrl, getAuthToken, getAdminToken, startPythonBackend } from '../python-backend'
+import { getBackendHealthStatus, getBackendUrl, getAuthToken, getAdminToken, startPythonBackend, setGenerationActive } from '../python-backend'
 import { getMainWindow } from '../window'
 import { getAnalyticsState, setAnalyticsEnabled, sendAnalyticsEvent } from '../analytics'
+import {
+  getUpdateState, checkForUpdatesNow, startUpdateDownload, installUpdateAndRestart,
+  skipUpdateVersion, setAutoCheckUpdatesEnabled,
+} from '../updater'
+import { getAutoCheckUpdates } from '../app-state'
+import { freeDiskBytes } from '../free-disk-space'
 import { handle } from './typed-handle'
 
 function getModelsPath(): string {
@@ -93,6 +99,15 @@ export function registerAppHandlers(): void {
     return app.getPath('downloads')
   })
 
+  handle('getFreeDiskSpace', async ({ path: targetPath }) => {
+    try {
+      const bytes = await freeDiskBytes(targetPath)
+      return { success: true, bytes }
+    } catch (e) {
+      return { success: false, error: e instanceof Error ? e.message : String(e) }
+    }
+  })
+
   handle('checkFirstRun', () => {
     const settingsPath = path.join(app.getPath('userData'), 'app_state.json')
     return getSetupStatus(settingsPath)
@@ -146,6 +161,10 @@ export function registerAppHandlers(): void {
 
   handle('getBackendHealthStatus', () => {
     return getBackendHealthStatus()
+  })
+
+  handle('notifyGenerationActive', ({ active }) => {
+    setGenerationActive(active)
   })
 
   handle('getAnalyticsState', () => {
@@ -217,6 +236,54 @@ export function registerAppHandlers(): void {
     const error = await shell.openPath(settings.modelsDir)
     if (error) return { success: false, error }
     return { success: true }
+  })
+
+  handle('getUpdateState', () => getUpdateState())
+
+  handle('checkForUpdatesNow', async () => {
+    try {
+      await checkForUpdatesNow()
+      return { success: true }
+    } catch (e) {
+      return { success: false, error: String(e) }
+    }
+  })
+
+  handle('startUpdateDownload', async () => {
+    try {
+      await startUpdateDownload()
+      return { success: true }
+    } catch (e) {
+      return { success: false, error: String(e) }
+    }
+  })
+
+  handle('installUpdateAndRestart', () => {
+    try {
+      return installUpdateAndRestart()
+    } catch (e) {
+      return { success: false, error: String(e) }
+    }
+  })
+
+  handle('skipUpdateVersion', ({ version }) => {
+    try {
+      skipUpdateVersion(version)
+      return { success: true }
+    } catch (e) {
+      return { success: false, error: String(e) }
+    }
+  })
+
+  handle('getAutoCheckUpdates', () => ({ enabled: getAutoCheckUpdates() }))
+
+  handle('setAutoCheckUpdates', ({ enabled }) => {
+    try {
+      setAutoCheckUpdatesEnabled(enabled)
+      return { success: true }
+    } catch (e) {
+      return { success: false, error: String(e) }
+    }
   })
 
 }

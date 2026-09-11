@@ -20,6 +20,7 @@ import { ClipWaveform } from '../../components/AudioWaveform'
 import type { GenerationSettings } from '../../components/SettingsPanel'
 import { useAppSettings } from '../../contexts/AppSettingsContext'
 import { useVideoGenerationModelSpecs } from '../../hooks/use-video-generation-model-specs'
+import { RETAKE_EXTEND_MODELS } from '../../hooks/use-retake'
 import type { GenerationError } from '../../lib/generation-errors'
 import { addVisualAssetToProject } from '../../lib/asset-copy'
 import { GPM_IMAGE_DND_TYPE } from '../../components/gpm/gpm-image-file'
@@ -31,6 +32,8 @@ import { ApiClient } from '../../lib/api-client'
 import { pathToFileUrl } from '../../lib/file-url'
 import {
   areVideoGenerationSettingsEquivalent,
+  getApiOfferingCapabilities,
+  getLocalOfferingCapabilities,
   getVideoGenerationModelSpecs,
   resolveVideoGenerationOptions,
   sanitizeVideoGenerationSettings,
@@ -105,6 +108,7 @@ interface GapGenerationApi {
   cancel: () => void
   reset: () => void
   error: GenerationError | null
+  canCancel: boolean
 }
 
 export interface VideoEditorTimelineEditingPanelProps {
@@ -140,6 +144,7 @@ export interface VideoEditorTimelineEditingPanelProps {
   handleRegenerate: (assetId: string, clipId: string) => void
   handleRetakeClip: (clip: TimelineClip) => void
   handleCancelRegeneration: () => void
+  canCancelInFlight: boolean
   isRegenerating: boolean
   regenProgress: number
 }
@@ -178,6 +183,7 @@ export function VideoEditorTimelineEditingPanel(props: VideoEditorTimelineEditin
     handleRegenerate,
     handleRetakeClip,
     handleCancelRegeneration,
+    canCancelInFlight,
     isRegenerating,
     regenProgress,
   } = props
@@ -188,6 +194,20 @@ export function VideoEditorTimelineEditingPanel(props: VideoEditorTimelineEditin
     isLoading: isLoadingVideoGenerationModelSpecs,
     errorMessage: videoGenerationModelSpecsErrorMessage,
   } = useVideoGenerationModelSpecs()
+  const localCaps = getLocalOfferingCapabilities(videoGenerationModelSpecsResponse)
+  // Retake/Extend always request RETAKE_EXTEND_MODELS (currently "pro" / 2.3 Pro),
+  // not the timeline clip's t2v/i2v generation pipeline.
+  const apiCaps = getApiOfferingCapabilities(
+    videoGenerationModelSpecsResponse,
+    RETAKE_EXTEND_MODELS[0],
+  )
+  const canUseRetake = shouldVideoGenerateWithLtxApi
+    ? Boolean(apiCaps?.retake)
+    : Boolean(localCaps?.retake)
+  const requestRetakeClip = (clip: TimelineClip) => {
+    if (!canUseRetake) return
+    handleRetakeClip(clip)
+  }
 
   const assets = useEditorStore(selectAssets)
   const timelines = useEditorStore(selectTimelines)
@@ -952,7 +972,7 @@ export function VideoEditorTimelineEditingPanel(props: VideoEditorTimelineEditin
           height: copied.height,
           prompt: generatingGap.prompt,
           resolution: isImageResult ? generatingGap.settings.imageResolution : generatingGap.settings.videoResolution,
-          duration: assetType === 'video' ? generatingGap.settings.duration : undefined,
+          duration: assetType === 'video' ? generatingGap.settings.duration ?? undefined : undefined,
           generationParams: {
             mode: generatingGap.mode,
             prompt: generatingGap.prompt,
@@ -991,9 +1011,10 @@ export function VideoEditorTimelineEditingPanel(props: VideoEditorTimelineEditin
   }, [actions, currentProjectId, gapGenerationApi, generatingGap])
 
   const cancelGapGeneration = useCallback(() => {
+    if (!gapGenerationApi.canCancel) return
     gapGenerationApi.cancel()
-    gapGenerationApi.reset()
-    setGeneratingGap(null)
+    // Keep gap UI until the generate POST returns cancelled so liveness
+    // suppression stays up while the GPU job unwinds.
   }, [gapGenerationApi])
 
   const handleCloseGap = useCallback(() => {
@@ -2535,7 +2556,7 @@ export function VideoEditorTimelineEditingPanel(props: VideoEditorTimelineEditin
                             {(() => {
                               const resInfo = getClipResolution(clip)
                               if (!resInfo) return null
-                              return <span style={{ color: resInfo.color }} className="font-semibold">{resInfo.height >= 2160 ? '4K' : `${resInfo.height}p`}</span>
+                              return <span style={{ color: resInfo.color }} className="font-semibold">{resInfo.displayName}</span>
                             })()}
                             {clip.speed !== 1 && <span className="text-yellow-400">{clip.speed}x</span>}
                             {clip.reversed && <span className="text-blue-400">REV</span>}
@@ -2602,10 +2623,10 @@ export function VideoEditorTimelineEditingPanel(props: VideoEditorTimelineEditin
                                   <RefreshCw className={`h-3 w-3 ${clip.isRegenerating ? 'animate-spin' : ''}`} />
                                 </button>
                               </Tooltip>
-                              {clip.type === 'video' && (
+                              {canUseRetake && clip.type === 'video' && (
                                 <Tooltip content="Retake section" side="top">
                                   <button
-                                    onClick={() => handleRetakeClip(clip)}
+                                    onClick={() => requestRetakeClip(clip)}
                                     className="p-0.5 rounded transition-colors hover:bg-white/10 text-zinc-500 hover:text-blue-400"
                                   >
                                     <Film className="h-3 w-3" />
@@ -2625,12 +2646,14 @@ export function VideoEditorTimelineEditingPanel(props: VideoEditorTimelineEditin
                             <span className="text-[9px] text-blue-200 font-medium">
                               {regenProgress > 0 ? `${regenProgress}%` : 'Regenerating...'}
                             </span>
+                            {canCancelInFlight && (
                             <button
                               onClick={(e) => { e.stopPropagation(); handleCancelRegeneration() }}
                               className="ml-1 px-1.5 py-0.5 rounded bg-zinc-800/80 border border-zinc-600/60 text-[9px] text-zinc-300 hover:text-red-400 hover:border-red-500/50 hover:bg-red-900/30 transition-colors"
                             >
                               Cancel
                             </button>
+                            )}
                           </div>
                         </div>
                       )}
@@ -2784,7 +2807,7 @@ export function VideoEditorTimelineEditingPanel(props: VideoEditorTimelineEditin
                                 />
                               </div>
                             )}
-                            {/* Cancel button */}
+                            {gapGenerationApi.canCancel && (
                             <Tooltip content="Cancel generation" side="top">
                               <button
                                 onClick={(e) => { e.stopPropagation(); cancelGapGeneration() }}
@@ -2793,6 +2816,7 @@ export function VideoEditorTimelineEditingPanel(props: VideoEditorTimelineEditin
                                 <X className="h-2.5 w-2.5" />
                               </button>
                             </Tooltip>
+                            )}
                           </div>
                         ) : (
                           <div className={`absolute inset-0 flex items-center justify-center pointer-events-none transition-opacity ${
@@ -3262,6 +3286,7 @@ export function VideoEditorTimelineEditingPanel(props: VideoEditorTimelineEditin
           setClips={setClips}
           handleRegenerate={handleRegenerate}
           handleCancelRegeneration={handleCancelRegeneration}
+          canCancelInFlight={canCancelInFlight}
           handleClipTakeChange={handleClipTakeChange}
           handleDeleteTake={handleDeleteTake}
           duplicateClip={duplicateClip}
@@ -3272,9 +3297,10 @@ export function VideoEditorTimelineEditingPanel(props: VideoEditorTimelineEditin
           getMaxClipDuration={getMaxClipDuration}
           onRevealAsset={onRevealAsset}
           onCreateVideoFromImage={onCreateVideoFromImage}
-          onRetakeClip={handleRetakeClip}
+          onRetakeClip={requestRetakeClip}
           onICLoraClip={handleICLoraClip}
           canUseIcLora={canUseIcLora}
+          canUseRetake={canUseRetake}
           onCaptureFrameForVideo={onCaptureFrameForVideo}
           onCreateVideoFromAudio={onCreateVideoFromAudio}
         />

@@ -4,7 +4,7 @@ import React, { createContext, useContext, useState, useEffect, useCallback } fr
 // not a user setting and not synced. Toggle via the Dev Panel (Ctrl/Cmd+Shift+D).
 // Adding a feature flag = one entry in DEV_FLAGS; read it from a single gate where
 // the feature is used (avoid sprinkling the flag across call sites).
-export type DevFlagKey = 'customIcLora' | 'advancedIcLoraControls'
+export type DevFlagKey = 'customIcLora' | 'advancedIcLoraControls' | 'enableMultipleKeyframesVideos'
 
 interface DevFlagSpec {
   key: DevFlagKey
@@ -23,11 +23,16 @@ export const DEV_FLAGS: DevFlagSpec[] = [
     label: 'Advanced IC-LoRA controls',
     description: 'Expose all IC-LoRA settings (skip stage 2, resolution factor, audio, strengths) for catalog and custom modes. Off by default — settings use the catalog IC-LoRA defaults.',
   },
+  {
+    key: 'enableMultipleKeyframesVideos',
+    label: 'Multiple keyframe videos',
+    description: 'Show "Generate Multi Keyframes Videos" in the GenSpace mode dropdown (immediately after Generate Videos). Only available for local generations — hidden in API/cloud mode even when this flag is on. Off by default.',
+  },
 ]
 
 type Flags = Record<DevFlagKey, boolean>
 
-const DEFAULT_FLAGS: Flags = { customIcLora: false, advancedIcLoraControls: false }
+const DEFAULT_FLAGS: Flags = { customIcLora: false, advancedIcLoraControls: false, enableMultipleKeyframesVideos: false }
 const STORAGE_KEY = 'ltx-dev-flags'
 
 function loadFlags(): Flags {

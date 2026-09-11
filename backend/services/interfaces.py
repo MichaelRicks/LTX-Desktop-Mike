@@ -18,6 +18,7 @@ from services.retake_pipeline.retake_pipeline import RetakePipeline
 from services.qwen_multiangle_pipeline.qwen_multiangle_pipeline import QwenMultiAnglePipeline
 from services.model_downloader.model_downloader import ModelDownloader
 from services.pose_processor_pipeline.pose_processor_pipeline import PoseProcessorPipeline
+from services.prompt_enhancer_pipeline.prompt_enhancer_pipeline import PromptEnhancerPipeline
 from services.services_utils import JSONScalar, JSONValue
 from services.task_runner.task_runner import TaskRunner
 from services.text_encoder.text_encoder import TextEncoder
@@ -50,4 +51,5 @@ __all__ = [
     "RetakePipeline",
     "QwenMultiAnglePipeline",
     "TextEncoder",
+    "PromptEnhancerPipeline",
 ]

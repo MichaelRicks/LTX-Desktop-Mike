@@ -53,6 +53,7 @@ export function useLoraLibrary(
         ref: path,
         name: variantDisplayName(e.name, variantLabel, e.variants?.length),
         scale: e.recommendedStrength ?? 1.0,
+        catalogId: e.id,
       },
     ])
     return true

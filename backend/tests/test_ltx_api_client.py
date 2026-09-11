@@ -106,7 +106,43 @@ def test_generate_image_to_video_with_image_uri_downloads_video() -> None:
     assert http.calls[0].json_payload is not None
     assert http.calls[0].json_payload["image_uri"] == "storage://image/123"
     assert http.calls[0].json_payload["camera_motion"] == "jib_up"
+    assert "last_frame_uri" not in http.calls[0].json_payload
     assert http.calls[1].url == "https://cdn.example.com/output.mp4"
+
+
+def test_generate_image_to_video_with_last_frame_uri() -> None:
+    http = FakeHTTPClient()
+    http.queue(
+        "post",
+        FakeResponse(
+            status_code=200,
+            headers={"Content-Type": "application/json"},
+            json_payload={"video_url": "https://cdn.example.com/output.mp4"},
+        ),
+    )
+    http.queue(
+        "get",
+        FakeResponse(status_code=200, content=b"downloaded-video"),
+    )
+
+    client = LTXAPIClientImpl(http=http, ltx_api_base_url="https://api.ltx.video")
+    out = client.generate_image_to_video(
+        api_key="test-key",
+        prompt="Animate from first to last",
+        image_uri="storage://image/123",
+        last_frame_uri="storage://image/456",
+        model="ltx-2-3-pro",
+        resolution="1920x1080",
+        duration=4.0,
+        fps=24.0,
+        generate_audio=True,
+        camera_motion="jib_up",
+    )
+
+    assert out == b"downloaded-video"
+    assert http.calls[0].json_payload is not None
+    assert http.calls[0].json_payload["image_uri"] == "storage://image/123"
+    assert http.calls[0].json_payload["last_frame_uri"] == "storage://image/456"
 
 
 def test_generate_text_to_video_omits_camera_motion_when_none() -> None:
@@ -291,6 +327,34 @@ def test_generate_audio_to_video_with_image_uri_posts_both_inputs() -> None:
     assert http.calls[0].json_payload["image_uri"] == "storage://image/456"
     assert http.calls[0].json_payload["model"] == "ltx-2-3-pro"
     assert http.calls[0].json_payload["resolution"] == "3840x2160"
+    assert "last_frame_uri" not in http.calls[0].json_payload
+
+
+def test_generate_audio_to_video_with_last_frame_uri() -> None:
+    http = FakeHTTPClient()
+    http.queue(
+        "post",
+        FakeResponse(
+            status_code=200,
+            headers={"Content-Type": "video/mp4"},
+            content=b"direct-a2v-video",
+        ),
+    )
+
+    client = LTXAPIClientImpl(http=http, ltx_api_base_url="https://api.ltx.video")
+    out = client.generate_audio_to_video(
+        api_key="test-key",
+        prompt="Animate from image and audio",
+        audio_uri="storage://audio/123",
+        image_uri="storage://image/456",
+        last_frame_uri="storage://image/789",
+        model="ltx-2-3-pro",
+        resolution="3840x2160",
+    )
+
+    assert out == b"direct-a2v-video"
+    assert http.calls[0].json_payload is not None
+    assert http.calls[0].json_payload["last_frame_uri"] == "storage://image/789"
 
 
 def test_generate_audio_to_video_raises_on_non_200() -> None:
@@ -346,6 +410,7 @@ def test_retake_returns_direct_video_bytes(tmp_path) -> None:
         duration=3.0,
         prompt="make it dramatic",
         mode="replace_audio_and_video",
+        model="ltx-2-3-pro",
     )
 
     assert result.video_bytes == b"retake-bytes"
@@ -388,6 +453,7 @@ def test_retake_json_video_url_downloads_bytes(tmp_path) -> None:
         duration=4.0,
         prompt="test",
         mode="replace_video",
+        model="ltx-2-3-pro",
     )
 
     assert result.video_bytes == b"downloaded-retake"
@@ -424,6 +490,7 @@ def test_retake_json_without_video_url_returns_payload(tmp_path) -> None:
         duration=2.5,
         prompt="test",
         mode="replace_audio_and_video",
+        model="ltx-2-3-pro",
     )
 
     assert result.video_bytes is None
@@ -457,6 +524,7 @@ def test_retake_422_maps_to_safety_filter_error(tmp_path) -> None:
             duration=3.0,
             prompt="test",
             mode="replace_audio_and_video",
+            model="ltx-2-3-pro",
         )
     assert exc.value.status_code == 422
 
@@ -486,6 +554,7 @@ def test_extend_async_submits_polls_and_downloads(tmp_path) -> None:
         duration=12.0,
         prompt="continue the motion",
         mode="end",
+        model="ltx-2-3-pro",
     )
 
     assert result.video_bytes == b"extended-bytes"
@@ -518,7 +587,7 @@ def test_extend_async_retries_transient_poll_blip(tmp_path) -> None:
     http.queue("get", FakeResponse(status_code=200, content=b"extended-bytes"))
 
     client = _async_client(http)
-    result = client.extend(api_key="k", video_path=input_path, duration=4.0, prompt="", mode="end")
+    result = client.extend(api_key="k", video_path=input_path, duration=4.0, prompt="", mode="end", model="ltx-2-3-pro")
     assert result.video_bytes == b"extended-bytes"
 
 
@@ -533,7 +602,7 @@ def test_extend_async_unknown_terminal_status_surfaces(tmp_path) -> None:
 
     client = _async_client(http)
     with pytest.raises(LTXAPIClientError, match="rejected") as exc:
-        client.extend(api_key="k", video_path=input_path, duration=4.0, prompt="", mode="end")
+        client.extend(api_key="k", video_path=input_path, duration=4.0, prompt="", mode="end", model="ltx-2-3-pro")
     assert exc.value.status_code == 500
 
 
@@ -552,7 +621,7 @@ def test_extend_async_job_failed_raises(tmp_path) -> None:
 
     client = _async_client(http)
     with pytest.raises(LTXAPIClientError, match="model exploded"):
-        client.extend(api_key="k", video_path=input_path, duration=4.0, prompt="", mode="end")
+        client.extend(api_key="k", video_path=input_path, duration=4.0, prompt="", mode="end", model="ltx-2-3-pro")
 
 
 def test_extend_async_422_maps_to_safety_filter(tmp_path) -> None:
@@ -563,7 +632,7 @@ def test_extend_async_422_maps_to_safety_filter(tmp_path) -> None:
 
     client = _async_client(http)
     with pytest.raises(LTXAPIClientError, match="Content rejected by safety filters") as exc:
-        client.extend(api_key="k", video_path=input_path, duration=4.0, prompt="", mode="end")
+        client.extend(api_key="k", video_path=input_path, duration=4.0, prompt="", mode="end", model="ltx-2-3-pro")
     assert exc.value.status_code == 422
 
 
@@ -576,7 +645,7 @@ def test_extend_async_connection_reset_maps_to_504(tmp_path) -> None:
 
     client = _async_client(http)
     with pytest.raises(LTXAPIClientError, match="please retry") as exc:
-        client.extend(api_key="k", video_path=input_path, duration=12.0, prompt="", mode="end")
+        client.extend(api_key="k", video_path=input_path, duration=12.0, prompt="", mode="end", model="ltx-2-3-pro")
     assert exc.value.status_code == 504
 
 
@@ -589,7 +658,7 @@ def test_extend_async_completed_without_url_raises(tmp_path) -> None:
 
     client = _async_client(http)
     with pytest.raises(LTXAPIClientError, match="without a video_url"):
-        client.extend(api_key="k", video_path=input_path, duration=4.0, prompt="", mode="end")
+        client.extend(api_key="k", video_path=input_path, duration=4.0, prompt="", mode="end", model="ltx-2-3-pro")
 
 
 def test_retake_upload_init_failure_maps_message() -> None:
@@ -605,5 +674,6 @@ def test_retake_upload_init_failure_maps_message() -> None:
             duration=3.0,
             prompt="test",
             mode="replace_audio_and_video",
+            model="ltx-2-3-pro",
         )
     assert exc.value.status_code == 401

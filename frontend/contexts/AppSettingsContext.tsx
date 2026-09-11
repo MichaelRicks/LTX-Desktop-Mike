@@ -8,15 +8,25 @@ export interface AppSettings {
   hasLtxApiKey: boolean
   userPrefersLtxApiVideoGenerations: boolean
   hasFalApiKey: boolean
+  userPrefersFalApiImageGenerations: boolean
   hasGeminiApiKey: boolean
+  geminiModel: string
   useLocalTextEncoder: boolean
   promptCacheSize: number
   promptEnhancerEnabledT2V: boolean
   promptEnhancerEnabledI2V: boolean
+  // The user's explicit prompt-enhancer provider choice, persisted so it survives restarts.
+  // null means no active choice yet — the enhancer defaults to whichever provider is available
+  // without writing that default back here; only an explicit pick (never an automatic fallback
+  // when the preferred provider is temporarily unavailable) sets this.
+  promptEnhancerProviderPreference: 'local' | 'api' | null
   seedLocked: boolean
   lockedSeed: number
   modelsDir: string
+  useConvVae: boolean
 }
+
+export const DEFAULT_GEMINI_MODEL = 'gemini-3.5-flash-lite'
 
 export const DEFAULT_APP_SETTINGS: AppSettings = {
   useTorchCompile: false,
@@ -24,14 +34,18 @@ export const DEFAULT_APP_SETTINGS: AppSettings = {
   hasLtxApiKey: false,
   userPrefersLtxApiVideoGenerations: false,
   hasFalApiKey: false,
+  userPrefersFalApiImageGenerations: false,
   hasGeminiApiKey: false,
+  geminiModel: '',
   useLocalTextEncoder: false,
   promptCacheSize: 1,
   promptEnhancerEnabledT2V: false,
   promptEnhancerEnabledI2V: false,
+  promptEnhancerProviderPreference: null,
   seedLocked: false,
   lockedSeed: 42,
   modelsDir: '',
+  useConvVae: false,
 }
 
 type BackendProcessStatus = 'alive' | 'restarting' | 'dead'
@@ -47,7 +61,13 @@ interface AppSettingsContextValue {
   saveGeminiApiKey: (value: string) => Promise<void>
   forceApiGenerations: boolean
   shouldVideoGenerateWithLtxApi: boolean
+  shouldImageGenerateWithFalApi: boolean
   cudaAvailable: boolean
+  // Bumped whenever installed models change (download / delete / activate a version). Generation
+  // model specs are derived from the *active* local model, so anything reading them must refetch;
+  // without this they stay pinned to whatever was installed at app start.
+  modelsVersion: number
+  notifyModelsChanged: () => void
 }
 
 const AppSettingsContext = createContext<AppSettingsContextValue | null>(null)
@@ -71,14 +91,18 @@ function normalizeAppSettings(data: Partial<AppSettings>): AppSettings {
     hasLtxApiKey: data.hasLtxApiKey ?? DEFAULT_APP_SETTINGS.hasLtxApiKey,
     userPrefersLtxApiVideoGenerations: data.userPrefersLtxApiVideoGenerations ?? DEFAULT_APP_SETTINGS.userPrefersLtxApiVideoGenerations,
     hasFalApiKey: data.hasFalApiKey ?? DEFAULT_APP_SETTINGS.hasFalApiKey,
+    userPrefersFalApiImageGenerations: data.userPrefersFalApiImageGenerations ?? DEFAULT_APP_SETTINGS.userPrefersFalApiImageGenerations,
     hasGeminiApiKey: data.hasGeminiApiKey ?? DEFAULT_APP_SETTINGS.hasGeminiApiKey,
+    geminiModel: data.geminiModel ?? DEFAULT_APP_SETTINGS.geminiModel,
     useLocalTextEncoder: data.useLocalTextEncoder ?? DEFAULT_APP_SETTINGS.useLocalTextEncoder,
     promptCacheSize: data.promptCacheSize ?? DEFAULT_APP_SETTINGS.promptCacheSize,
     promptEnhancerEnabledT2V: data.promptEnhancerEnabledT2V ?? DEFAULT_APP_SETTINGS.promptEnhancerEnabledT2V,
     promptEnhancerEnabledI2V: data.promptEnhancerEnabledI2V ?? DEFAULT_APP_SETTINGS.promptEnhancerEnabledI2V,
+    promptEnhancerProviderPreference: data.promptEnhancerProviderPreference ?? DEFAULT_APP_SETTINGS.promptEnhancerProviderPreference,
     seedLocked: data.seedLocked ?? DEFAULT_APP_SETTINGS.seedLocked,
     lockedSeed: data.lockedSeed ?? DEFAULT_APP_SETTINGS.lockedSeed,
     modelsDir: data.modelsDir ?? DEFAULT_APP_SETTINGS.modelsDir,
+    useConvVae: data.useConvVae ?? DEFAULT_APP_SETTINGS.useConvVae,
   }
 }
 
@@ -92,6 +116,11 @@ export function AppSettingsProvider({ children }: { children: ReactNode }) {
   const [forceApiGenerations, setForceApiGenerations] = useState(true)
   const [cudaAvailable, setCudaAvailable] = useState(false)
   const [backendProcessStatus, setBackendProcessStatus] = useState<BackendProcessStatus | null>(null)
+  const [modelsVersion, setModelsVersion] = useState(0)
+
+  const notifyModelsChanged = useCallback(() => {
+    setModelsVersion((current) => current + 1)
+  }, [])
 
   useEffect(() => {
     if (backendProcessStatus !== 'alive') return
@@ -149,7 +178,7 @@ export function AppSettingsProvider({ children }: { children: ReactNode }) {
     return () => {
       cancelled = true
     }
-  }, [backendProcessStatus])
+  }, [backendProcessStatus, modelsVersion])
 
   useEffect(() => {
     let cancelled = false
@@ -263,6 +292,8 @@ export function AppSettingsProvider({ children }: { children: ReactNode }) {
 
   const shouldVideoGenerateWithLtxApi =
     forceApiGenerations || (settings.userPrefersLtxApiVideoGenerations && settings.hasLtxApiKey)
+  const shouldImageGenerateWithFalApi =
+    forceApiGenerations || (settings.userPrefersFalApiImageGenerations && settings.hasFalApiKey)
 
   const contextValue = useMemo<AppSettingsContextValue>(
     () => ({
@@ -276,9 +307,12 @@ export function AppSettingsProvider({ children }: { children: ReactNode }) {
       saveGeminiApiKey,
       forceApiGenerations,
       shouldVideoGenerateWithLtxApi,
+      shouldImageGenerateWithFalApi,
       cudaAvailable,
+      modelsVersion,
+      notifyModelsChanged,
     }),
-    [cudaAvailable, forceApiGenerations, isLoaded, refreshSettings, runtimePolicyLoaded, saveFalApiKey, saveGeminiApiKey, saveLtxApiKey, settings, shouldVideoGenerateWithLtxApi, updateSettings],
+    [cudaAvailable, forceApiGenerations, isLoaded, modelsVersion, notifyModelsChanged, refreshSettings, runtimePolicyLoaded, saveFalApiKey, saveGeminiApiKey, saveLtxApiKey, settings, shouldVideoGenerateWithLtxApi, shouldImageGenerateWithFalApi, updateSettings],
   )
 
   return <AppSettingsContext.Provider value={contextValue}>{children}</AppSettingsContext.Provider>

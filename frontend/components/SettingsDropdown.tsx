@@ -1,8 +1,11 @@
-import React, { useState, useEffect, useRef } from 'react'
+import React from 'react'
 import { createPortal } from 'react-dom'
+import { useFixedMenu } from '../hooks/use-fixed-menu'
 import { Tooltip } from './ui/tooltip'
 
 // Generic settings dropdown used across the prompt bar's control rows.
+// The menu is portaled to document.body so overflow-hidden ancestors
+// (react-resizable-panels) cannot clip it.
 export function SettingsDropdown({
   trigger,
   options,
@@ -10,6 +13,8 @@ export function SettingsDropdown({
   onChange,
   title,
   tooltip,
+  triggerClassName,
+  placement = 'above',
 }: {
   trigger: React.ReactNode
   options: { value: string; label: string; disabled?: boolean; tooltip?: string; icon?: React.ReactNode }[]
@@ -17,67 +22,37 @@ export function SettingsDropdown({
   onChange: (value: string) => void
   title: string
   tooltip?: string
+  // Extra classes on the trigger button — e.g. to visually attach it to an adjacent button
+  // as a split-button (rounded-l-none, no left padding, etc).
+  triggerClassName?: string
+  // Prompt-bar menus open upward; gallery toolbar menus open downward.
+  placement?: 'above' | 'below'
 }) {
-  const [isOpen, setIsOpen] = useState(false)
-  const [panelPos, setPanelPos] = useState<{ left: number; bottom: number; maxHeight: number } | null>(null)
-  const triggerRef = useRef<HTMLButtonElement>(null)
-  const panelRef = useRef<HTMLDivElement>(null)
-
-  useEffect(() => {
-    // The panel is portalled out of this subtree, so a single containsclick
-    // check isn't enough — test the trigger and the panel separately.
-    const handleClickOutside = (e: MouseEvent) => {
-      const target = e.target as Node
-      if (triggerRef.current?.contains(target)) return
-      if (panelRef.current?.contains(target)) return
-      setIsOpen(false)
-    }
-    if (isOpen) {
-      document.addEventListener('mousedown', handleClickOutside)
-    }
-    return () => document.removeEventListener('mousedown', handleClickOutside)
-  }, [isOpen])
-
-  const handleToggle = () => {
-    if (!isOpen && triggerRef.current) {
-      const rect = triggerRef.current.getBoundingClientRect()
-      setPanelPos({
-        left: Math.min(rect.left, window.innerWidth - 180),
-        bottom: window.innerHeight - rect.top + 8,
-        // The panel grows upward from the trigger (anchored via `bottom`), so with
-        // many options (e.g. lots of tags) it can extend above the top of the
-        // viewport and render unreachable. Cap it to the space actually available
-        // above the trigger and let the option list scroll instead.
-        maxHeight: Math.max(120, rect.top - 16),
-      })
-    }
-    setIsOpen(!isOpen)
-  }
+  const { isOpen, setIsOpen, triggerRef, menuRef, style } = useFixedMenu(placement)
 
   const triggerButton = (
     <button
-      ref={triggerRef}
-      onClick={handleToggle}
-      className={`flex shrink-0 items-center gap-1 whitespace-nowrap px-2 py-1.5 rounded-md transition-colors ${isOpen ? 'bg-zinc-700 hover:bg-zinc-700' : 'hover:bg-zinc-800'}`}
+      onClick={() => setIsOpen(!isOpen)}
+      className={`flex shrink-0 items-center gap-1 whitespace-nowrap px-2 py-1.5 rounded-md transition-colors ${isOpen ? 'bg-zinc-700 hover:bg-zinc-700' : 'hover:bg-zinc-800'} ${triggerClassName ?? ''}`}
     >
       {trigger}
     </button>
   )
 
-  // Rendered via a portal into document.body — AssetCard (and other callers) clip
-  // overflow for rounded thumbnails, which would otherwise clip this popup invisible
-  // since position:absolute is still contained by an overflow-hidden ancestor.
-  const panel = isOpen && panelPos && createPortal(
-    (
+  return (
+    <div ref={triggerRef} className="relative">
+      {tooltip && !isOpen ? <Tooltip content={tooltip}>{triggerButton}</Tooltip> : triggerButton}
+
+      {isOpen && createPortal(
         <div
-          ref={panelRef}
-          style={{ position: 'fixed', left: panelPos.left, bottom: panelPos.bottom, maxHeight: panelPos.maxHeight }}
-          className="bg-zinc-800 border border-zinc-700 rounded-md p-2 min-w-[160px] shadow-xl z-[9999] flex flex-col"
+          ref={menuRef}
+          style={style}
+          className="fixed w-max bg-zinc-800 border border-zinc-700 rounded-md p-2 min-w-[160px] shadow-xl"
         >
-          <div className="text-[10px] text-zinc-500 uppercase tracking-wider mb-2 shrink-0">{title}</div>
-          {/* Scrolls within the viewport-aware maxHeight above, so a long option list
-              (e.g. many tags, or many catalog / custom IC-LoRAs) stays reachable. */}
-          <div className="space-y-1 overflow-y-auto">
+          <div className="text-[10px] text-zinc-500 uppercase tracking-wider mb-2">{title}</div>
+          {/* Cap height + scroll so a long option list (e.g. many catalog / custom IC-LoRAs)
+              doesn't clip off-screen — matches the LoRA picker's max-h-80. */}
+          <div className="space-y-1 max-h-80 overflow-y-auto">
             {options.map(option => (
               <div key={option.value} className="relative group/option">
                 <button
@@ -110,15 +85,9 @@ export function SettingsDropdown({
               </div>
             ))}
           </div>
-        </div>
-    ),
-    document.body,
-  )
-
-  return (
-    <div className="relative">
-      {tooltip && !isOpen ? <Tooltip content={tooltip}>{triggerButton}</Tooltip> : triggerButton}
-      {panel}
+        </div>,
+        document.body,
+      )}
     </div>
   )
 }

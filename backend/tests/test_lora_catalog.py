@@ -12,7 +12,7 @@ _VALID = """
   "requires_hf_login": true,
   "input": {"kind": "image"},
   "preprocessing": [{"utility": "image_to_frames", "params": {}}],
-  "instructions": [{"title": "What it does", "body": "use it"}],
+  "instructions": [{"kind": "summary", "title": "What it does", "body": "use it"}],
   "controls": [{"id": "duration", "label": "Duration", "default": 5, "options": [5, 8]}],
   "default_settings": {"skip_stage_2": true, "resolution_factor": 1.0,
                        "audio_mode": "off", "lora_strength": 1.0, "conditioning_strength": 1.0}
@@ -29,6 +29,31 @@ def test_parse_valid_catalog():
     assert r.default_settings.skip_stage_2 is True
     assert r.controls[0].id == "duration"
     assert r.controls[0].options == [5, 8]
+    assert r.supported_models == ["LTX-2.3", "LTX-2.5"]
+    assert r.supports_family("LTX-2.3") is True
+    assert r.supports_family("LTX-2.5") is True
+
+
+def test_supported_models_rejects_empty_and_duplicates():
+    empty = _VALID.replace(
+        '"requires_hf_login": true,',
+        '"requires_hf_login": true, "supported_models": [],',
+    )
+    with pytest.raises(ValidationError, match="supported_models"):
+        parse_lora_catalog(empty)
+    dup = _VALID.replace(
+        '"requires_hf_login": true,',
+        '"requires_hf_login": true, "supported_models": ["LTX-2.3", "LTX-2.3"],',
+    )
+    with pytest.raises(ValidationError, match="supported_models"):
+        parse_lora_catalog(dup)
+
+
+def test_shipped_catalog_allows_2_3_and_2_5():
+    catalog = Path(__file__).parent.parent / "runtime_config" / "lora_catalog.json"
+    cat = parse_lora_catalog(catalog.read_text(encoding="utf-8"))
+    for item in [*cat.loras, *cat.ic_loras]:
+        assert item.supported_models == ["LTX-2.3", "LTX-2.5"], item.id
 
 def test_controls_default_to_empty():
     no_controls = _VALID.replace(
@@ -115,11 +140,12 @@ _VALID_LORA = """
   "id": "my-style", "name": "My Style", "description": "d",
   "download": {"repo_id": "Lightricks/s", "variants": [{"id": "default", "label": "Default", "filename": "s.safetensors", "size_bytes": 5}]},
   "requires_hf_login": false,
-  "instructions": [{"title": "Prompt", "body": "use TRIGGER"}],
+  "instructions": [{"kind": "prompting", "title": "Prompt", "body": "use TRIGGER"}],
   "license": {"name": "OpenRAIL-M", "url": "https://example/license"},
   "author": {"name": "Someone"},
   "media": {"thumbnail": "https://example/t.png"},
   "trigger": "TRIGGER",
+  "trigger_placement": "anywhere",
   "recommended_strength": 0.8
 }]}
 """
@@ -133,7 +159,55 @@ def test_parse_plain_lora_entry():
     assert lora.license is not None and lora.license.name == "OpenRAIL-M"
     assert lora.author is not None and lora.author.name == "Someone"
     assert lora.trigger == "TRIGGER"
+    assert lora.trigger_placement == "anywhere"
     assert lora.recommended_strength == 0.8
+
+
+def test_trigger_without_placement_rejected():
+    bad = _VALID_LORA.replace('"trigger_placement": "anywhere",\n  ', "")
+    with pytest.raises(ValidationError):
+        parse_lora_catalog(bad)
+
+
+def test_placement_without_trigger_rejected():
+    bad = _VALID_LORA.replace('"trigger": "TRIGGER",\n  ', "")
+    with pytest.raises(ValidationError):
+        parse_lora_catalog(bad)
+
+
+def test_prompt_template_placeholders_must_match_template():
+    from api_types import PromptTemplateSpec
+    from pydantic import ValidationError as VErr
+
+    PromptTemplateSpec(template="upscale", placeholders={})
+    PromptTemplateSpec(template="COLORIZE {result}", placeholders={"result": {}})
+    with pytest.raises(VErr):
+        PromptTemplateSpec(template="COLORIZE {result}", placeholders={})
+    with pytest.raises(VErr):
+        PromptTemplateSpec(template="upscale", placeholders={"unused": {}})
+
+
+def test_prompt_template_supports_enum_choices():
+    from api_types import PromptTemplateSpec
+
+    spec = PromptTemplateSpec(
+        template="crossview. new camera angle: {azimuth}, {elevation}, {distance}.",
+        placeholders={
+            "azimuth": {"choices": ["same angle", "to the left", "to the right"]},
+            "elevation": {"choices": ["lower", "same height", "higher"]},
+            "distance": {"choices": ["closer", "same distance", "further"]},
+        },
+    )
+    assert spec.placeholders["azimuth"].choices == ["same angle", "to the left", "to the right"]
+
+
+def test_prompt_template_rejects_trigger_placement():
+    bad = _VALID_LORA.replace(
+        '"trigger_placement": "anywhere",',
+        '"trigger_placement": "anywhere", "prompt_template": {"template": "TRIGGER", "placeholders": {}},',
+    )
+    with pytest.raises(ValidationError):
+        parse_lora_catalog(bad)
 
 
 def test_file_provider_falls_back_to_bundled_on_remote_failure(tmp_path: Path):
@@ -186,7 +260,7 @@ def test_shipped_catalog_uses_relative_demo_videos_and_author_affiliation():
             assert not item.media.demo_video.startswith("http://")
             assert not item.media.demo_video.startswith("https://")
     official = [r for r in cat.ic_loras if r.author and r.author.affiliation == "ltx"]
-    assert len(official) == 9
+    assert len(official) == 10
     missing = next(r for r in cat.loras if r.id == "fantasy-anime-style")
     assert missing.media is not None and missing.media.demo_video == "fantasy_anime_style_demo.mp4"
 
@@ -260,6 +334,94 @@ def test_shipped_catalog_every_download_has_variants():
         assert len(item.download.variants) >= 1, item.id
         assert "filename" not in type(item.download).model_fields
         assert "size_bytes" not in type(item.download).model_fields
+
+def test_shipped_catalog_every_instruction_has_kind():
+    catalog = Path(__file__).parent.parent / "runtime_config" / "lora_catalog.json"
+    cat = parse_lora_catalog(catalog.read_text(encoding="utf-8"))
+    for item in [*cat.loras, *cat.ic_loras]:
+        for instr in item.instructions:
+            assert instr.kind is not None, (item.id, instr.title)
+
+
+def test_shipped_catalog_every_trigger_has_placement_or_template():
+    catalog = Path(__file__).parent.parent / "runtime_config" / "lora_catalog.json"
+    cat = parse_lora_catalog(catalog.read_text(encoding="utf-8"))
+    for item in [*cat.loras, *cat.ic_loras]:
+        if item.trigger is not None:
+            assert item.trigger_placement is not None or item.prompt_template is not None, item.id
+
+
+def test_shipped_crossview_prompt_template_has_enum_placeholders():
+    catalog = Path(__file__).parent.parent / "runtime_config" / "lora_catalog.json"
+    cat = parse_lora_catalog(catalog.read_text(encoding="utf-8"))
+    crossview = next(r for r in cat.ic_loras if r.id == "crossview-prompt")
+    assert crossview.prompt_template is not None
+    assert set(crossview.prompt_template.placeholders) == {"azimuth", "elevation", "distance"}
+    assert crossview.prompt_template.placeholders["elevation"].choices == ["lower", "same height", "higher"]
+
+
+def test_shipped_upscale_prompt_template_has_no_placeholders():
+    catalog = Path(__file__).parent.parent / "runtime_config" / "lora_catalog.json"
+    cat = parse_lora_catalog(catalog.read_text(encoding="utf-8"))
+    upscale = next(r for r in cat.ic_loras if r.id == "upscale")
+    assert upscale.prompt_template is not None
+    assert upscale.prompt_template.template == "upscale"
+    assert upscale.prompt_template.placeholders == {}
+
+
+def test_enhancement_examples_default_to_empty():
+    assert parse_lora_catalog(_VALID_LORA).loras[0].enhancement_examples == []
+
+
+def test_enhancement_examples_parse_when_present():
+    j = _VALID_LORA.replace(
+        '"trigger_placement": "anywhere",',
+        '"trigger_placement": "anywhere", "enhancement_examples": ["ex one", "ex two"],',
+    )
+    assert parse_lora_catalog(j).loras[0].enhancement_examples == ["ex one", "ex two"]
+
+
+def test_input_optional_defaults_false():
+    assert parse_lora_catalog(_VALID).ic_loras[0].input.optional is False
+
+
+def test_shipped_product_ad_style_accepts_optional_image_input():
+    catalog = Path(__file__).parent.parent / "runtime_config" / "lora_catalog.json"
+    cat = parse_lora_catalog(catalog.read_text(encoding="utf-8"))
+    item = next(r for r in cat.loras if r.id == "product-ad-style")
+    assert item.input is not None
+    assert item.input.kind == "image"
+    assert item.input.optional is True
+
+
+def test_shipped_cinemagraph_requires_non_optional_image_input():
+    catalog = Path(__file__).parent.parent / "runtime_config" / "lora_catalog.json"
+    cat = parse_lora_catalog(catalog.read_text(encoding="utf-8"))
+    item = next(r for r in cat.loras if r.id == "cinemagraph-motion")
+    assert item.input is not None
+    assert item.input.optional is False
+
+
+def test_shipped_vrgamedevgirl84_loras_have_ltx2_community_license():
+    catalog = Path(__file__).parent.parent / "runtime_config" / "lora_catalog.json"
+    cat = parse_lora_catalog(catalog.read_text(encoding="utf-8"))
+    vrg = [r for r in cat.loras if r.author and r.author.name == "vrgamedevgirl84"]
+    assert len(vrg) == 9
+    for item in vrg:
+        assert item.license is not None, item.id
+        assert item.license.name == "LTX-2 Community License"
+        assert item.license.url == "https://github.com/Lightricks/LTX-2/blob/main/LICENSE"
+
+
+def test_shipped_cinemagraph_lora_requires_image_input():
+    catalog = Path(__file__).parent.parent / "runtime_config" / "lora_catalog.json"
+    cat = parse_lora_catalog(catalog.read_text(encoding="utf-8"))
+    lora = next(r for r in cat.loras if r.id == "cinemagraph-motion")
+    assert lora.input is not None and lora.input.kind == "image"
+    assert lora.trigger == "CINEMAGRAPH_MOTION"
+    assert lora.trigger_placement == "first_token"
+    assert lora.requires_hf_login is True
+
 
 def test_downloaded_variant_ids_lists_only_installed_checkpoints(tmp_path: Path):
     from runtime_config.model_download_specs import (

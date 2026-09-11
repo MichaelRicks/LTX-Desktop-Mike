@@ -15,16 +15,31 @@ LocalGenerationMode = Literal[
 # — a single data point, not a hardware sweep.
 DARWIN_STREAMING_FLOOR_GB = 15
 
-# Full-resident on Darwin means the *full* ~46 GB bf16 transformer (no fp8 path on
-# MPS, unlike CUDA) sitting in unified memory alongside the Gemma text encoder, VAE,
-# upsampler, activations, and the OS/Electron/app itself. UNVERIFIED: chosen as a
-# conservative floor, not measured on real hardware. A live test at ram_gb=19 (48 GB
-# machine, other apps open) picked this tier before this floor existed and stalled
-# — torch/driver allocation climbed past torch.mps.recommended_max_memory() and the
-# process sat there paging instead of progressing or erroring (no crash, no OOM, just
-# stuck). Do not lower this without confirming on hardware that actually has this
-# much RAM free.
-DARWIN_FULL_RESIDENT_FLOOR_GB = 96
+# Full-resident on Darwin means the *full* bf16 transformer (no fp8 path on MPS,
+# unlike CUDA) sitting in unified memory alongside the Gemma text encoder, VAE,
+# upsampler, activations, and the OS/Electron/app itself. A live test at ram_gb=19
+# (48 GB machine, other apps open) picked this tier before this floor existed and
+# stalled — torch/driver allocation climbed past torch.mps.recommended_max_memory()
+# and the process sat there paging instead of progressing or erroring (no crash, no
+# OOM, just stuck) — so the failure mode this floor guards against doesn't announce
+# itself; there's no clean OOM to notice in testing by accident.
+#
+# 85 is arithmetic from real checkpoint bytes (model_download_specs.py), not a
+# hardware measurement, converted to GiB since get_available_ram_gb() divides by
+# 1024**3:
+#   - transformer (ltx-2.3-22b-distilled-1.1.safetensors): 46_149_345_334 B = 42.98 GiB
+#   - Gemma text encoder (gemma-3-12b-it-qat-q4_0-unquantized, bf16): 25_000_000_000 B = 23.28 GiB
+#   - VAE + active latent workspace: ~7.3 GiB estimate (unverified) for a 5s/1080p
+#     clip (this app's max local resolution/duration); decode is tiled
+#     (default_tiling_config() in ltx_pipeline_common.py), so this term likely
+#     doesn't scale up much with resolution the way a naive pixel-count estimate
+#     would suggest, but that's not confirmed either
+#   -> subtotal 73.5 GiB, +~15% margin for MPS allocator fragmentation/driver
+#      overhead against the silent-stall failure mode above -> 85
+#
+# Still UNVERIFIED on real hardware. Do not lower further without confirming on a
+# machine that actually has this much RAM free.
+DARWIN_FULL_RESIDENT_FLOOR_GB = 85
 
 
 def decide_local_generation_mode(
@@ -33,6 +48,7 @@ def decide_local_generation_mode(
     vram_gb: int | None,
     mps_available: bool = False,
     ram_gb: int | None = None,
+    fp8_capable: bool = True,
 ) -> LocalGenerationMode:
     """Pick the local-generation mode for this runtime.
 
@@ -44,11 +60,15 @@ def decide_local_generation_mode(
 
     On CUDA (Windows/Linux) the memory figure is discrete (total) VRAM, and
     "full_models_loading" (>=31 GB) holds the fp8-halved (~23 GB) transformer
-    resident. On Apple Silicon (Darwin) there is no discrete VRAM — the GPU shares
-    system RAM — so ``ram_gb`` is the *available* (free) RAM, not total: total RAM
-    overstates real headroom once the OS/Electron/app are already running. Gated on
-    MPS being available (i.e. Apple Silicon, not an Intel Mac, which has no MPS
-    backend and stays unsupported).
+    resident. Pass ``fp8_capable=False`` (ROCm today — see
+    ``runtime_config.accelerator.accelerator_backend``) to stay on the streaming
+    path regardless of VRAM: without fp8 the full ~42-46 GB bf16 transformer
+    would try to stay resident at that floor and OOM. On Apple Silicon (Darwin)
+    there is no discrete VRAM — the GPU shares system RAM — so ``ram_gb`` is the
+    *available* (free) RAM, not total: total RAM overstates real headroom once
+    the OS/Electron/app are already running. Gated on MPS being available
+    (i.e. Apple Silicon, not an Intel Mac, which has no MPS backend and stays
+    unsupported). ``fp8_capable`` is ignored on Darwin (no fp8 path on MPS).
 
     Darwin's "full_models_loading" (>=``DARWIN_FULL_RESIDENT_FLOOR_GB``) is NOT the
     same regime as CUDA's: MPS has no fp8 path, so it holds the *full* ~46 GB bf16
@@ -77,6 +97,15 @@ def decide_local_generation_mode(
             return "unsupported"
         if vram_gb < 15:
             return "unsupported"
+        # full_models_loading's >=31 GB floor assumes the fp8-halved (~23 GB) transformer
+        # (see module docstring). Without fp8 (ROCm today — see
+        # runtime_config.accelerator.accelerator_backend), holding the full bf16
+        # (~42-46 GB) transformer resident instead would OOM at this floor, so stay on
+        # the streaming path regardless of VRAM until a real bf16-full-resident floor is
+        # established on non-CUDA hardware.
+        # Originally contributed by boxwrench in https://github.com/Lightricks/LTX-Desktop/pull/160
+        if not fp8_capable:
+            return "streaming_models_loading"
         if vram_gb < 31:
             return "streaming_models_loading"
         return "full_models_loading"

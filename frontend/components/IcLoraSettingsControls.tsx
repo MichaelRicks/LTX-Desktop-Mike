@@ -1,6 +1,7 @@
 import { Fragment } from 'react'
 import { ChevronUp } from 'lucide-react'
 import { SettingsDropdown } from './SettingsDropdown'
+import { Tooltip } from './ui/tooltip'
 import type { ApiSuccessOf } from '../lib/api-client'
 import type { components } from '../generated/backend-openapi'
 import type { ICLoraConditioningType } from './ICLoraPanel'
@@ -163,29 +164,25 @@ export function IcLoraSettingsControls({
             })}
             {/* LoRA strength: a regular control for every IC-LoRA mode (canny/depth/custom/catalog).
                 It scales the adapter merge weight, so it always has an effect. (The advanced knobs —
-                S2/Res/Audio/FPS — live in IcLoraAdvancedPanel beside the prompt bar.) */}
+                S2/Res/Audio/FPS — live in IcLoraAdvancedPanel beside the prompt bar.) A continuous
+                slider (like the plain-LoRA strength bar) rather than a dropdown, for finer control. */}
             <div className="w-px h-4 bg-zinc-700 mx-0.5" />
-            <SettingsDropdown
-              title="LORA STRENGTH"
-              tooltip={CONTROL_TOOLTIPS.loraStrength}
-              value={String(icLoraLoraStrength ?? 1.0)}
-              onChange={(v) => onIcLoraLoraStrengthChange?.(parseFloat(v))}
-              options={[
-                { value: '0.5', label: '0.50' },
-                { value: '0.8', label: '0.80' },
-                { value: '1', label: '1.00' },
-                { value: '1.2', label: '1.20' },
-                { value: '1.5', label: '1.50' },
-                { value: '2', label: '2.00' },
-              ]}
-              trigger={
-                <>
-                  <span className="text-zinc-500 text-[10px]">LORA</span>
-                  <span className="text-zinc-300 font-medium">{(icLoraLoraStrength ?? 1.0).toFixed(2)}</span>
-                  <ChevronUp className="h-3 w-3 text-zinc-500" />
-                </>
-              }
-            />
+            <Tooltip content={CONTROL_TOOLTIPS.loraStrength}>
+              <div className="flex items-center gap-1.5 px-2 py-1.5">
+                <span className="text-zinc-500 text-[10px]">LORA</span>
+                <input
+                  type="range"
+                  min={0}
+                  max={2}
+                  step={0.05}
+                  value={icLoraLoraStrength ?? 1.0}
+                  onChange={(e) => onIcLoraLoraStrengthChange?.(parseFloat(e.target.value))}
+                  className="w-16 h-1 accent-white cursor-pointer"
+                  aria-label="LoRA strength"
+                />
+                <span className="text-zinc-300 font-medium w-9 text-right">{(icLoraLoraStrength ?? 1.0).toFixed(2)}</span>
+              </div>
+            </Tooltip>
     </>
   )
 }

@@ -1,9 +1,11 @@
 import { z } from 'zod'
+import { clampKeyframeStrength } from '../lib/keyframe-strength.ts'
 
 export const generationModeValues = [
   'text-to-video',
   'image-to-video',
   'audio-to-video',
+  'multi-keyframe',
   'text-to-image',
   'image-edit',
   'retake',
@@ -52,11 +54,22 @@ export const transitionTypeSchema = z.enum(transitionTypeValues)
 export const viewTypeSchema = z.enum(viewTypeValues)
 export const projectTabSchema = z.enum(projectTabValues)
 
+export const persistedKeyframeSchema = z.object({
+  path: z.string(),
+  frameIndex: z.number(),
+  // Missing on #154 assets. Out of range is clamped so a bad float cannot fail the project.
+  strength: z.unknown().optional().transform(clampKeyframeStrength),
+})
+
 export const generationParamsSchema = z.object({
   mode: z.enum(generationModeValues),
   prompt: z.string(),
   model: z.string(),
-  duration: z.number(),
+  // Local pipeline ids ("fast") are shared across LTX versions, so `model` alone can't say
+  // which version produced the asset. Captured at generation time from the backend spec's
+  // display name; absent on assets written before this existed.
+  modelLabel: z.string().optional(),
+  duration: z.number().nullable(),
   resolution: z.string(),
   fps: z.number(),
   audio: z.boolean(),
@@ -65,7 +78,9 @@ export const generationParamsSchema = z.object({
   imageSteps: z.number().optional(),
   imageEditStrength: z.number().optional(),
   inputImageUrl: z.string().optional(),
+  inputLastImageUrl: z.string().optional(),
   inputAudioUrl: z.string().optional(),
+  keyframes: z.array(persistedKeyframeSchema).optional(),
   retakeVideoPath: z.string().optional(),
   retakeStartTime: z.number().optional(),
   retakeDuration: z.number().optional(),

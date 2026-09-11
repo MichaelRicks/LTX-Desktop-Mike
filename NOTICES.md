@@ -86,6 +86,7 @@ used by LTX Desktop.
 - **bitsandbytes** — Copyright (c) Facebook, Inc. and its affiliates — MIT License
 - **gguf** — Copyright (c) GGML (ggml.ai) — MIT License
 - **sageattention** — Copyright (c) Jintao Zhang et al. — Apache License 2.0
+- **natten** — Copyright (c) Ali Hassani, Steven Walton, et al. (SHI Labs) — Apache License 2.0
 - **opencv-python-headless** — Copyright (c) OpenCV team — Apache License 2.0
 - **fastapi** — Copyright (c) Sebastian Ramirez — MIT License
 - **uvicorn** — Copyright (c) Encode OSS Ltd. — BSD 3-Clause License

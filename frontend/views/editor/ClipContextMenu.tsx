@@ -35,6 +35,7 @@ export interface ClipContextMenuProps {
   setClips: React.Dispatch<React.SetStateAction<TimelineClip[]>>
   handleRegenerate: (assetId: string, clipId: string) => void
   handleCancelRegeneration: () => void
+  canCancelInFlight: boolean
   handleClipTakeChange: (clipId: string, direction: 'prev' | 'next') => void
   handleDeleteTake: (clipId: string) => void
   duplicateClip: (clipId: string) => void
@@ -48,6 +49,7 @@ export interface ClipContextMenuProps {
   onRetakeClip: (clip: TimelineClip) => void
   onICLoraClip: (clip: TimelineClip) => void
   canUseIcLora: boolean
+  canUseRetake: boolean
   onCaptureFrameForVideo: (clip: TimelineClip) => void
   onCreateVideoFromAudio: (clip: TimelineClip) => void
 }
@@ -106,6 +108,7 @@ export function ClipContextMenu({
   setClips,
   handleRegenerate,
   handleCancelRegeneration,
+  canCancelInFlight,
   handleClipTakeChange,
   handleDeleteTake,
   duplicateClip,
@@ -119,6 +122,7 @@ export function ClipContextMenu({
   onRetakeClip,
   onICLoraClip,
   canUseIcLora,
+  canUseRetake,
   onCaptureFrameForVideo,
   onCreateVideoFromAudio,
 }: ClipContextMenuProps) {
@@ -217,6 +221,7 @@ export function ClipContextMenu({
           setClips={setClips}
           handleRegenerate={handleRegenerate}
           handleCancelRegeneration={handleCancelRegeneration}
+          canCancelInFlight={canCancelInFlight}
           handleClipTakeChange={handleClipTakeChange}
           handleDeleteTake={handleDeleteTake}
           duplicateClip={duplicateClip}
@@ -230,6 +235,7 @@ export function ClipContextMenu({
           onRetakeClip={onRetakeClip}
           onICLoraClip={onICLoraClip}
           canUseIcLora={canUseIcLora}
+          canUseRetake={canUseRetake}
           onCaptureFrameForVideo={onCaptureFrameForVideo}
           onCreateVideoFromAudio={onCreateVideoFromAudio}
           close={close}
@@ -256,12 +262,12 @@ function SingleClipMenu({
   isRegenerating,
   currentProjectId, updateAsset,
   handleCopy, handleCut, handlePaste, setClips,
-  handleRegenerate, handleCancelRegeneration,
+  handleRegenerate, handleCancelRegeneration, canCancelInFlight,
   handleClipTakeChange, handleDeleteTake,
   duplicateClip, splitClipAtPlayhead, removeClip, updateClip,
   getLiveAsset, getMaxClipDuration,
   onRevealAsset,
-  onCreateVideoFromImage, onRetakeClip, onICLoraClip, canUseIcLora,
+  onCreateVideoFromImage, onRetakeClip, onICLoraClip, canUseIcLora, canUseRetake,
   onCaptureFrameForVideo,
   onCreateVideoFromAudio,
   close,
@@ -276,6 +282,7 @@ function SingleClipMenu({
   setClips: React.Dispatch<React.SetStateAction<TimelineClip[]>>
   handleRegenerate: (assetId: string, clipId: string) => void
   handleCancelRegeneration: () => void
+  canCancelInFlight: boolean
   handleClipTakeChange: (clipId: string, direction: 'prev' | 'next') => void
   handleDeleteTake: (clipId: string) => void
   duplicateClip: (clipId: string) => void
@@ -289,6 +296,7 @@ function SingleClipMenu({
   onRetakeClip: (clip: TimelineClip) => void
   onICLoraClip: (clip: TimelineClip) => void
   canUseIcLora: boolean
+  canUseRetake: boolean
   onCaptureFrameForVideo: (clip: TimelineClip) => void
   onCreateVideoFromAudio: (clip: TimelineClip) => void
   close: () => void
@@ -446,7 +454,9 @@ function SingleClipMenu({
           <SectionLabel>AI Tools</SectionLabel>
 
           {contextClip.isRegenerating ? (
+            canCancelInFlight ? (
             <MenuItem icon={X} iconClass="text-red-400" label="Cancel Regeneration" onClick={() => { handleCancelRegeneration(); close() }} />
+            ) : null
           ) : (
             <MenuItem icon={RefreshCw} iconClass="text-blue-400" label="Regenerate Shot"
               disabled={isRegenerating} onClick={() => { handleRegenerate(contextClip.assetId!, contextClip.id); close() }} />
@@ -492,8 +502,10 @@ function SingleClipMenu({
           )}
           {isVideo && contextClip.assetId && (
             <>
-              <MenuItem icon={Film} iconClass="text-blue-400" label="Retake Section"
-                onClick={() => { onRetakeClip(contextClip); close() }} />
+              {canUseRetake && (
+                <MenuItem icon={Film} iconClass="text-blue-400" label="Retake Section"
+                  onClick={() => { onRetakeClip(contextClip); close() }} />
+              )}
               {canUseIcLora && (
                 <MenuItem icon={Sparkles} iconClass="text-amber-400" label="IC-LoRA / Style Transfer"
                   onClick={() => { onICLoraClip(contextClip); close() }} />

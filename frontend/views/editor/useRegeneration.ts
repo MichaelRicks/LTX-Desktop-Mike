@@ -1,7 +1,10 @@
-import { useCallback, useEffect } from 'react'
+import { useCallback, useEffect, useRef } from 'react'
 import type { Asset, TimelineClip } from '../../types/project-model'
 import type { GenerationSettings } from '../../components/SettingsPanel'
 import type { GenerationError } from '../../lib/generation-errors'
+import type { VideoGenerationPipeline } from '../../lib/video-generation-model-specs'
+import type { GenSpaceMode } from '../../lib/genspace-multi-keyframe'
+import { fromPersistedKeyframes, type KeyframeItem } from '../../lib/multi-keyframe'
 import { addVisualAssetToProject } from '../../lib/asset-copy'
 import { ApiClient } from '../../lib/api-client'
 import { logger } from '../../lib/logger'
@@ -77,14 +80,22 @@ function resolveAssetPreviewPath(assets: Asset[], clips: TimelineClip[], asset: 
 export interface UseRegenerationParams {
   projectId: string
   // Generation hook values
-  regenGenerate: (prompt: string, imagePath: string | null, settings: GenerationSettings) => Promise<void>
-  regenGenerateImage: (prompt: string, settings: GenerationSettings) => Promise<void>
+  regenGenerate: (
+    prompt: string,
+    imagePath: string | null,
+    settings: GenerationSettings,
+    audioPath?: string | null,
+    lastImagePath?: string | null,
+    imageInputs?: { mode: GenSpaceMode; keyframes: KeyframeItem[] },
+  ) => Promise<void>
+  regenGenerateImage: (prompt: string, settings: GenerationSettings, editSource?: string | null) => Promise<void>
   regenVideoPath: string | null
   regenImagePath: string | null
   isRegenerating: boolean
   regenCancel: () => void
   regenReset: () => void
   regenError: GenerationError | null
+  canCancelInFlight: boolean
   shouldVideoGenerateWithLtxApi: boolean
 }
 
@@ -99,6 +110,7 @@ export function useRegeneration(params: UseRegenerationParams) {
     regenCancel,
     regenReset,
     regenError,
+    canCancelInFlight,
     shouldVideoGenerateWithLtxApi,
   } = params
   const {
@@ -114,6 +126,7 @@ export function useRegeneration(params: UseRegenerationParams) {
   const regeneratingAssetId = useEditorStore(selectRegeneratingAssetId)
   const regeneratingClipId = useEditorStore(selectRegeneratingClipId)
   const regenerationPreError = useEditorStore(selectRegenerationPreError)
+  const cancelRequestedRef = useRef(false)
 
   const dismissRegenerationPreError = useCallback(() => {
     setRegenerationPreError(null)
@@ -202,7 +215,7 @@ export function useRegeneration(params: UseRegenerationParams) {
 
     if (generationParams.mode === 'text-to-image') {
       void regenGenerateImage(generationParams.prompt, {
-        model: generationParams.model as 'fast' | 'pro',
+        model: generationParams.model as VideoGenerationPipeline,
         duration: generationParams.duration,
         videoResolution: '540p',
         fps: generationParams.fps,
@@ -216,11 +229,35 @@ export function useRegeneration(params: UseRegenerationParams) {
       return
     }
 
-    const imagePath = generationParams.mode === 'image-to-video' && generationParams.inputImageUrl
+    if (generationParams.mode === 'image-edit') {
+      if (!generationParams.inputImageUrl) {
+        failClipRegeneration(
+          'This edited asset is missing its source image and cannot be regenerated.',
+        )
+        return
+      }
+      void regenGenerateImage(generationParams.prompt, {
+        model: generationParams.model as VideoGenerationPipeline,
+        duration: generationParams.duration,
+        videoResolution: '540p',
+        fps: generationParams.fps,
+        audio: generationParams.audio,
+        cameraMotion: generationParams.cameraMotion,
+        imageResolution: normalizeImageResolution(generationParams.resolution),
+        imageAspectRatio: generationParams.imageAspectRatio || '16:9',
+        imageSteps: generationParams.imageSteps || 8,
+        imageEditStrength: generationParams.imageEditStrength,
+        variations: 1,
+      }, generationParams.inputImageUrl)
+      return
+    }
+
+    const imagePath = generationParams.inputImageUrl
+      && (generationParams.mode === 'image-to-video' || generationParams.mode === 'audio-to-video')
       ? generationParams.inputImageUrl
       : null
     const rawVideoSettings: GenerationSettings = {
-      model: generationParams.model as 'fast' | 'pro',
+      model: generationParams.model as VideoGenerationPipeline,
       duration: generationParams.duration,
       videoResolution: normalizeVideoResolution(generationParams.resolution),
       fps: generationParams.fps,
@@ -232,7 +269,19 @@ export function useRegeneration(params: UseRegenerationParams) {
       // Local LoRA refs are filesystem paths the cloud API can't resolve.
       loras: !shouldVideoGenerateWithLtxApi ? generationParams.loras : undefined,
     }
-    void regenGenerate(generationParams.prompt, imagePath, rawVideoSettings)
+    void regenGenerate(
+      generationParams.prompt,
+      imagePath,
+      rawVideoSettings,
+      generationParams.mode === 'audio-to-video' ? generationParams.inputAudioUrl : undefined,
+      imagePath && generationParams.duration != null ? generationParams.inputLastImageUrl : undefined,
+      generationParams.mode === 'multi-keyframe'
+        ? {
+            mode: 'multi-keyframe',
+            keyframes: fromPersistedKeyframes(generationParams.keyframes ?? []),
+          }
+        : undefined,
+    )
   }, [
     isRegenerating,
     projectId,
@@ -247,10 +296,10 @@ export function useRegeneration(params: UseRegenerationParams) {
   ])
 
   const handleCancelRegeneration = useCallback(() => {
+    if (!canCancelInFlight) return
+    cancelRequestedRef.current = true
     regenCancel()
-    cancelClipRegeneration()
-    regenReset()
-  }, [cancelClipRegeneration, regenCancel, regenReset])
+  }, [canCancelInFlight, regenCancel])
 
   const persistGeneratedTake = useCallback(async (
     generatedPath: string,
@@ -280,6 +329,7 @@ export function useRegeneration(params: UseRegenerationParams) {
   }, [applyGeneratedTake, cancelClipRegeneration, projectId, regenReset])
 
   useEffect(() => {
+    if (cancelRequestedRef.current) return
     if (!regenVideoPath || !regeneratingAssetId || !projectId || isRegenerating) return
     void persistGeneratedTake(regenVideoPath, 'video', regeneratingAssetId, regeneratingClipId)
   }, [
@@ -292,6 +342,7 @@ export function useRegeneration(params: UseRegenerationParams) {
   ])
 
   useEffect(() => {
+    if (cancelRequestedRef.current) return
     if (!regenImagePath || !regeneratingAssetId || !projectId || isRegenerating) return
     void persistGeneratedTake(regenImagePath, 'image', regeneratingAssetId, regeneratingClipId)
   }, [
@@ -306,9 +357,17 @@ export function useRegeneration(params: UseRegenerationParams) {
   // Keep UI clip state in sync if generation fails.
   // Do not reset generation error here; dialog owns that lifecycle.
   useEffect(() => {
+    if (cancelRequestedRef.current) return
     if (!regeneratingAssetId || isRegenerating || !regenError) return
     cancelClipRegeneration()
   }, [cancelClipRegeneration, isRegenerating, regeneratingAssetId, regenError])
+
+  useEffect(() => {
+    if (!cancelRequestedRef.current || isRegenerating) return
+    cancelRequestedRef.current = false
+    cancelClipRegeneration()
+    regenReset()
+  }, [cancelClipRegeneration, isRegenerating, regenReset])
 
   return {
     regeneratingAssetId,

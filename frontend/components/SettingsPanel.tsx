@@ -1,10 +1,12 @@
 import { useEffect, useMemo } from 'react'
 import { Select } from './ui/select'
+import { videoGenerationResolutionLabel } from '../lib/video-resolution'
 import {
   areVideoGenerationSettingsEquivalent,
   resolveVideoGenerationOptions,
   sanitizeVideoGenerationSettings,
   type VideoGenerationModelSpecItem,
+  type VideoGenerationPipeline,
 } from '../lib/video-generation-model-specs'
 
 export type GenerationMode = 'text-to-video' | 'image-to-video' | 'text-to-image'
@@ -13,11 +15,15 @@ export interface LoraSelection {
   ref: string
   name: string
   scale: number
+  // Catalog id (e.g. "cozy-felt-style"), when this LoRA was picked from the library —
+  // absent for a manually-added/custom LoRA not in the catalog. Lets the prompt enhancer
+  // look up trigger/instructions without re-matching on filename or display name.
+  catalogId?: string
 }
 
 export interface GenerationSettings {
-  model: 'fast' | 'pro'
-  duration: number
+  model: VideoGenerationPipeline
+  duration: number | null
   videoResolution: string
   fps: number
   audio: boolean
@@ -30,6 +36,7 @@ export interface GenerationSettings {
   imageSteps: number
   imageModel?: 'z-image-turbo' | 'krea-2-turbo'
   variations?: number  // Number of image variations to generate
+  imageEditStrength?: number  // Denoising strength when editing an existing image
 }
 
 interface SettingsPanelProps {
@@ -80,7 +87,7 @@ export function SettingsPanel({
     }
   }, [hasAudio, hideDuration, isImageMode, minimumDuration, onSettingsChange, settings, videoModelSpecs])
 
-  const handleChange = (key: keyof GenerationSettings, value: string | number | boolean) => {
+  const handleChange = (key: keyof GenerationSettings, value: string | number | boolean | null) => {
     if (isImageMode) {
       onSettingsChange({ ...settings, [key]: value } as GenerationSettings)
       return
@@ -167,10 +174,17 @@ export function SettingsPanel({
         {!hideDuration && (
           <Select
             label="Duration"
-            value={resolvedVideoOptions.selectedDuration ?? settings.duration}
-            onChange={(e) => handleChange('duration', parseInt(e.target.value))}
+            value={
+              resolvedVideoOptions.autoDurationAvailable && resolvedVideoOptions.selectedDuration === null
+                ? 'auto'
+                : String(resolvedVideoOptions.selectedDuration ?? settings.duration)
+            }
+            onChange={(e) => handleChange('duration', e.target.value === 'auto' ? null : parseInt(e.target.value))}
             disabled={disabled}
           >
+            {resolvedVideoOptions.autoDurationAvailable && (
+              <option value="auto">Auto</option>
+            )}
             {resolvedVideoOptions.durationOptions.map((duration) => (
               <option key={duration} value={duration}>
                 {duration} sec
@@ -187,7 +201,7 @@ export function SettingsPanel({
         >
           {resolvedVideoOptions.resolutionOptions.map((resolution) => (
             <option key={resolution} value={resolution}>
-              {resolution}
+              {videoGenerationResolutionLabel(resolution)}
             </option>
           ))}
         </Select>

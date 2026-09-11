@@ -19,6 +19,7 @@ from handlers import (
     PipelinesHandler,
     LoraCatalogHandler,
     QwenMultiAngleHandler,
+    PromptEnhancementHandler,
     SuggestGapPromptHandler,
     RetakeHandler,
     ExtendHandler,
@@ -42,12 +43,14 @@ from services.interfaces import (
     ModelDownloader,
     PoseProcessorPipeline,
     QwenMultiAnglePipeline,
+    PromptEnhancerPipeline,
     RetakePipeline,
     TaskRunner,
     TextEncoder,
     VideoProcessor,
 )
 from services.lora_catalog import LoraCatalogProvider
+from services.prompt_enhancer_pipeline.gemini_prompt_enhancer_pipeline import GeminiPromptEnhancerPipeline
 from state.app_state_types import AppState, TextEncoderState
 
 
@@ -75,6 +78,7 @@ class AppHandler:
         pose_processor_pipeline_class: type[PoseProcessorPipeline],
         a2v_pipeline_class: type[A2VPipeline],
         retake_pipeline_class: type[RetakePipeline],
+        prompt_enhancer_pipeline_class: type[PromptEnhancerPipeline],
         qwen_multiangle_pipeline_class: type[QwenMultiAnglePipeline] | None = None,
     ) -> None:
         self.config = config
@@ -96,6 +100,7 @@ class AppHandler:
         self.a2v_pipeline_class = a2v_pipeline_class
         self.retake_pipeline_class = retake_pipeline_class
         self.qwen_multiangle_pipeline_class = qwen_multiangle_pipeline_class
+        self.prompt_enhancer_pipeline_class = prompt_enhancer_pipeline_class
 
         self._lock = threading.RLock()
 
@@ -116,6 +121,7 @@ class AppHandler:
             state=self.state,
             lock=self._lock,
             config=config,
+            http=http,
         )
 
         self.models = ModelsHandler(
@@ -173,12 +179,27 @@ class AppHandler:
 
         self.generation = GenerationHandler(state=self.state, lock=self._lock, config=config)
 
+        # Before video generation: local text encoding has no server-side rewrite step, so the
+        # generation path runs this enhancer itself.
+        self.prompt_enhancement = PromptEnhancementHandler(
+            state=self.state,
+            lock=self._lock,
+            generation_handler=self.generation,
+            pipelines_handler=self.pipelines,
+            text_handler=self.text,
+            lora_catalog_provider=lora_catalog_provider,
+            prompt_enhancer_pipeline_class=prompt_enhancer_pipeline_class,
+            gemini_pipeline=GeminiPromptEnhancerPipeline(http),
+            config=config,
+        )
+
         self.video_generation = VideoGenerationHandler(
             state=self.state,
             lock=self._lock,
             generation_handler=self.generation,
             pipelines_handler=self.pipelines,
             text_handler=self.text,
+            prompt_enhancement_handler=self.prompt_enhancement,
             ltx_api_client=ltx_api_client,
             config=config,
         )
@@ -277,6 +298,7 @@ class ServiceBundle:
     pose_processor_pipeline_class: type[PoseProcessorPipeline]
     a2v_pipeline_class: type[A2VPipeline]
     retake_pipeline_class: type[RetakePipeline]
+    prompt_enhancer_pipeline_class: type[PromptEnhancerPipeline]
     qwen_multiangle_pipeline_class: type[QwenMultiAnglePipeline] | None = None
 
 
@@ -296,6 +318,7 @@ def build_default_service_bundle(config: RuntimeConfig) -> ServiceBundle:
     from services.model_downloader.hugging_face_downloader import HuggingFaceDownloader
     from services.retake_pipeline.ltx_retake_pipeline import LTXRetakePipeline
     from services.qwen_multiangle_pipeline.gguf_qwen_multiangle_pipeline import GGUFQwenMultiAnglePipeline
+    from services.prompt_enhancer_pipeline.ltx_prompt_enhancer_pipeline import LtxPromptEnhancerPipeline
     from services.pose_processor_pipeline.dw_pose_pipeline import DWPosePipeline
     from services.task_runner.threading_runner import ThreadingRunner
     from services.text_encoder.ltx_text_encoder import LTXTextEncoder
@@ -332,6 +355,7 @@ def build_default_service_bundle(config: RuntimeConfig) -> ServiceBundle:
         a2v_pipeline_class=LTXa2vPipeline,
         retake_pipeline_class=LTXRetakePipeline,
         qwen_multiangle_pipeline_class=GGUFQwenMultiAnglePipeline,
+        prompt_enhancer_pipeline_class=LtxPromptEnhancerPipeline,
     )
 
 
@@ -363,4 +387,5 @@ def build_initial_state(
         a2v_pipeline_class=bundle.a2v_pipeline_class,
         retake_pipeline_class=bundle.retake_pipeline_class,
         qwen_multiangle_pipeline_class=bundle.qwen_multiangle_pipeline_class,
+        prompt_enhancer_pipeline_class=bundle.prompt_enhancer_pipeline_class,
     )

@@ -229,6 +229,19 @@ class Krea2ImageGenerationPipeline:
             )
         return result
 
+    def edit(
+        self,
+        prompt: str,
+        image: PILImageType,
+        strength: float,
+        num_inference_steps: int,
+        seed: int,
+    ) -> ImagePipelineOutputLike:
+        # Krea 2 Turbo is text-to-image only. Image editing is routed to Z-Image by
+        # ImageGenerationHandler._edit; this exists solely to satisfy the
+        # ImageGenerationPipeline protocol and must never be called for Krea 2.
+        raise NotImplementedError("Krea 2 Turbo does not support image editing")
+
     def to(self, device: str) -> None:
         runtime_device = get_device_type(device)
         if runtime_device in ("cuda", "mps"):

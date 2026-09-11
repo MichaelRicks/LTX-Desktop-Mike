@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import re
 from typing import Annotated
 from typing import Literal, NamedTuple, TypeAlias
 
-from pydantic import BaseModel, ConfigDict, Field, JsonValue, StringConstraints, model_validator
+from pydantic import BaseModel, ConfigDict, Field, JsonValue, StringConstraints, field_validator, model_validator
+
+from frame_math import compute_num_frames
 
 NonEmptyPrompt = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
 ModelCheckpointID = Literal[
@@ -14,15 +17,27 @@ ModelCheckpointID = Literal[
     "ltx-2.3-spatial-upscaler-x2-1.0",
     "ltx-2.3-spatial-upscaler-x2-1.1",
     "ltx-2.3-22b-ic-lora-union-control-ref0.5",
+    "ltx-2.5-22b-distilled",
+    "ltx-2.5-spatial-upscaler-x2-1.0",
+    "ltx-2.5-video-vae",
+    "ltx-2.5-video-vae-conv",
+    "ltx-2.5-audio-vae",
+    "ltx-2.5-duration-head",
     "dpt-hybrid-midas",
     "yolox-l-torchscript",
     "dw-ll-ucoco-384-bs5",
     "gemma-3-12b-it-qat-q4_0-unquantized",
+    "gemma4-12b-with-proj-ltx-2.5",
+    "gemma-4-e2b-it",
     "z-image-turbo",
     "krea-2-turbo",
 ]
 ImageGenerationModelCheckpointID = Literal["z-image-turbo", "krea-2-turbo"]
-LTXLocalModelId = Literal["ltx-2.3-22b-distilled-1.1", "ltx-2.3-22b-distilled"]
+LTXLocalModelId = Literal[
+    "ltx-2.5-22b-distilled",
+    "ltx-2.3-22b-distilled-1.1",
+    "ltx-2.3-22b-distilled",
+]
 
 
 class ImageConditioningInput(NamedTuple):
@@ -102,6 +117,15 @@ class GenerationProgressResponse(BaseModel):
     currentStep: int | None
     totalSteps: int | None
     result: str | list[str] | None = None
+    # Identifies which generation this snapshot belongs to (None only for "idle" — nothing has
+    # run yet). Lets a polling client confirm it's still looking at its own generation rather
+    # than a different, unrelated one that reused the single global progress slot in the
+    # meantime.
+    id: str | None = None
+    # Same poll that disables Generate (`status == "running"`). Stop is allowed only for a
+    # local GPU slot — reservation, denoise, or cancelled-in-flight unwind. LTX/FAL API jobs
+    # occupy the slot (Generate stays locked) but have no public cancel.
+    cancellable: bool
 
 
 class DownloadProgressRunningResponse(BaseModel):
@@ -247,6 +271,10 @@ class ActiveDownloadResponse(BaseModel):
 class LtxDownloadRecommendationResponse(BaseModel):
     status: Literal["download"]
     cps_to_download: list[ModelCheckpointID]
+    # Checkpoints left out of cps_to_download only because an LTX API key covers what they do.
+    # Offered as an opt-in so a user who wants to generate offline can take the download now
+    # instead of discovering later that the key is the only thing making generation work.
+    optional_cp_ids: list[ModelCheckpointID] = []
 
 
 class LtxUpgradeRecommendationResponse(BaseModel):
@@ -255,6 +283,10 @@ class LtxUpgradeRecommendationResponse(BaseModel):
     upgrade_message: str | None = None
     cps_to_download: list[ModelCheckpointID]
     cps_to_delete: list[ModelCheckpointID]
+    # True when deleting the old bundle would also remove built-in Union Control IC-LoRA
+    # (2.3 → 2.5). The upgrade UI defaults "delete old" off in that case so users don't
+    # silently lose the easy path back to depth/canny/pose control.
+    loses_built_in_control: bool = False
 
 
 class LtxOkRecommendationResponse(BaseModel):
@@ -272,12 +304,29 @@ class ImageGenRecommendationResponse(BaseModel):
 
 class LtxIcLoraRecommendationResponse(BaseModel):
     cps_to_download: list[ModelCheckpointID]
+    # False when the active model has no built-in Union Control IC-LoRA (LTX 2.5): distinct from
+    # "supported but already downloaded" (both have empty cps_to_download).
+    supported: bool = True
 
 
 class TextEncoderRecommendationResponse(BaseModel):
     cp_to_download: ModelCheckpointID | None
     expected_size_bytes: int
     expected_size_gb: float
+    # False when the active model can't be encoded by the LTX API, making the local encoder
+    # mandatory instead of one of two interchangeable options.
+    api_encoding_supported: bool
+    ltx_version_label: str
+    # False when no generative checkpoint local Enhance can run is downloaded, so Enhance
+    # needs Gemini. True if the preferred enhancer *or* a fallback (Gemma 3 on 2.5) is present.
+    local_enhancement_supported: bool
+    # The separate generative checkpoint local Enhance prefers, when the encoder can only encode
+    # (2.5). None when the encoder enhances too (2.3), so there's no extra download to offer.
+    local_enhancer_cp: ModelCheckpointID | None
+    local_enhancer_expected_size_gb: float | None
+    # The checkpoint Enhance will actually load, after E2B-then-Gemma-3 fallback. None if local
+    # Enhance cannot run. Equal to local_enhancer_cp when the preferred extra model is present.
+    active_local_enhancer_cp: ModelCheckpointID | None
 
 
 class LtxModelVersionItem(BaseModel):
@@ -299,7 +348,7 @@ class SetActiveLtxModelRequest(BaseModel):
     model_id: LTXLocalModelId
 
 
-CheckpointRole = Literal["base", "upscaler", "text_encoder", "image", "support"]
+CheckpointRole = Literal["base", "upscaler", "text_encoder", "vae", "image", "support"]
 
 
 class CheckpointDescriptor(BaseModel):
@@ -336,19 +385,36 @@ class LtxInsufficientFundsErrorResponse(BaseModel):
 
 
 LTXVideoGenResolution: TypeAlias = Literal["540p", "720p", "1080p", "1440p", "2160p"]
-LTXVideoGenDuration: TypeAlias = Literal[5, 6, 8, 10, 12, 14, 16, 18, 20]
+LTXVideoGenDuration: TypeAlias = Literal[2, 3, 4, 5, 6, 8, 10, 12, 14, 16, 18, 20]
 LTXVideoGenFps: TypeAlias = Literal[24, 25, 48, 50]
-LTXVideoGenPipeline: TypeAlias = Literal["fast", "pro"]
+LTXVideoGenPipeline: TypeAlias = Literal["fast", "pro", "fast-2.5", "pro-2.5"]
 
 
 class LTXVideoGenerationResolutionSpec(BaseModel):
     fps_to_durations: dict[LTXVideoGenFps, list[LTXVideoGenDuration]]
 
 
+class LTXOfferingCapabilitiesSpec(BaseModel):
+    """Feature flags for one local model or API pipeline. Pixel maps stay backend-only."""
+
+    t2v: bool
+    i2v: bool
+    a2v: bool
+    ic_lora: bool
+    retake: bool
+    extend: bool
+    multi_keyframe: bool
+    multi_keyframe_max_count: int
+    user_loras: bool
+    camera_motion: bool
+    auto_duration: bool
+
+
 class LTXVideoGenerationSpec(BaseModel):
     display_name: str
     supported_resolutions_durations: dict[LTXVideoGenResolution, LTXVideoGenerationResolutionSpec]
     a2v_supported_resolutions_durations: dict[LTXVideoGenResolution, LTXVideoGenerationResolutionSpec] | None = None
+    capabilities: LTXOfferingCapabilitiesSpec | None = None
 
 
 class LTXVideoGenerationModelSpecItem(BaseModel):
@@ -381,6 +447,20 @@ class LoraEntry(BaseModel):
     scale: float = Field(default=1.0, ge=0.0, le=4.0)
 
 
+# Local Distilled offering cap. API pipelines stay at 0 via multi_keyframe=False.
+LOCAL_MULTI_KEYFRAME_MAX_COUNT = 10
+
+
+class KeyframeInput(BaseModel):
+    """CamelCase of LTXV keyframe-edit `{image_uri, frame_index, strength}`."""
+
+    model_config = ConfigDict(strict=True)
+
+    imagePath: str
+    frameIndex: int = Field(ge=0)
+    strength: float = Field(default=1.0, ge=0.0, le=1.0)
+
+
 class GenerateVideoRequest(BaseModel):
     model_config = ConfigDict(strict=True)
 
@@ -389,10 +469,13 @@ class GenerateVideoRequest(BaseModel):
     model: LTXVideoGenPipeline = "fast"
     cameraMotion: VideoCameraMotion = "none"
     negativePrompt: str = ""
-    duration: LTXVideoGenDuration = 5
+    # None = automatic duration (API 2.5 t2v/i2v only): the worker picks length from the prompt.
+    duration: LTXVideoGenDuration | None = 5
     fps: LTXVideoGenFps = 24
     audio: bool = False
     imagePath: str | None = None
+    lastImagePath: str | None = None
+    keyframes: list[KeyframeInput] = Field(default_factory=list[KeyframeInput])
     audioPath: str | None = None
     aspectRatio: Literal["16:9", "9:16", "21:9"] = "16:9"
     seed: int | None = None
@@ -408,6 +491,8 @@ class GenerateImageRequest(BaseModel):
     height: int = Field(default=1024, ge=16)
     numSteps: int = Field(default=4, ge=1)
     numImages: int = Field(default=1, ge=1)
+    imagePath: str | None = None
+    strength: float = Field(default=0.6, ge=0.0, le=1.0)
 
 
 def _default_model_types() -> set[ModelCheckpointID]:
@@ -461,6 +546,10 @@ class SuggestGapPromptRequest(BaseModel):
 
 RetakeMode: TypeAlias = Literal["replace_audio_and_video", "replace_video", "replace_audio"]
 
+# ltxv-api /v1/retake and /v2/extend accept ltx-2-pro / ltx-2-3-pro. Desktop maps
+# those to pipeline "pro" — narrower than LTXVideoGenPipeline on purpose.
+RetakeExtendModel: TypeAlias = Literal["pro"]
+
 
 class TargetResolution(BaseModel):
     """Desired output resolution for a local generation. The backend corrects it to the
@@ -472,6 +561,7 @@ class TargetResolution(BaseModel):
     height: int = Field(gt=0)
 
 
+
 class RetakeRequest(BaseModel):
     model_config = ConfigDict(strict=True)
 
@@ -481,6 +571,8 @@ class RetakeRequest(BaseModel):
     prompt: str = ""
     mode: RetakeMode = "replace_audio_and_video"
     resolution: TargetResolution | None = None
+    # API-mode only; ignored for local generation (there is no local model choice).
+    model: RetakeExtendModel = "pro"
 
 
 ExtendMode: TypeAlias = Literal["start", "end"]
@@ -496,6 +588,8 @@ class ExtendRequest(BaseModel):
     prompt: str = ""
     mode: ExtendMode = "end"
     resolution: TargetResolution | None = None
+    # API-mode only; ignored for local generation (there is no local model choice).
+    model: RetakeExtendModel = "pro"
 
 
 # Extend returns the same shapes as retake (video file, remote payload, or cancelled).
@@ -638,12 +732,56 @@ class IcLoraGenerateRequest(BaseModel):
 # with the IC-specific preprocessing / controls / default settings.
 InputKind: TypeAlias = Literal["image", "video"]
 InstructionTitle: TypeAlias = Literal["What it does", "Input", "Prompt", "Tips", "Notes"]
+# Machine-readable counterpart to `title`, so consumers (e.g. a prompt enhancer) can select
+# instruction blocks by purpose without string-matching display titles. "tips" also covers
+# the "Notes" title; "summary" covers "What it does".
+InstructionKind: TypeAlias = Literal["summary", "prompting", "tips", "input"]
+# Families a catalog adapter is known to run on. Distinct from `base_model` (what it was
+# trained on). 2.3 adapters often run on 2.5; that is recorded here after validation, not
+# inferred from the training tag.
+LtxCatalogModelFamily: TypeAlias = Literal["LTX-2.3", "LTX-2.5"]
+# Where a trigger word/phrase must appear in the prompt. Not set (and not applicable) when
+# `prompt_template` is present, since the template's placeholder position already encodes it.
+TriggerPlacement: TypeAlias = Literal["first_token", "anywhere"]
+
+_TEMPLATE_PLACEHOLDER_RE = re.compile(r"\{(\w+)\}")
 
 
 class InstructionSection(BaseModel):
     model_config = ConfigDict(strict=True)
+    kind: InstructionKind
     title: InstructionTitle
     body: str | list[str]
+
+
+class PromptTemplatePlaceholder(BaseModel):
+    model_config = ConfigDict(strict=True)
+    # None = free text (a description Gemma fills in). A list = the value must be exactly one
+    # of these choices (e.g. crossview's azimuth/elevation/distance vocabulary).
+    choices: list[str] | None = None
+
+
+class PromptTemplateSpec(BaseModel):
+    """A fixed prompt structure a LoRA/IC-LoRA requires verbatim (e.g. a two-part
+    "Reference shows X. Edited shows Y." restore template, or crossview's enum-constrained
+    camera vocabulary). `template` contains `{name}` placeholders; each must have a matching
+    entry in `placeholders`. A degenerate template with no placeholders (e.g. "upscale") is a
+    fixed, non-generated prompt.
+    """
+    model_config = ConfigDict(strict=True)
+    template: str
+    placeholders: dict[str, PromptTemplatePlaceholder] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def _check_placeholders_match_template(self) -> "PromptTemplateSpec":
+        referenced = set(_TEMPLATE_PLACEHOLDER_RE.findall(self.template))
+        declared = set(self.placeholders)
+        if referenced != declared:
+            raise ValueError(
+                f"prompt_template placeholders {sorted(declared)} must exactly match "
+                f"template references {sorted(referenced)}"
+            )
+        return self
 
 
 class DownloadVariant(BaseModel):
@@ -695,6 +833,11 @@ class DownloadSpec(BaseModel):
 class InputSpec(BaseModel):
     model_config = ConfigDict(strict=True)
     kind: InputKind
+    # False (default) = required, matching every existing entry (IC-LoRAs always require their
+    # driving input; a plain LoRA with `input` set has, until now, always meant "requires one").
+    # True = accepted/preferred but not mandatory (e.g. product-ad-style: works with or without
+    # a product image, image preferred).
+    optional: bool = False
 
 
 class LicenseSpec(BaseModel):
@@ -730,6 +873,10 @@ def _empty_tags() -> list[str]:
     return []
 
 
+def _default_supported_models() -> list[LtxCatalogModelFamily]:
+    return ["LTX-2.3", "LTX-2.5"]
+
+
 class LoraCatalogItem(BaseModel):
     """Base catalog entry — used as-is for a plain LoRA."""
     model_config = ConfigDict(strict=True)
@@ -746,15 +893,54 @@ class LoraCatalogItem(BaseModel):
     media: MediaSpec | None = None
     # ISO-8601 date the model was created at the source (e.g. HuggingFace).
     created_at: str | None = None
+    # What the adapter was trained on. Not a compatibility list — see `supported_models`.
     base_model: str | None = None
+    # Families this adapter is known to run on. Currently both, so 2.5 testing can
+    # use the full catalog; trim after validation.
+    supported_models: list[LtxCatalogModelFamily] = Field(default_factory=_default_supported_models)
     tags: list[str] = Field(default_factory=_empty_tags)
     # Trigger phrase to include in the prompt if the LoRA needs one (e.g. "ADD WATER").
     trigger: str | None = None
+    # Required together with `trigger` (and only then), unless `prompt_template` is set —
+    # the template's placeholder position already encodes where the trigger goes.
+    trigger_placement: TriggerPlacement | None = None
+    # Set when the LoRA/IC-LoRA requires a fixed prompt structure rather than a free rewrite
+    # (e.g. colorization's two-part restore template, or crossview's enum-constrained camera
+    # vocabulary). Some LoRAs/IC-LoRAs with a template have no separate `trigger` at all (e.g.
+    # ingredients' "Reference sheet: {panels}. Generated video: {action}." has no trigger word).
+    prompt_template: PromptTemplateSpec | None = None
+    # Extra few-shot example prompts for a prompt enhancer to draw on — never rendered in the
+    # LoRA info UI (unlike the single illustrative example inside a "prompting" instruction).
+    # Multi-shot grounding helps an LLM rewrite generalize past one example's specific subject.
+    enhancement_examples: list[str] = Field(default_factory=list)
     # Suggested LoRA scale when a plain LoRA is selected (IC-LoRAs use default_settings instead).
     recommended_strength: float | None = None
     # When true, generation may run with an empty prompt (e.g. outpainting fills from the scene).
     # Enforced for the catalog IC-LoRA path; plain-LoRA t2v enforcement is not wired yet.
     allows_empty_prompt: bool = False
+
+    def supports_family(self, family: LtxCatalogModelFamily) -> bool:
+        return family in self.supported_models
+
+    @field_validator("supported_models")
+    @classmethod
+    def _check_supported_models(cls, value: list[LtxCatalogModelFamily]) -> list[LtxCatalogModelFamily]:
+        if not value:
+            raise ValueError("supported_models must not be empty")
+        if len(value) != len(set(value)):
+            raise ValueError("supported_models must be unique")
+        return value
+
+    @model_validator(mode="after")
+    def _check_trigger_placement(self) -> "LoraCatalogItem":
+        if self.prompt_template is not None:
+            if self.trigger_placement is not None:
+                raise ValueError(
+                    f"'{self.id}': trigger_placement is redundant when prompt_template is set"
+                )
+        elif (self.trigger is None) != (self.trigger_placement is None):
+            raise ValueError(f"'{self.id}': trigger and trigger_placement must be set together")
+        return self
 
 
 class IcLoraSettings(BaseModel):
@@ -877,6 +1063,82 @@ def parse_lora_catalog(raw: str) -> LoraCatalogFile:
     return catalog
 
 
+class EnhancePromptRequest(BaseModel):
+    """Regular-LoRA, IC-LoRA, and built-in conditioning-type selection are mutually exclusive UI
+    surfaces — a request never carries more than one of loraCatalogIds/icLoraId/conditioningType.
+    """
+    model_config = ConfigDict(strict=True)
+    # Empty is allowed when imagePath or keyframes are set — the rewrite is then captioned
+    # from the attached frame(s), plus any extra text the user did type.
+    prompt: str
+    loraCatalogIds: list[str] = Field(default_factory=list)
+    icLoraId: str | None = None
+    # Set only for the built-in (non-catalog) "bring your own IC-LoRA" canny/depth conditioning
+    # modes — those have no catalog entry to draw a system prompt from, but still need the same
+    # "describe the reference scene faithfully, don't invent a different one" discipline a
+    # catalog IC-LoRA's template-fill path gets, instead of Gemma's default free-rewrite prompt.
+    conditioningType: Literal["canny", "depth"] | None = None
+    imagePath: str | None = None
+    lastImagePath: str | None = None
+    # Same shape as GenerateVideoRequest.keyframes. Mutually exclusive with imagePath/
+    # lastImagePath — middle markers have nowhere to go on the two-slot i2v path.
+    keyframes: list[KeyframeInput] = Field(default_factory=list[KeyframeInput])
+    # Optional clip timing for multi-keyframe enhance: the rewriter needs duration/fps
+    # and each still's clock time on the user turn. Ignored for t2v/first-last/image.
+    duration: int | None = Field(default=None, gt=0)
+    fps: int | None = Field(default=None, gt=0)
+    # "local" runs the on-device Gemma text encoder (default, matches every existing caller);
+    # "api" calls Gemini's hosted API instead — no local checkpoint required, gated on
+    # AppSettings.gemini_api_key being set.
+    provider: Literal["local", "api"] = "local"
+    # "video" (default, matches every existing caller) routes through the video-catalog LoRA/
+    # IC-LoRA/conditioning-type selection below. "image" is Z-Image-Turbo generation/editing —
+    # no catalog LoRA concept, so none of loraCatalogIds/icLoraId/conditioningType apply;
+    # imagePath's presence distinguishes editing (img2img) from generation, same convention as
+    # video's t2v/i2v split.
+    mediaType: Literal["video", "image"] = "video"
+
+    @model_validator(mode="after")
+    def _check_selection_is_mutually_exclusive(self) -> "EnhancePromptRequest":
+        selected = [bool(self.loraCatalogIds), self.icLoraId is not None, self.conditioningType is not None]
+        if sum(selected) > 1:
+            raise ValueError("loraCatalogIds, icLoraId, and conditioningType are mutually exclusive")
+        if self.mediaType == "image" and sum(selected) > 0:
+            raise ValueError("loraCatalogIds, icLoraId, and conditioningType only apply to mediaType='video'")
+        has_first = bool((self.imagePath or "").strip())
+        has_last = bool((self.lastImagePath or "").strip())
+        has_keyframes = bool(self.keyframes)
+        if self.mediaType == "image" and has_keyframes:
+            raise ValueError("keyframes only apply to mediaType='video'")
+        if has_keyframes and (has_first or has_last):
+            raise ValueError("Keyframes cannot be combined with a first or last frame")
+        if has_last and not has_first:
+            raise ValueError("Last frame requires a first-frame image")
+        if has_keyframes:
+            if len(self.keyframes) > LOCAL_MULTI_KEYFRAME_MAX_COUNT:
+                raise ValueError(
+                    f"You can place up to {LOCAL_MULTI_KEYFRAME_MAX_COUNT} keyframes"
+                )
+            indices = [keyframe.frameIndex for keyframe in self.keyframes]
+            if len(set(indices)) != len(indices):
+                raise ValueError("Keyframe frame indices must be unique")
+            if self.duration is not None and self.fps is not None and self.fps > 0:
+                last_frame = compute_num_frames(self.duration, self.fps) - 1
+                for frame_idx in indices:
+                    if frame_idx > last_frame:
+                        raise ValueError(
+                            f"Keyframe frame index {frame_idx} is outside 0..{last_frame}"
+                        )
+        if not self.prompt.strip() and not has_first and not has_keyframes:
+            raise ValueError("Prompt is required unless an image is provided")
+        return self
+
+
+class EnhancePromptResponse(BaseModel):
+    model_config = ConfigDict(strict=True)
+    enhancedPrompt: str
+
+
 class IcLoraListItem(BaseModel):
     model_config = ConfigDict(strict=True)
     ic_lora: IcLoraCatalogItem
@@ -953,3 +1215,16 @@ class LoraDownloadProgressResponse(BaseModel):
     progress: float = 0.0
     speed_bytes_per_sec: float = 0.0
     error: str | None = None
+
+
+class GeminiModelOptionPayload(BaseModel):
+    model_config = ConfigDict(strict=True)
+    id: str
+    displayName: str
+    description: str = ""
+
+
+class GeminiModelsResponsePayload(BaseModel):
+    model_config = ConfigDict(strict=True)
+    models: list[GeminiModelOptionPayload]
+    resolvedModel: str

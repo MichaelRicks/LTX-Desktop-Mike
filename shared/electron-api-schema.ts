@@ -76,6 +76,16 @@ const backendHealthStatus = z.object({
 
 export type BackendHealthStatus = z.infer<typeof backendHealthStatus>
 
+const updateStatePayload = z.object({
+  status: z.enum(['idle', 'checking', 'available', 'downloading', 'downloaded', 'not-available']),
+  currentVersion: z.string(),
+  version: z.string().optional(),
+  releaseNotes: z.string().optional(),
+  percent: z.number().optional(),
+  message: z.string().optional(),
+})
+export type UpdateStatePayload = z.infer<typeof updateStatePayload>
+
 export const electronAPISchemas = {
   // App info
   getBackend: {
@@ -188,6 +198,10 @@ export const electronAPISchemas = {
   getDownloadsPath: {
     input: z.object({}),
     output: z.string(),
+  },
+  getFreeDiskSpace: {
+    input: z.object({ path: z.string() }),
+    output: ipcResult({ bytes: z.number() }),
   },
 
   // Project assets
@@ -307,6 +321,13 @@ export const electronAPISchemas = {
     input: z.object({}),
     output: backendHealthStatus.nullable(),
   },
+  // Tells the liveness monitor a generation is known to be in flight, so it doesn't mistake a
+  // long-running local generation (MPS/CUDA compute can starve the backend's own event loop for
+  // tens of seconds, delaying /health) for a genuinely hung process and kill it mid-generation.
+  notifyGenerationActive: {
+    input: z.object({ active: z.boolean() }),
+    output: z.void(),
+  },
 
   // Video processing
   extractVideoFrame: {
@@ -385,6 +406,35 @@ export const electronAPISchemas = {
   gpmLibGetRoot: { input: z.object({}), output: z.object({ root: z.string(), isDefault: z.boolean() }) },
   gpmLibChooseRoot: { input: z.object({}), output: z.object({ root: z.string().nullable() }) },
   gpmLibResetRoot: { input: z.object({}), output: z.object({ root: z.string() }) },
+  // --- App updates ---
+  getUpdateState: {
+    input: z.object({}),
+    output: updateStatePayload,
+  },
+  checkForUpdatesNow: {
+    input: z.object({}),
+    output: emptyResult,
+  },
+  startUpdateDownload: {
+    input: z.object({}),
+    output: emptyResult,
+  },
+  installUpdateAndRestart: {
+    input: z.object({}),
+    output: emptyResult,
+  },
+  skipUpdateVersion: {
+    input: z.object({ version: z.string() }),
+    output: emptyResult,
+  },
+  getAutoCheckUpdates: {
+    input: z.object({}),
+    output: z.object({ enabled: z.boolean() }),
+  },
+  setAutoCheckUpdates: {
+    input: z.object({ enabled: z.boolean() }),
+    output: emptyResult,
+  },
 } as const
 
 type Schemas = typeof electronAPISchemas
@@ -402,6 +452,7 @@ export type ElectronAPI = InvokeAPI & {
   onMenuAction: (cb: (action: string) => void) => (() => void)
   /** Fires (debounced) when the Studio Assets library folder changes on disk. */
   onGpmLibChanged: (cb: () => void) => (() => void)
+  onUpdateEvent: (cb: (data: UpdateStatePayload) => void) => (() => void)
   getPathForFile: (file: File) => string
   platform: string
 }

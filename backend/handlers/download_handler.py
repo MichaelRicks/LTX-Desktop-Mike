@@ -8,6 +8,7 @@ import time
 from collections.abc import Callable, Iterable
 from threading import RLock
 from typing import TYPE_CHECKING
+from pathlib import Path
 from uuid import uuid4
 
 import requests as http_requests
@@ -24,7 +25,7 @@ from api_types import (
     ModelCheckpointID,
 )
 from handlers.base import StateHandlerBase, with_state_lock
-from handlers.hf_auth_utils import optional_hf_token
+from handlers.hf_auth_utils import optional_hf_token, require_hf_token
 from handlers.models_handler import ModelsHandler
 from runtime_config.model_download_specs import (
     ALL_MODEL_CP_IDS,
@@ -49,6 +50,13 @@ if TYPE_CHECKING:
     from runtime_config.runtime_config import RuntimeConfig
 
 logger = logging.getLogger(__name__)
+
+
+def _canonical_download_cp_id(cp_id: ModelCheckpointID) -> ModelCheckpointID:
+    # HF removed ltx-2.3-spatial-upscaler-x2-1.0.safetensors; fetch 1.1 onto the 1.1 path.
+    if cp_id == "ltx-2.3-spatial-upscaler-x2-1.0":
+        return "ltx-2.3-spatial-upscaler-x2-1.1"
+    return cp_id
 
 
 class DownloadHandler(StateHandlerBase):
@@ -227,13 +235,28 @@ class DownloadHandler(StateHandlerBase):
                 token=hf_token,
             )
         else:
+            staging_root = resolve_downloading_dir(self.models_dir)
             self._model_downloader.download_file(
                 repo_id=spec.repo_id,
-                filename=spec.name,
-                local_dir=str(resolve_downloading_path(self.models_dir, cp_id)),
+                filename=spec.download_filename,
+                local_dir=str(staging_root),
                 on_progress=progress_cb,
                 token=hf_token,
             )
+            # Nested HF paths land under staging_root/<repo_filename> (e.g. vae/foo.safetensors
+            # for LTX 2.5); move to the spec's local relative_path before commit (e.g.
+            # ltx-2.5/foo.safetensors).
+            downloaded = staging_root / Path(spec.download_filename)
+            target = resolve_downloading_target_path(self.models_dir, cp_id)
+            if downloaded != target and downloaded.exists():
+                target.parent.mkdir(parents=True, exist_ok=True)
+                if target.exists():
+                    target.unlink()
+                downloaded.replace(target)
+                parent = downloaded.parent
+                while parent != staging_root and parent.exists() and not any(parent.iterdir()):
+                    parent.rmdir()
+                    parent = parent.parent
 
     def _commit_staged_checkpoint(self, cp_id: ModelCheckpointID) -> bool:
         src = resolve_downloading_target_path(self.models_dir, cp_id)
@@ -269,21 +292,25 @@ class DownloadHandler(StateHandlerBase):
             else:
                 path.unlink(missing_ok=True)
 
+    def _canonical_download_cp_ids(
+        self, cp_ids: Iterable[ModelCheckpointID]
+    ) -> tuple[ModelCheckpointID, ...]:
+        return self._ordered_cp_ids({_canonical_download_cp_id(cp_id) for cp_id in cp_ids})
+
     def _discover_download_cp_ids(self, requested_cp_ids: set[ModelCheckpointID]) -> tuple[ModelCheckpointID, ...]:
-        missing: set[ModelCheckpointID] = set()
-        for cp_id in requested_cp_ids:
-            if not self._models_handler.is_cp_downloaded(cp_id):
-                missing.add(cp_id)
-        return self._ordered_cp_ids(missing)
+        return tuple(
+            cp_id
+            for cp_id in self._canonical_download_cp_ids(requested_cp_ids)
+            if not self._models_handler.is_cp_downloaded(cp_id)
+        )
 
     def _download_worker(self, cp_ids: tuple[ModelCheckpointID, ...], *, atomic_commit: bool) -> None:
         if not cp_ids:
             self.finish_download()
             return
 
-        # Base/bundled checkpoints are public — never require sign-in. Attach the in-app token
-        # if the user happens to be signed in, otherwise download anonymously. (Gated *catalog*
-        # entries are handled separately in lora_catalog_handler and do require auth.)
+        # Most bundled checkpoints are public and download anonymously; attach the in-app token
+        # when signed in. Gated specs (LTX 2.5) are rejected up front in start_model_download.
         hf_token = optional_hf_token(self.state, self._lock)
 
         try:
@@ -319,13 +346,16 @@ class DownloadHandler(StateHandlerBase):
         # Resolve what to download (may raise) before touching the lock.
         if download_type == "upgrade":
             resolved_upgrade = self._models_handler.resolve_upgrade_download(cp_ids)
-            ordered_cp_ids = resolved_upgrade.cp_ids
+            ordered_cp_ids = self._canonical_download_cp_ids(resolved_upgrade.cp_ids)
             atomic_commit = True
         elif download_type == "download":
             ordered_cp_ids = self._discover_download_cp_ids(set(cp_ids))
             atomic_commit = False
         else:
             raise HTTPError(400, "INVALID_DOWNLOAD_REQUEST")
+
+        if any(get_model_cp_spec(cp_id).gated for cp_id in ordered_cp_ids):
+            require_hf_token(self.state, self._lock)
 
         # Check-and-set in one lock acquisition (RLock is reentrant, so start_download's own
         # lock nests fine) — otherwise two concurrent calls both pass the guard and the second
@@ -343,14 +373,21 @@ class DownloadHandler(StateHandlerBase):
         return session_id
 
     def check_model_access(self, cp_ids: set[ModelCheckpointID]) -> CheckModelAccessResponse:
+        gated_repo_ids = {
+            spec.repo_id for spec in map(get_model_cp_spec, cp_ids) if spec.gated
+        }
         repo_ids = {get_model_cp_spec(cp_id).repo_id for cp_id in cp_ids}
 
-        # Bundled checkpoints are public, so when the user isn't signed in there's nothing to
-        # verify — treat them all as authorized. When signed in, do a real per-repo check (covers
-        # any future gated checkpoint without forcing sign-in for the common public case).
+        # Signed out there is no token to verify with: public repos download fine, gated ones
+        # would 401 mid-transfer, so report them up front rather than letting the download start.
         hf_token = optional_hf_token(self.state, self._lock)
         if hf_token is None:
-            return CheckModelAccessResponse(access={repo_id: "authorized" for repo_id in repo_ids})
+            return CheckModelAccessResponse(
+                access={
+                    repo_id: "not_authorized" if repo_id in gated_repo_ids else "authorized"
+                    for repo_id in repo_ids
+                }
+            )
 
         access: dict[str, ModelAccessStatus] = {}
         for repo_id in sorted(repo_ids):

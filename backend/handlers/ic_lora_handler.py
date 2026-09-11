@@ -30,12 +30,13 @@ from handlers.generation_handler import GenerationHandler
 from handlers.pipelines_handler import PipelinesHandler
 from handlers.text_handler import TextHandler
 from ic_lora_preprocessing import MediaArtifact, OutpaintParams, PreprocessingContext, run_preprocessing
+from runtime_config.ltx_capabilities import local_caps, supports
 from runtime_config.model_download_specs import (
     DEPTH_PROCESSOR_CP_ID,
     find_installed_ic_lora_path,
-    get_downloaded_ltx_model_id,
     get_existing_cp_path,
     get_ltx_model_spec,
+    resolve_active_ltx_model_id,
     resolve_ic_lora_path,
 )
 from runtime_config.models_scanner import is_ic_lora_file, resolve_lora_ref
@@ -45,6 +46,7 @@ from services.interfaces import VideoProcessor
 from services.lora_catalog import LoraCatalogProvider
 from services.services_utils import FrameArray
 from server_utils.heartbeat import log_heartbeat
+from services.generation_interrupt import GenerationCancelledError, is_cancel_exception
 from state.app_state_types import AppState, ICLoraState
 
 if TYPE_CHECKING:
@@ -131,10 +133,26 @@ class IcLoraHandler(StateHandlerBase):
                 raise HTTPError(400, f"Unsupported conditioning_type: {conditioning_type}")
 
     def _require_ic_lora_model_paths(self, conditioning_type: ConditioningType) -> tuple[Path, Path | None]:
-        model_id = get_downloaded_ltx_model_id(self.models_dir)
+        model_id = resolve_active_ltx_model_id(
+            self.models_dir, self.state.app_settings.active_ltx_model_id
+        )
         if model_id is None:
             raise HTTPError(409, "NO_DOWNLOADED_LTX_MODEL")
+        if not supports(local_caps(model_id), "ic_lora"):
+            raise HTTPError(
+                409,
+                "Built-in control IC-LoRA is not available for the active LTX model. "
+                "Switch to an LTX 2.3 local model to use depth/canny control.",
+                code="UNSUPPORTED_IC_LORA",
+            )
         ic_loras_spec = get_ltx_model_spec(model_id).ic_loras_spec
+        if ic_loras_spec is None:
+            raise HTTPError(
+                409,
+                "Built-in control IC-LoRA is not available for the active LTX model. "
+                "Switch to an LTX 2.3 local model to use depth/canny control.",
+                code="UNSUPPORTED_IC_LORA",
+            )
         depth_model_path: Path | None = None
         match conditioning_type:
             case "canny":
@@ -239,171 +257,180 @@ class IcLoraHandler(StateHandlerBase):
             return None
         return OutpaintParams(left=p.left, right=p.right, top=p.top, bottom=p.bottom)
 
+    def _complete_or_drop_cancelled(self, output_path: Path) -> None:
+        # Denoiser interrupt cannot abort VAE decode / ffmpeg; a Stop after the last
+        # denoise step still finishes encode, then this check drops the file.
+        if self._generation.is_generation_cancelled():
+            output_path.unlink(missing_ok=True)
+            raise GenerationCancelledError()
+        self._generation.update_progress("complete", 100, 1, 1)
+        self._generation.complete_generation(str(output_path))
+
     def _generate_ic_lora(self, req: IcLoraGenerateRequest) -> IcLoraGenerateResponse:
         assert req.ic_lora_id is not None  # branch guard in generate()
-        if self._generation.is_generation_running():
-            raise HTTPError(409, "Generation already in progress")
-        ic_lora = self._catalog.get_ic_lora(req.ic_lora_id)
-        if ic_lora is None:
-            raise HTTPError(404, "UNKNOWN_IC_LORA")
-        # IC-LoRA catalog entries always define a driving input (base field is optional for plain LoRAs).
-        assert ic_lora.input is not None, "IC-LoRA ic_lora is missing its input spec"
-        has_prompt = bool(req.prompt.strip())
-        # A prompt is required unless this catalog entry opts into promptless runs (e.g. outpainting).
-        if not has_prompt and not ic_lora.allows_empty_prompt:
-            raise HTTPError(400, "Prompt is required for this IC-LoRA")
-        if not req.input_path or not Path(req.input_path).exists():
-            raise HTTPError(400, f"Input not found: {req.input_path}")
-        # The input file must match the kind this IC-LoRA drives on (image vs video) — fail fast
-        # with a clean 400 instead of a deep pipeline 500 when e.g. an image is fed to a video entry.
-        _validate_input_kind(req.input_path, ic_lora.input.kind)
-        # Reference images (when the entry allows them) must exist — fail fast with a clean 400
-        # rather than surfacing a deep pipeline error later.
-        if ic_lora.allows_reference_image:
-            for img in req.images:
-                if not Path(img.path).exists():
-                    raise HTTPError(400, f"Reference image not found: {img.path}")
-        if req.variant_id is not None:
-            variant = ic_lora.download.resolve_variant(req.variant_id)
-            if variant is None:
-                raise HTTPError(404, "UNKNOWN_DOWNLOAD_VARIANT")
-            lora_path = resolve_ic_lora_path(self.models_dir, ic_lora.id, variant.filename)
-            if not lora_path.exists():
-                raise HTTPError(409, "IC_LORA_NOT_DOWNLOADED")
-        else:
-            lora_path = find_installed_ic_lora_path(
-                self.models_dir, ic_lora.id, ic_lora.download.candidate_filenames()
-            )
-            if lora_path is None:
-                raise HTTPError(409, "IC_LORA_NOT_DOWNLOADED")
-
-        control_values = self._resolve_control_values(req, ic_lora)
-        duration = int(control_values.get("duration", 5))
-        requested_frames = compute_num_frames(duration, _ic_lora_output_fps(ic_lora))
-
-        # IC-LoRA defaults, with any explicit UI override (e.g. skip_stage_2) applied on top.
-        s = _resolve_settings(req, ic_lora.default_settings)
-        generation_id = uuid.uuid4().hex[:8]
-        logger.info("[ic-lora] IC-LoRA generation started (ic_lora=%s)", ic_lora.id)
-        try:
-            # IC-LoRA preprocessing builds the control video itself; no depth processor needed.
-            ic_state = self._pipelines.load_ic_lora(str(lora_path), None, s.lora_strength)
-            self._generation.start_generation(generation_id)
-            self._generation.update_progress("loading_model", 5, 0, 1)
-
-            use_api = not self._text.should_use_local_encoding()
-            # Never enhance an empty prompt — there's nothing to expand and the enhancer would hallucinate.
-            enhance_prompt = use_api and self.state.app_settings.prompt_enhancer_enabled_t2v and has_prompt
-            self._text.prepare_text_encoding(req.prompt, enhance_prompt=enhance_prompt)
-
-            input_artifact = MediaArtifact(path=req.input_path, kind=ic_lora.input.kind)
-            ctx = PreprocessingContext(
-                num_frames=requested_frames,
-                outputs_dir=self.config.outputs_dir,
-                video_processor=self._video_processor,
-                outpaint=self._outpaint_from_request(req),
-            )
-            control = run_preprocessing(ic_lora.preprocessing, input_artifact, ctx)
-            control_video_path = control.path
-
-            cap = self._video_processor.open_video(control_video_path)
-            info = self._video_processor.get_video_info(cap)
-            self._video_processor.release(cap)
-            input_width, input_height = int(info["width"]), int(info["height"])
-
-            if control.frame_count:
-                # Preprocessed control video (image_to_frames at the chosen duration, or an
-                # outpaint canvas). Snap to the pipeline's grid: image_to_frames already coerces,
-                # but _outpaint_canvas returns its raw written count, which can be off-grid.
-                frame_count, fps = snap_to_frame_grid(control.frame_count, floor=9), control.fps or 24.0
+        with self._generation.reserved_generation_start():
+            ic_lora = self._catalog.get_ic_lora(req.ic_lora_id)
+            if ic_lora is None:
+                raise HTTPError(404, "UNKNOWN_IC_LORA")
+            # IC-LoRA catalog entries always define a driving input (base field is optional for plain LoRAs).
+            assert ic_lora.input is not None, "IC-LoRA ic_lora is missing its input spec"
+            has_prompt = bool(req.prompt.strip())
+            # A prompt is required unless this catalog entry opts into promptless runs (e.g. outpainting).
+            if not has_prompt and not ic_lora.allows_empty_prompt:
+                raise HTTPError(400, "Prompt is required for this IC-LoRA")
+            if not req.input_path or not Path(req.input_path).exists():
+                raise HTTPError(400, f"Input not found: {req.input_path}")
+            # The input file must match the kind this IC-LoRA drives on (image vs video) — fail fast
+            # with a clean 400 instead of a deep pipeline 500 when e.g. an image is fed to a video entry.
+            _validate_input_kind(req.input_path, ic_lora.input.kind)
+            # Reference images (when the entry allows them) must exist — fail fast with a clean 400
+            # rather than surfacing a deep pipeline error later.
+            if ic_lora.allows_reference_image:
+                for img in req.images:
+                    if not Path(img.path).exists():
+                        raise HTTPError(400, f"Reference image not found: {img.path}")
+            if req.variant_id is not None:
+                variant = ic_lora.download.resolve_variant(req.variant_id)
+                if variant is None:
+                    raise HTTPError(404, "UNKNOWN_DOWNLOAD_VARIANT")
+                lora_path = resolve_ic_lora_path(self.models_dir, ic_lora.id, variant.filename)
+                if not lora_path.exists():
+                    raise HTTPError(409, "IC_LORA_NOT_DOWNLOADED")
             else:
-                # Video IC-LoRAs: transform the whole input clip — match its length and fps,
-                # snapped to the pipeline's (n - 1) % 8 == 0 grid (not the duration control).
-                src_frames = int(info["frame_count"]) or requested_frames
-                frame_count = snap_to_frame_grid(src_frames, floor=9)
-                fps = float(info["fps"]) or 24.0
-
-            self._generation.update_progress("inference", 15, 0, 1)
-            if s.resolution_factor == 0 and s.skip_stage_2:
-                # "Source dimensions" (resolution_factor sentinel 0): land the output at the
-                # source resolution instead of the 768 bucket. skip_stage_2 renders at
-                # canvas//2, so pass 2*source and render at factor 1.0; the pipeline snaps to
-                # /128, so final dims are multiples of 64 (source dims that aren't are snapped
-                # to the nearest, e.g. 540 -> 512).
-                width = max(128, 2 * input_width)
-                height = max(128, 2 * input_height)
-                resolution_factor = 1.0
-            elif s.use_lora_in_stage_2 and not s.skip_stage_2:
-                # IC-LoRA kept in Stage 2 → mirror the t2v two-stage flow: land the output at
-                # the chosen resolution (or source if unset). Snap each edge down to a multiple
-                # of 128 (Stage 1 runs at canvas//2 and its latent must be even for the 2x
-                # patchify) and never upscale above source.
-                target_w = req.resolution.width if req.resolution else input_width
-                target_h = req.resolution.height if req.resolution else input_height
-                width = max(128, (min(target_w, input_width) // 128) * 128)
-                height = max(128, (min(target_h, input_height) // 128) * 128)
-                # The pipeline only consumes resolution_factor on the skip_stage_2 path, so it
-                # has no effect here (two-stage lands at the width/height above). Pass 1.0.
-                resolution_factor = 1.0
-            else:
-                width = 768
-                height = max(round(width * input_height / input_width / 128) * 128, 128)
-                resolution_factor = s.resolution_factor
-            output_path = (
-                self.config.outputs_dir
-                / f"ic_lora_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}.mp4"
-            )
-            # Optional reference image (e.g. a photoreal seed for 3D-render): conditions the
-            # first frame. Only honoured when the catalog entry opts in; ignored otherwise.
-            reference_images: list[ImageConditioningInput] = (
-                [
-                    ImageConditioningInput(path=img.path, frame_idx=int(img.frame), strength=float(img.strength))
-                    for img in req.images
-                ]
-                if ic_lora.allows_reference_image
-                else []
-            )
-            seed = self._resolve_seed()
-            with log_heartbeat("ic-lora inference"):
-                ic_state.pipeline.generate(
-                    prompt=req.prompt,
-                    seed=seed,
-                    height=height,
-                    width=width,
-                    num_frames=frame_count,
-                    frame_rate=fps,
-                    images=reference_images,
-                    video_conditioning=[(control_video_path, s.conditioning_strength)],
-                    output_path=str(output_path),
-                    skip_stage_2=s.skip_stage_2,
-                    use_lora_in_stage_2=s.use_lora_in_stage_2,
-                    resolution_factor=resolution_factor,
-                    source_audio_path=(
-                        req.input_path
-                        if s.audio_mode == "source" and ic_lora.input.kind == "video"
-                        else None
-                    ),
-                    mute_audio=s.audio_mode == "off",
-                    conditioning_mask_path=control.mask_path,
+                lora_path = find_installed_ic_lora_path(
+                    self.models_dir, ic_lora.id, ic_lora.download.candidate_filenames()
                 )
-            self._generation.update_progress("complete", 100, 1, 1)
-            self._generation.complete_generation(str(output_path))
-            return IcLoraGenerateCompleteResponse(status="complete", video_path=str(output_path))
-        except HTTPError:
-            self._generation.fail_generation("IC-LoRA generation failed")
-            raise
-        except ValueError as exc:
-            # run_preprocessing raises ValueError for user-fixable input (bad pads, unreadable
-            # media, >+100% outpaint) — surface it as a 400 so the user sees what to fix.
-            self._generation.fail_generation(str(exc))
-            raise HTTPError(400, str(exc)) from exc
-        except Exception as exc:
-            self._generation.fail_generation(str(exc))
-            if "cancelled" in str(exc).lower():
-                return IcLoraGenerateCancelledResponse(status="cancelled")
-            raise HTTPError(500, f"Generation error: {exc}") from exc
-        finally:
-            self._text.clear_api_embeddings()
+                if lora_path is None:
+                    raise HTTPError(409, "IC_LORA_NOT_DOWNLOADED")
+
+            control_values = self._resolve_control_values(req, ic_lora)
+            duration = int(control_values.get("duration", 5))
+            requested_frames = compute_num_frames(duration, _ic_lora_output_fps(ic_lora))
+
+            # IC-LoRA defaults, with any explicit UI override (e.g. skip_stage_2) applied on top.
+            s = _resolve_settings(req, ic_lora.default_settings)
+            generation_id = uuid.uuid4().hex[:8]
+            logger.info("[ic-lora] IC-LoRA generation started (ic_lora=%s)", ic_lora.id)
+            try:
+                # IC-LoRA preprocessing builds the control video itself; no depth processor needed.
+                ic_state = self._pipelines.load_ic_lora(str(lora_path), None, s.lora_strength)
+                self._generation.start_generation(generation_id)
+                self._generation.update_progress("loading_model", 5, 0, 1)
+
+                use_api = not self._text.should_use_local_encoding()
+                # Never enhance an empty prompt — there's nothing to expand and the enhancer would hallucinate.
+                enhance_prompt = use_api and self.state.app_settings.prompt_enhancer_enabled_t2v and has_prompt
+                self._text.prepare_text_encoding(req.prompt, enhance_prompt=enhance_prompt)
+                self._generation.raise_if_cancelled()
+
+                input_artifact = MediaArtifact(path=req.input_path, kind=ic_lora.input.kind)
+                ctx = PreprocessingContext(
+                    num_frames=requested_frames,
+                    outputs_dir=self.config.outputs_dir,
+                    video_processor=self._video_processor,
+                    outpaint=self._outpaint_from_request(req),
+                )
+                control = run_preprocessing(ic_lora.preprocessing, input_artifact, ctx)
+                control_video_path = control.path
+
+                cap = self._video_processor.open_video(control_video_path)
+                info = self._video_processor.get_video_info(cap)
+                self._video_processor.release(cap)
+                input_width, input_height = int(info["width"]), int(info["height"])
+
+                if control.frame_count:
+                    # Preprocessed control video (image_to_frames at the chosen duration, or an
+                    # outpaint canvas). Snap to the pipeline's grid: image_to_frames already coerces,
+                    # but _outpaint_canvas returns its raw written count, which can be off-grid.
+                    frame_count, fps = snap_to_frame_grid(control.frame_count, floor=9), control.fps or 24.0
+                else:
+                    # Video IC-LoRAs: transform the whole input clip — match its length and fps,
+                    # snapped to the pipeline's (n - 1) % 8 == 0 grid (not the duration control).
+                    src_frames = int(info["frame_count"]) or requested_frames
+                    frame_count = snap_to_frame_grid(src_frames, floor=9)
+                    fps = float(info["fps"]) or 24.0
+
+                self._generation.update_progress("inference", 15, 0, 1)
+                if s.resolution_factor == 0 and s.skip_stage_2:
+                    # "Source dimensions" (resolution_factor sentinel 0): land the output at the
+                    # source resolution instead of the 768 bucket. skip_stage_2 renders at
+                    # canvas//2, so pass 2*source and render at factor 1.0; the pipeline snaps to
+                    # /128, so final dims are multiples of 64 (source dims that aren't are snapped
+                    # to the nearest, e.g. 540 -> 512).
+                    width = max(128, 2 * input_width)
+                    height = max(128, 2 * input_height)
+                    resolution_factor = 1.0
+                elif s.use_lora_in_stage_2 and not s.skip_stage_2:
+                    # IC-LoRA kept in Stage 2 → mirror the t2v two-stage flow: land the output at
+                    # the chosen resolution (or source if unset). Snap each edge down to a multiple
+                    # of 128 (Stage 1 runs at canvas//2 and its latent must be even for the 2x
+                    # patchify) and never upscale above source.
+                    target_w = req.resolution.width if req.resolution else input_width
+                    target_h = req.resolution.height if req.resolution else input_height
+                    width = max(128, (min(target_w, input_width) // 128) * 128)
+                    height = max(128, (min(target_h, input_height) // 128) * 128)
+                    # The pipeline only consumes resolution_factor on the skip_stage_2 path, so it
+                    # has no effect here (two-stage lands at the width/height above). Pass 1.0.
+                    resolution_factor = 1.0
+                else:
+                    width = 768
+                    height = max(round(width * input_height / input_width / 128) * 128, 128)
+                    resolution_factor = s.resolution_factor
+                output_path = (
+                    self.config.outputs_dir
+                    / f"ic_lora_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}.mp4"
+                )
+                # Optional reference image (e.g. a photoreal seed for 3D-render): conditions the
+                # first frame. Only honoured when the catalog entry opts in; ignored otherwise.
+                reference_images: list[ImageConditioningInput] = (
+                    [
+                        ImageConditioningInput(path=img.path, frame_idx=int(img.frame), strength=float(img.strength))
+                        for img in req.images
+                    ]
+                    if ic_lora.allows_reference_image
+                    else []
+                )
+                seed = self._resolve_seed()
+                with log_heartbeat("ic-lora inference"):
+                    ic_state.pipeline.generate(
+                        prompt=req.prompt,
+                        seed=seed,
+                        height=height,
+                        width=width,
+                        num_frames=frame_count,
+                        frame_rate=fps,
+                        images=reference_images,
+                        video_conditioning=[(control_video_path, s.conditioning_strength)],
+                        output_path=str(output_path),
+                        skip_stage_2=s.skip_stage_2,
+                        use_lora_in_stage_2=s.use_lora_in_stage_2,
+                        resolution_factor=resolution_factor,
+                        source_audio_path=(
+                            req.input_path
+                            if s.audio_mode == "source" and ic_lora.input.kind == "video"
+                            else None
+                        ),
+                        mute_audio=s.audio_mode == "off",
+                        conditioning_mask_path=control.mask_path,
+                    )
+                self._complete_or_drop_cancelled(output_path)
+                return IcLoraGenerateCompleteResponse(status="complete", video_path=str(output_path))
+            except HTTPError:
+                self._generation.fail_generation("IC-LoRA generation failed")
+                raise
+            except ValueError as exc:
+                # run_preprocessing raises ValueError for user-fixable input (bad pads, unreadable
+                # media, >+100% outpaint) — surface it as a 400 so the user sees what to fix.
+                self._generation.fail_generation(str(exc))
+                raise HTTPError(400, str(exc)) from exc
+            except Exception as exc:
+                self._generation.fail_generation(str(exc))
+                if is_cancel_exception(exc):
+                    logger.info("Generation cancelled by user")
+                    return IcLoraGenerateCancelledResponse(status="cancelled")
+                raise HTTPError(500, f"Generation error: {exc}") from exc
+            finally:
+                self._text.clear_api_embeddings()
 
     def generate(self, req: IcLoraGenerateRequest) -> IcLoraGenerateResponse:
         if req.ic_lora_id is not None:
@@ -412,224 +439,224 @@ class IcLoraHandler(StateHandlerBase):
         # The canny/depth/custom paths have no catalog entry to opt into promptless runs.
         if not req.prompt.strip():
             raise HTTPError(400, "Prompt is required")
-        if self._generation.is_generation_running():
-            raise HTTPError(409, "Generation already in progress")
+        with self._generation.reserved_generation_start():
+            # Built-in defaults, with any explicit request value applied on top.
+            settings = _resolve_settings(req, IcLoraSettings())
 
-        # Built-in defaults, with any explicit request value applied on top.
-        settings = _resolve_settings(req, IcLoraSettings())
-
-        depth_model_path: Path | None
-        if req.conditioning_type == "custom":
-            # User-supplied IC-LoRA + pre-rendered control video; no preprocessing, so no
-            # depth processor needed (depth_model_path stays None).
-            if not req.custom_lora_ref or not req.control_video_path:
-                raise HTTPError(400, "Custom IC-LoRA requires custom_lora_ref and control_video_path")
-            try:
-                lora_path = resolve_lora_ref(self.models_dir, req.custom_lora_ref)
-            except ValueError as exc:
-                raise HTTPError(400, str(exc)) from exc
-            if not Path(req.control_video_path).exists():
-                raise HTTPError(400, f"Control video not found: {req.control_video_path}")
-            if not is_ic_lora_file(lora_path):
-                logger.warning(
-                    "[ic-lora] %s lacks reference_downscale_factor metadata; may not be an IC-LoRA",
-                    lora_path.name,
-                )
-            depth_model_path = None
-        else:
-            video_path = Path(req.video_path)
-            if not video_path.exists():
-                raise HTTPError(400, f"Video not found: {req.video_path}")
-            lora_path, depth_model_path = self._require_ic_lora_model_paths(req.conditioning_type)
-
-        generation_id = uuid.uuid4().hex[:8]
-        t_total_start = time.perf_counter()
-        logger.info("[ic-lora] Generation started (conditioning=%s)", req.conditioning_type)
-
-        try:
-            t_load_start = time.perf_counter()
-            with log_heartbeat("ic-lora model load"):
-                ic_state = self._pipelines.load_ic_lora(
-                    str(lora_path),
-                    str(depth_model_path) if depth_model_path is not None else None,
-                    settings.lora_strength,
-                )
-            t_load_end = time.perf_counter()
-            logger.info("[ic-lora] Pipeline load: %.2fs", t_load_end - t_load_start)
-
-            self._generation.start_generation(generation_id)
-            self._generation.update_progress("loading_model", 5, 0, 1)
-
-            s = self.state.app_settings
-            use_api = not self._text.should_use_local_encoding()
-            encoding_method = "api" if use_api else "local"
-            t_text_start = time.perf_counter()
-            # The prompt is guaranteed non-empty here (guarded at the top of generate()).
-            enhance_prompt = use_api and s.prompt_enhancer_enabled_t2v
-            self._text.prepare_text_encoding(req.prompt, enhance_prompt=enhance_prompt)
-            t_text_end = time.perf_counter()
-            logger.info("[ic-lora] Text encoding (%s): %.2fs", encoding_method, t_text_end - t_text_start)
-
-            preprocess_time = 0.0
-
+            depth_model_path: Path | None
             if req.conditioning_type == "custom":
-                # Pre-rendered control video supplied; derive shape/timing from it.
-                assert req.control_video_path is not None  # validated above
-                control_video_path = req.control_video_path
-                cap = self._video_processor.open_video(control_video_path)
-                if not cap.isOpened():
-                    raise HTTPError(400, f"Cannot open control video: {control_video_path}")
-                info = self._video_processor.get_video_info(cap)
-                self._video_processor.release(cap)
-                input_width = int(info["width"])
-                input_height = int(info["height"])
-                frame_count = int(info["frame_count"])
-                fps = float(info["fps"])
-                logger.info("[ic-lora] custom: using provided control video (%d frames)", frame_count)
+                # User-supplied IC-LoRA + pre-rendered control video; no preprocessing, so no
+                # depth processor needed (depth_model_path stays None).
+                if not req.custom_lora_ref or not req.control_video_path:
+                    raise HTTPError(400, "Custom IC-LoRA requires custom_lora_ref and control_video_path")
+                try:
+                    lora_path = resolve_lora_ref(self.models_dir, req.custom_lora_ref)
+                except ValueError as exc:
+                    raise HTTPError(400, str(exc)) from exc
+                if not Path(req.control_video_path).exists():
+                    raise HTTPError(400, f"Control video not found: {req.control_video_path}")
+                if not is_ic_lora_file(lora_path):
+                    logger.warning(
+                        "[ic-lora] %s lacks reference_downscale_factor metadata; may not be an IC-LoRA",
+                        lora_path.name,
+                    )
+                depth_model_path = None
             else:
-                cond = req.conditioning_type  # narrowed to Literal["canny", "depth"]
                 video_path = Path(req.video_path)
-                cap = self._video_processor.open_video(str(video_path))
-                if not cap.isOpened():
-                    raise HTTPError(400, f"Cannot open video: {video_path}")
-                info = self._video_processor.get_video_info(cap)
-                input_width = int(info["width"])
-                input_height = int(info["height"])
+                if not video_path.exists():
+                    raise HTTPError(400, f"Video not found: {req.video_path}")
+                lora_path, depth_model_path = self._require_ic_lora_model_paths(req.conditioning_type)
 
-                cache_key = ConditioningCacheKey(str(video_path), cond)
-                cached = ic_state.conditioning_cache.get(cache_key)
+            generation_id = uuid.uuid4().hex[:8]
+            t_total_start = time.perf_counter()
+            logger.info("[ic-lora] Generation started (conditioning=%s)", req.conditioning_type)
 
-                if cached is not None:
+            try:
+                t_load_start = time.perf_counter()
+                with log_heartbeat("ic-lora model load"):
+                    ic_state = self._pipelines.load_ic_lora(
+                        str(lora_path),
+                        str(depth_model_path) if depth_model_path is not None else None,
+                        settings.lora_strength,
+                    )
+                t_load_end = time.perf_counter()
+                logger.info("[ic-lora] Pipeline load: %.2fs", t_load_end - t_load_start)
+
+                self._generation.start_generation(generation_id)
+                self._generation.update_progress("loading_model", 5, 0, 1)
+
+                s = self.state.app_settings
+                use_api = not self._text.should_use_local_encoding()
+                encoding_method = "api" if use_api else "local"
+                t_text_start = time.perf_counter()
+                # The prompt is guaranteed non-empty here (guarded at the top of generate()).
+                enhance_prompt = use_api and s.prompt_enhancer_enabled_t2v
+                self._text.prepare_text_encoding(req.prompt, enhance_prompt=enhance_prompt)
+                t_text_end = time.perf_counter()
+                logger.info("[ic-lora] Text encoding (%s): %.2fs", encoding_method, t_text_end - t_text_start)
+                self._generation.raise_if_cancelled()
+
+                preprocess_time = 0.0
+
+                if req.conditioning_type == "custom":
+                    # Pre-rendered control video supplied; derive shape/timing from it.
+                    assert req.control_video_path is not None  # validated above
+                    control_video_path = req.control_video_path
+                    cap = self._video_processor.open_video(control_video_path)
+                    if not cap.isOpened():
+                        raise HTTPError(400, f"Cannot open control video: {control_video_path}")
+                    info = self._video_processor.get_video_info(cap)
                     self._video_processor.release(cap)
-                    control_video_path = cached.control_video_path
-                    frame_count = cached.frame_count
-                    fps = cached.fps
-                    logger.info("[ic-lora] Conditioning cache hit for %s/%s", video_path.name, cond)
-                else:
-                    t_preprocess_start = time.perf_counter()
-
+                    input_width = int(info["width"])
+                    input_height = int(info["height"])
                     frame_count = int(info["frame_count"])
                     fps = float(info["fps"])
+                    logger.info("[ic-lora] custom: using provided control video (%d frames)", frame_count)
+                else:
+                    cond = req.conditioning_type  # narrowed to Literal["canny", "depth"]
+                    video_path = Path(req.video_path)
+                    cap = self._video_processor.open_video(str(video_path))
+                    if not cap.isOpened():
+                        raise HTTPError(400, f"Cannot open video: {video_path}")
+                    info = self._video_processor.get_video_info(cap)
+                    input_width = int(info["width"])
+                    input_height = int(info["height"])
 
-                    control_video_path = str(
-                        self.config.outputs_dir / f"_control_{cond}_{uuid.uuid4().hex[:8]}.mp4"
+                    cache_key = ConditioningCacheKey(str(video_path), cond)
+                    cached = ic_state.conditioning_cache.get(cache_key)
+
+                    if cached is not None:
+                        self._video_processor.release(cap)
+                        control_video_path = cached.control_video_path
+                        frame_count = cached.frame_count
+                        fps = cached.fps
+                        logger.info("[ic-lora] Conditioning cache hit for %s/%s", video_path.name, cond)
+                    else:
+                        t_preprocess_start = time.perf_counter()
+
+                        frame_count = int(info["frame_count"])
+                        fps = float(info["fps"])
+
+                        control_video_path = str(
+                            self.config.outputs_dir / f"_control_{cond}_{uuid.uuid4().hex[:8]}.mp4"
+                        )
+                        writer = self._video_processor.create_writer(
+                            control_video_path,
+                            fourcc="mp4v",
+                            fps=fps,
+                            size=(int(info["width"]), int(info["height"])),
+                        )
+
+                        frame_idx = 0
+                        while frame_idx < frame_count:
+                            self._generation.raise_if_cancelled()
+                            frame = self._video_processor.read_frame(cap)
+                            if frame is None:
+                                break
+                            control_frame = self._build_conditioning_frame(frame, cond, ic_state)
+                            writer.write(control_frame)
+                            frame_idx += 1
+
+                        self._video_processor.release(cap)
+                        self._video_processor.release(writer)
+                        preprocess_time = time.perf_counter() - t_preprocess_start
+                        logger.info(
+                            "[ic-lora] Preprocessing (%s, %d frames): %.2fs",
+                            cond, frame_idx, preprocess_time,
+                        )
+
+                        ic_state.conditioning_cache.put(
+                            cache_key, ConditioningCacheEntry(control_video_path, frame_count, fps)
+                        )
+
+                if req.fps_override is not None and req.fps_override < fps:
+                    control_video_path, frame_count, fps = self._resample_control_fps(
+                        control_video_path, frame_count, fps, req.fps_override
                     )
-                    writer = self._video_processor.create_writer(
-                        control_video_path,
-                        fourcc="mp4v",
-                        fps=fps,
-                        size=(int(info["width"]), int(info["height"])),
-                    )
 
-                    frame_idx = 0
-                    while frame_idx < frame_count:
-                        frame = self._video_processor.read_frame(cap)
-                        if frame is None:
-                            break
-                        control_frame = self._build_conditioning_frame(frame, cond, ic_state)
-                        writer.write(control_frame)
-                        frame_idx += 1
+                images: list[ImageConditioningInput] = [
+                    ImageConditioningInput(path=img.path, frame_idx=int(img.frame), strength=float(img.strength))
+                    for img in req.images
+                ]
 
-                    self._video_processor.release(cap)
-                    self._video_processor.release(writer)
-                    preprocess_time = time.perf_counter() - t_preprocess_start
-                    logger.info(
-                        "[ic-lora] Preprocessing (%s, %d frames): %.2fs",
-                        cond, frame_idx, preprocess_time,
-                    )
+                self._generation.update_progress("inference", 15, 0, 1)
 
-                    ic_state.conditioning_cache.put(
-                        cache_key, ConditioningCacheEntry(control_video_path, frame_count, fps)
-                    )
+                if settings.use_lora_in_stage_2 and not settings.skip_stage_2:
+                    # IC-LoRA kept in Stage 2 → mirror the t2v two-stage flow: output at the chosen
+                    # resolution (or source if unset), snapped down to a multiple of 128 (Stage 1
+                    # runs at canvas//2; its latent must be even for the 2x patchify), never upscaling.
+                    target_w = req.resolution.width if req.resolution else input_width
+                    target_h = req.resolution.height if req.resolution else input_height
+                    width = max(128, (min(target_w, input_width) // 128) * 128)
+                    height = max(128, (min(target_h, input_height) // 128) * 128)
+                else:
+                    width = 768
+                    height = max(round(width * input_height / input_width / 128) * 128, 128)
 
-            if req.fps_override is not None and req.fps_override < fps:
-                control_video_path, frame_count, fps = self._resample_control_fps(
-                    control_video_path, frame_count, fps, req.fps_override
+                output_path = (
+                    self.config.outputs_dir / f"ic_lora_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}.mp4"
                 )
 
-            images: list[ImageConditioningInput] = [
-                ImageConditioningInput(path=img.path, frame_idx=int(img.frame), strength=float(img.strength))
-                for img in req.images
-            ]
-
-            self._generation.update_progress("inference", 15, 0, 1)
-
-            if settings.use_lora_in_stage_2 and not settings.skip_stage_2:
-                # IC-LoRA kept in Stage 2 → mirror the t2v two-stage flow: output at the chosen
-                # resolution (or source if unset), snapped down to a multiple of 128 (Stage 1
-                # runs at canvas//2; its latent must be even for the 2x patchify), never upscaling.
-                target_w = req.resolution.width if req.resolution else input_width
-                target_h = req.resolution.height if req.resolution else input_height
-                width = max(128, (min(target_w, input_width) // 128) * 128)
-                height = max(128, (min(target_h, input_height) // 128) * 128)
-            else:
-                width = 768
-                height = max(round(width * input_height / input_width / 128) * 128, 128)
-
-            output_path = (
-                self.config.outputs_dir / f"ic_lora_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}.mp4"
-            )
-
-            if (frame_count - 1) % 8 != 0:
-                logger.warning(
-                    "[ic-lora] %d frames: (frames-1) %% 8 != 0 — pipeline may pad/trim and output could glitch.",
-                    frame_count,
+                if (frame_count - 1) % 8 != 0:
+                    logger.warning(
+                        "[ic-lora] %d frames: (frames-1) %% 8 != 0 — pipeline may pad/trim and output could glitch.",
+                        frame_count,
+                    )
+                seed = self._resolve_seed()
+                logger.info(
+                    "[ic-lora] run: lora=%s strength=%.2f skip_stage_2=%s res_factor=%.2f audio=%s enhance=%s "
+                    "seed=%d -> target %dx%d x %d frames @%gfps | prompt_len=%d",
+                    lora_path.name, settings.lora_strength, settings.skip_stage_2, settings.resolution_factor,
+                    settings.audio_mode, enhance_prompt, seed, width, height, frame_count, fps, len(req.prompt),
                 )
-            seed = self._resolve_seed()
-            logger.info(
-                "[ic-lora] run: lora=%s strength=%.2f skip_stage_2=%s res_factor=%.2f audio=%s enhance=%s "
-                "seed=%d -> target %dx%d x %d frames @%gfps | prompt_len=%d",
-                lora_path.name, settings.lora_strength, settings.skip_stage_2, settings.resolution_factor,
-                settings.audio_mode, enhance_prompt, seed, width, height, frame_count, fps, len(req.prompt),
-            )
-            t_inference_start = time.perf_counter()
-            with log_heartbeat("ic-lora inference"):
-                ic_state.pipeline.generate(
-                    prompt=req.prompt,
-                    seed=seed,
-                    height=height,
-                    width=width,
-                    num_frames=frame_count,
-                    frame_rate=fps,
-                    images=images,
-                    video_conditioning=[(control_video_path, settings.conditioning_strength)],
-                    output_path=str(output_path),
-                    skip_stage_2=settings.skip_stage_2,
-                    use_lora_in_stage_2=settings.use_lora_in_stage_2,
-                    resolution_factor=settings.resolution_factor,
-                    # "source" mode muxes the input clip's soundtrack (None if it has none);
-                    # "off" mutes; "generated" keeps the model audio.
-                    source_audio_path=(
-                        req.video_path
-                        if settings.audio_mode == "source" and Path(req.video_path).exists()
-                        else None
-                    ),
-                    mute_audio=settings.audio_mode == "off",
+                t_inference_start = time.perf_counter()
+                with log_heartbeat("ic-lora inference"):
+                    ic_state.pipeline.generate(
+                        prompt=req.prompt,
+                        seed=seed,
+                        height=height,
+                        width=width,
+                        num_frames=frame_count,
+                        frame_rate=fps,
+                        images=images,
+                        video_conditioning=[(control_video_path, settings.conditioning_strength)],
+                        output_path=str(output_path),
+                        skip_stage_2=settings.skip_stage_2,
+                        use_lora_in_stage_2=settings.use_lora_in_stage_2,
+                        resolution_factor=settings.resolution_factor,
+                        # "source" mode muxes the input clip's soundtrack (None if it has none);
+                        # "off" mutes; "generated" keeps the model audio.
+                        source_audio_path=(
+                            req.video_path
+                            if settings.audio_mode == "source" and Path(req.video_path).exists()
+                            else None
+                        ),
+                        mute_audio=settings.audio_mode == "off",
+                    )
+                t_inference_end = time.perf_counter()
+                logger.info("[ic-lora] Inference: %.2fs", t_inference_end - t_inference_start)
+
+                t_total_end = time.perf_counter()
+                logger.info(
+                    "[ic-lora] Total generation: %.2fs (load=%.2fs, text=%.2fs, preprocess=%.2fs, inference=%.2fs)",
+                    t_total_end - t_total_start,
+                    t_load_end - t_load_start,
+                    t_text_end - t_text_start,
+                    preprocess_time,
+                    t_inference_end - t_inference_start,
                 )
-            t_inference_end = time.perf_counter()
-            logger.info("[ic-lora] Inference: %.2fs", t_inference_end - t_inference_start)
 
-            t_total_end = time.perf_counter()
-            logger.info(
-                "[ic-lora] Total generation: %.2fs (load=%.2fs, text=%.2fs, preprocess=%.2fs, inference=%.2fs)",
-                t_total_end - t_total_start,
-                t_load_end - t_load_start,
-                t_text_end - t_text_start,
-                preprocess_time,
-                t_inference_end - t_inference_start,
-            )
+                self._complete_or_drop_cancelled(output_path)
+                return IcLoraGenerateCompleteResponse(status="complete", video_path=str(output_path))
 
-            self._generation.update_progress("complete", 100, 1, 1)
-            self._generation.complete_generation(str(output_path))
-            return IcLoraGenerateCompleteResponse(status="complete", video_path=str(output_path))
-
-        except HTTPError:
-            self._generation.fail_generation("IC-LoRA generation failed")
-            raise
-        except Exception as exc:
-            self._generation.fail_generation(str(exc))
-            if "cancelled" in str(exc).lower():
-                return IcLoraGenerateCancelledResponse(status="cancelled")
-            raise HTTPError(500, f"Generation error: {exc}") from exc
-        finally:
-            self._text.clear_api_embeddings()
+            except HTTPError:
+                self._generation.fail_generation("IC-LoRA generation failed")
+                raise
+            except Exception as exc:
+                self._generation.fail_generation(str(exc))
+                if is_cancel_exception(exc):
+                    logger.info("Generation cancelled by user")
+                    return IcLoraGenerateCancelledResponse(status="cancelled")
+                raise HTTPError(500, f"Generation error: {exc}") from exc
+            finally:
+                self._text.clear_api_embeddings()

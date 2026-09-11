@@ -41,14 +41,14 @@ def test_darwin_streams_below_full_resident_floor() -> None:
         == "streaming_models_loading"
     )
     assert (
-        decide_local_generation_mode(system="Darwin", cuda_available=False, vram_gb=None, mps_available=True, ram_gb=95)
+        decide_local_generation_mode(system="Darwin", cuda_available=False, vram_gb=None, mps_available=True, ram_gb=84)
         == "streaming_models_loading"
     )
 
 
 def test_darwin_full_resident_at_and_above_floor() -> None:
     assert (
-        decide_local_generation_mode(system="Darwin", cuda_available=False, vram_gb=None, mps_available=True, ram_gb=96)
+        decide_local_generation_mode(system="Darwin", cuda_available=False, vram_gb=None, mps_available=True, ram_gb=85)
         == "full_models_loading"
     )
     assert (
@@ -104,6 +104,65 @@ def test_linux_streaming_range() -> None:
 
 def test_linux_full_loading_range() -> None:
     assert decide_local_generation_mode(system="Linux", cuda_available=True, vram_gb=31) == "full_models_loading"
+
+
+def test_linux_without_fp8_still_unsupported_below_streaming_floor() -> None:
+    assert (
+        decide_local_generation_mode(
+            system="Linux", cuda_available=True, vram_gb=14, fp8_capable=False
+        )
+        == "unsupported"
+    )
+
+
+def test_linux_without_fp8_streams_even_above_full_floor() -> None:
+    """ROCm reports as CUDA but has no fp8; the 31 GB floor assumes an fp8 transformer."""
+    assert (
+        decide_local_generation_mode(
+            system="Linux", cuda_available=True, vram_gb=31, fp8_capable=False
+        )
+        == "streaming_models_loading"
+    )
+    assert (
+        decide_local_generation_mode(
+            system="Linux", cuda_available=True, vram_gb=96, fp8_capable=False
+        )
+        == "streaming_models_loading"
+    )
+
+
+def test_windows_without_fp8_streams_even_above_full_floor() -> None:
+    assert (
+        decide_local_generation_mode(
+            system="Windows", cuda_available=True, vram_gb=31, fp8_capable=False
+        )
+        == "streaming_models_loading"
+    )
+
+
+def test_fp8_capable_default_preserves_cuda_full_loading() -> None:
+    assert decide_local_generation_mode(system="Linux", cuda_available=True, vram_gb=31) == "full_models_loading"
+    assert (
+        decide_local_generation_mode(
+            system="Linux", cuda_available=True, vram_gb=31, fp8_capable=True
+        )
+        == "full_models_loading"
+    )
+
+
+def test_darwin_ignores_fp8_capable() -> None:
+    assert (
+        decide_local_generation_mode(
+            system="Darwin", cuda_available=False, vram_gb=None, mps_available=True, ram_gb=48, fp8_capable=False
+        )
+        == "streaming_models_loading"
+    )
+    assert (
+        decide_local_generation_mode(
+            system="Darwin", cuda_available=False, vram_gb=None, mps_available=True, ram_gb=85, fp8_capable=False
+        )
+        == "full_models_loading"
+    )
 
 
 def test_other_systems_fail_closed() -> None:

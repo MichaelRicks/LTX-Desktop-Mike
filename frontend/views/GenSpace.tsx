@@ -1,25 +1,36 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react'
+import { createPortal } from 'react-dom'
 import {
   Trash2, Download, Image, Video, X,
-  Heart, Film, Volume2, VolumeX, Sparkles,
-  Clock, Monitor, ChevronUp, Scissors, Music,
-  ChevronLeft, ChevronRight, Copy, Check, Tag, Eraser, Square, MoveHorizontal, RefreshCw, Clapperboard
+  Heart, Film, Volume2, VolumeX, Sparkles, Sparkle,
+  Clock, Monitor, ChevronUp, Scissors, Music, Undo2, Redo2, Loader2,
+  ChevronLeft, ChevronRight, Copy, Check, Tag, Eraser, Square, MoveHorizontal, Wand2, Rows3, RefreshCw, Clapperboard
 } from 'lucide-react'
 import { useProjects } from '../contexts/ProjectContext'
 import type { GenSpaceRetakeSource } from '../contexts/ProjectContext'
 import { useAppSettings } from '../contexts/AppSettingsContext'
 import { useGeneration, GENERATION_RECOVERY_KEY, type GenerationRecoveryContext } from '../hooks/use-generation'
+import { useFixedMenu } from '../hooks/use-fixed-menu'
+import { setActiveGenerationOwner, hasValidBaselineId } from '../lib/generation-recovery'
+import { withGenerationActive, canCancelLocalJob } from '../lib/generation-active'
 import { useVideoGenerationModelSpecs } from '../hooks/use-video-generation-model-specs'
 import { createLocalGenerationError, type GenerationError } from '../lib/generation-errors'
-import { useRetake } from '../hooks/use-retake'
+import {
+  useRetake,
+  RETAKE_EXTEND_MODELS,
+  retakeExtendModelFromPipeline,
+  type RetakeExtendModel,
+} from '../hooks/use-retake'
 import { useExtend, type ExtendDirection, EXTEND_SECONDS, DEFAULT_EXTEND_SECONDS } from '../hooks/use-extend'
-import { resolutionOptions, type ResolutionOption } from '../lib/video-resolution'
+import { resolutionOptions, videoGenerationResolutionLabel, type ResolutionOption } from '../lib/video-resolution'
 import { useIcLora, type IcLoraAudioMode } from '../hooks/use-ic-lora'
 import { useCustomIcLoraEnabled } from '../hooks/use-custom-ic-lora-enabled'
 import { useDevFlags } from '../contexts/DevFlagsContext'
 import { type IcLoraListItem } from '../hooks/use-catalog'
 import { useIcLoraLibrary } from '../hooks/use-ic-lora-library'
 import { useLoraLibrary } from '../hooks/use-lora-library'
+import { usePromptEnhancerProvider, type EnhanceProvider } from '../hooks/use-prompt-enhancer-provider'
+import { useGlobalGenerationLock } from '../hooks/use-global-generation-lock'
 import type { ICLoraConditioningType } from '../components/ICLoraPanel'
 import type { Asset } from '../types/project-model'
 import { GenerationErrorDialog } from '../components/GenerationErrorDialog'
@@ -29,16 +40,23 @@ import { GPM_IMAGE_DND_TYPE, saveDataUrlToTempFile, type GpmDndImage } from '../
 import { FILE_DND, type LibFile } from '../components/gpm/DownloadsBrowser'
 import {
   areVideoGenerationSettingsEquivalent,
+  formatPipelineDisplayName,
+  GENSPACE_MIN_SELECTABLE_DURATION_S,
+  getApiOfferingCapabilities,
   getVideoGenerationModelSpecs,
+  getLocalOfferingCapabilities,
+  resolvePipelineDisplayName,
   resolveVideoGenerationOptions,
   sanitizeVideoGenerationSettings,
   type VideoGenerationModelSpecItem,
+  type VideoGenerationPipeline,
 } from '../lib/video-generation-model-specs'
 import { logger } from '../lib/logger'
 import { ApiClient, type ApiSuccessOf } from '../lib/api-client'
-import type { LoraSelection } from '../components/SettingsPanel'
+import type { GenerationSettings, LoraSelection } from '../components/SettingsPanel'
 import { RetakePanel } from '../components/RetakePanel'
 import { ExtendPanel } from '../components/ExtendPanel'
+import { MultiKeyframePanel } from '../components/MultiKeyframePanel'
 import { ICLoraPanel, CONDITIONING_TYPES } from '../components/ICLoraPanel'
 import type { OutpaintPads } from '../components/OutpaintCanvasEditor'
 import { LoraLibraryModal } from '../components/LoraLibraryModal'
@@ -48,6 +66,29 @@ import { SettingsDropdown } from '../components/SettingsDropdown'
 import { IcLoraSettingsControls, type IcLoraControlsProps } from '../components/IcLoraSettingsControls'
 import { IcLoraAdvancedPanel } from '../components/IcLoraAdvancedPanel'
 import { FreeApiKeyBubble } from '../components/FreeApiKeyBubble'
+import { shouldShowLastFrameChip } from '../lib/genspace-last-frame'
+import {
+  GEMINI_KEY_REQUIRED_SETTINGS_DETAIL,
+  isEnhanceBlockedByMissingGeminiKey,
+} from '../lib/enhance-gemini-key'
+import {
+  autoDurationOptionVisible,
+  canUseMultiKeyframeMode,
+  fallbackGenSpaceMode,
+  genSpaceUsesAudioInput,
+  isEnhanceAvailableForMode,
+  modeAfterCompletedGeneration,
+  modeOptionValues,
+} from '../lib/genspace-multi-keyframe'
+import {
+  enhanceKeyframesPayload,
+  fromPersistedKeyframes,
+  LOCAL_MULTI_KEYFRAME_MAX_COUNT,
+  toPersistedKeyframes,
+  videoGenerationModeFromInputs,
+  type KeyframeItem,
+} from '../lib/multi-keyframe'
+import { lastFrameFromDuration, retimeKeyframesForSettings, type DraggedFrame } from '../lib/keyframe-timeline'
 import { useVideoSaveMenu } from '../components/useVideoSaveMenu'
 import { useImageSaveMenu } from '../components/useImageSaveMenu'
 
@@ -82,6 +123,7 @@ function AssetCard({
   onDragStart,
   onCreateVideo,
   onRegenerate,
+  onEditImage,
   onRetake,
   onExtend,
   onContinue,
@@ -97,6 +139,7 @@ function AssetCard({
   onDragStart: (e: React.DragEvent, asset: Asset) => void
   onCreateVideo?: (asset: Asset) => void
   onRegenerate?: (asset: Asset) => void
+  onEditImage?: (asset: Asset) => void
   onRetake?: (asset: Asset) => void
   onExtend?: (asset: Asset) => void
   onContinue?: (asset: Asset) => void
@@ -235,17 +278,26 @@ function AssetCard({
                   <Film className="h-3 w-3" />
                   Create video
                 </button>
+                <button
+                  onClick={(e) => { e.stopPropagation(); onEditImage?.(asset) }}
+                  className="px-2.5 py-1.5 rounded-lg bg-black/40 backdrop-blur-md text-white hover:bg-black/60 transition-colors flex items-center gap-1.5 text-xs font-medium whitespace-nowrap"
+                >
+                  <Wand2 className="h-3 w-3" />
+                  Edit image
+                </button>
               </>
             )}
             {asset.type === 'video' && (
               <>
-                <button
-                  onClick={(e) => { e.stopPropagation(); onRetake?.(asset) }}
-                  className="px-2.5 py-1.5 rounded-lg bg-black/40 backdrop-blur-md text-white hover:bg-black/60 transition-colors flex items-center gap-1.5 text-xs font-medium whitespace-nowrap"
-                >
-                  <Scissors className="h-3 w-3" />
-                  Retake
-                </button>
+                {onRetake && (
+                  <button
+                    onClick={(e) => { e.stopPropagation(); onRetake(asset) }}
+                    className="px-2.5 py-1.5 rounded-lg bg-black/40 backdrop-blur-md text-white hover:bg-black/60 transition-colors flex items-center gap-1.5 text-xs font-medium whitespace-nowrap"
+                  >
+                    <Scissors className="h-3 w-3" />
+                    Retake
+                  </button>
+                )}
                 {onExtend && (
                   <button
                     onClick={(e) => { e.stopPropagation(); onExtend(asset) }}
@@ -423,6 +475,8 @@ function formatSeconds(seconds: number): string {
 }
 
 const DEFAULT_LORA_SCALE = 1.0
+const IMAGE_STEPS_GENERATE = 4
+const IMAGE_STEPS_EDIT = 8
 
 // Multi-select LoRA picker with a per-LoRA strength slider.
 function LoRAPicker({
@@ -430,6 +484,7 @@ function LoRAPicker({
   selected,
   onChange,
   displayNames,
+  catalogIdsByPath,
 }: {
   available: ApiSuccessOf<'listModels'>['models']
   selected: LoraSelection[]
@@ -437,18 +492,13 @@ function LoRAPicker({
   // Catalog display names keyed by installed path (cross-checked against the catalog), so a
   // downloaded catalog LoRA shows its proper name instead of the raw filename.
   displayNames?: Map<string, string>
+  // Catalog id keyed by installed path, same cross-check — attached to a new selection so the
+  // prompt enhancer can look up this LoRA's trigger/instructions later. Without it, a LoRA
+  // picked from this dropdown (rather than the "Browse LoRAs" catalog modal) would silently
+  // enhance with no catalog awareness at all.
+  catalogIdsByPath?: Map<string, string>
 }) {
-  const [isOpen, setIsOpen] = useState(false)
-  const containerRef = useRef<HTMLDivElement>(null)
-
-  useEffect(() => {
-    if (!isOpen) return
-    const onClick = (e: MouseEvent) => {
-      if (containerRef.current && !containerRef.current.contains(e.target as Node)) setIsOpen(false)
-    }
-    document.addEventListener('mousedown', onClick)
-    return () => document.removeEventListener('mousedown', onClick)
-  }, [isOpen])
+  const { isOpen, setIsOpen, triggerRef, menuRef, style } = useFixedMenu('above')
 
   const nameFor = (lora: ApiSuccessOf<'listModels'>['models'][0]) => displayNames?.get(lora.path) ?? lora.name
 
@@ -456,7 +506,12 @@ function LoRAPicker({
     if (selected.find(s => s.ref === lora.path)) {
       onChange(selected.filter(s => s.ref !== lora.path))
     } else {
-      onChange([...selected, { ref: lora.path, name: nameFor(lora), scale: DEFAULT_LORA_SCALE }])
+      onChange([...selected, {
+        ref: lora.path,
+        name: nameFor(lora),
+        scale: DEFAULT_LORA_SCALE,
+        catalogId: catalogIdsByPath?.get(lora.path),
+      }])
     }
   }
 
@@ -467,7 +522,7 @@ function LoRAPicker({
   const label = selected.length === 0 ? 'LoRA' : selected.length === 1 ? selected[0].name : `${selected.length} LoRAs`
 
   return (
-    <div ref={containerRef} className="relative">
+    <div ref={triggerRef} className="relative">
       <button
         onClick={() => setIsOpen(o => !o)}
         className="flex items-center gap-1.5 px-2 py-1.5 rounded-md bg-zinc-800/60 text-zinc-300 text-xs hover:bg-zinc-700/60 transition-colors max-w-[160px]"
@@ -475,8 +530,12 @@ function LoRAPicker({
         <Sparkles className="h-3.5 w-3.5 flex-shrink-0" />
         <span className="truncate">{label}</span>
       </button>
-      {isOpen && (
-        <div className="absolute bottom-full mb-1 left-0 z-50 w-72 max-h-80 overflow-y-auto rounded-md border border-zinc-700 bg-zinc-900 shadow-xl">
+      {isOpen && createPortal(
+        <div
+          ref={menuRef}
+          style={style}
+          className="fixed w-72 max-h-80 overflow-y-auto rounded-md border border-zinc-700 bg-zinc-900 shadow-xl"
+        >
           <div className="px-3 py-2 text-[10px] uppercase tracking-wide text-zinc-500 border-b border-zinc-800">
             Select LoRAs
           </div>
@@ -510,13 +569,14 @@ function LoRAPicker({
               </div>
             )
           })}
-        </div>
+        </div>,
+        document.body,
       )}
     </div>
   )
 }
 
-type GenSpaceMode = 'image' | 'video' | 'retake' | 'extend' | 'ic-lora'
+type GenSpaceMode = 'image' | 'video' | 'retake' | 'extend' | 'ic-lora' | 'multi-keyframe'
 
 // Resolve a selected resolution option key to {width,height}, or undefined for "original"
 // (backend then uses the source resolution).
@@ -531,16 +591,30 @@ function resolveResolution(options: ResolutionOption[], key: string): { width: n
 function PromptBar({
   mode,
   onModeChange,
+  canUseMultiKeyframe,
   canUseIcLora,
+  canUseRetake,
+  canUseExtend,
+  canUseUserLoras,
   prompt,
   onPromptChange,
   onClearPrompt,
   onGenerate,
+  onStop,
   isGenerating,
+  isCancelling,
   inputImage,
   onInputImageChange,
+  inputLastImage,
+  onInputLastImageChange,
   inputAudio,
   onInputAudioChange,
+  keyframes,
+  onKeyframesChange,
+  multiKeyframeMaxCount,
+  playheadFrame,
+  onPlayheadChange,
+  onDragFrameChange,
   settings,
   onSettingsChange,
   videoModelSpecs,
@@ -555,23 +629,45 @@ function PromptBar({
   resolutionOptions: resolutionOpts,
   selectedResolution,
   onResolutionChange,
+  retakeExtendModel,
+  onRetakeExtendModelChange,
   icLoraControls,
   promptOptional,
   isLocalMode,
+  imageUsesFalApi,
   availableLoras,
   selectedLoras,
   onSelectedLorasChange,
   loraDisplayNames,
+  loraCatalogIdsByPath,
+  enhanceAvailableForMode,
+  canEnhancePrompt,
+  enhanceBlockedByMissingGeminiKey,
+  isEnhancingPrompt,
+  enhancePromptError,
+  onEnhancePrompt,
+  enhanceProvider,
+  onEnhanceProviderChange,
+  canUndoPrompt,
+  onUndoPrompt,
+  canRedoPrompt,
+  onRedoPrompt,
   allowUltrawideVideo,
 }: {
   mode: GenSpaceMode
   onModeChange: (mode: GenSpaceMode) => void
+  canUseMultiKeyframe: boolean
   canUseIcLora: boolean
+  canUseRetake: boolean
+  canUseExtend: boolean
+  canUseUserLoras: boolean
   prompt: string
   onPromptChange: (prompt: string) => void
   onClearPrompt: () => void
   onGenerate: () => void
+  onStop?: () => void
   isGenerating: boolean
+  isCancelling?: boolean
   canGenerate: boolean
   buttonLabel: string
   buttonIcon: React.ReactNode
@@ -582,13 +678,25 @@ function PromptBar({
   resolutionOptions?: ResolutionOption[]
   selectedResolution?: string
   onResolutionChange?: (key: string) => void
+  // Retake/extend, API mode: ltxv-api /v1/retake and /v2/extend accept
+  // ltx-2-pro / ltx-2-3-pro (Desktop pipeline "pro").
+  retakeExtendModel?: RetakeExtendModel
+  onRetakeExtendModelChange?: (model: RetakeExtendModel) => void
   inputImage: string | null
   onInputImageChange: (path: string | null) => void
+  inputLastImage: string | null
+  onInputLastImageChange: (path: string | null) => void
   inputAudio: string | null
   onInputAudioChange: (path: string | null) => void
+  keyframes: readonly KeyframeItem[]
+  onKeyframesChange: (keyframes: KeyframeItem[]) => void
+  multiKeyframeMaxCount: number
+  playheadFrame: number
+  onPlayheadChange: (frameIndex: number) => void
+  onDragFrameChange: (drag: DraggedFrame | null) => void
   settings: {
     model: string
-    duration: number
+    duration: number | null
     videoResolution: string
     fps: number
     aspectRatio: string
@@ -596,6 +704,7 @@ function PromptBar({
     imageModel: string
     variations: number
     audio?: boolean
+    imageEditStrength?: number
   }
   onSettingsChange: (settings: any) => void
   videoModelSpecs: VideoGenerationModelSpecItem[]
@@ -603,19 +712,43 @@ function PromptBar({
   icLoraControls?: IcLoraControlsProps
   promptOptional?: boolean
   isLocalMode?: boolean
+  imageUsesFalApi?: boolean
   availableLoras?: ApiSuccessOf<'listModels'>['models']
   selectedLoras?: LoraSelection[]
   onSelectedLorasChange?: (loras: LoraSelection[]) => void
   loraDisplayNames?: Map<string, string>
+  loraCatalogIdsByPath?: Map<string, string>
+  enhanceAvailableForMode?: boolean
+  canEnhancePrompt?: boolean
+  enhanceBlockedByMissingGeminiKey?: boolean
+  isEnhancingPrompt?: boolean
+  enhancePromptError?: string | null
+  onEnhancePrompt?: () => void
+  enhanceProvider?: 'local' | 'api'
+  onEnhanceProviderChange?: (provider: 'local' | 'api') => void
+  canUndoPrompt?: boolean
+  onUndoPrompt?: () => void
+  canRedoPrompt?: boolean
+  onRedoPrompt?: () => void
   allowUltrawideVideo?: boolean
 }) {
+  const enhanceDisabled = (!canEnhancePrompt && !enhanceBlockedByMissingGeminiKey) || !!isEnhancingPrompt
   const inputRef = useRef<HTMLInputElement>(null)
+  const lastFrameInputRef = useRef<HTMLInputElement>(null)
   const audioInputRef = useRef<HTMLInputElement>(null)
   const [isDragOver, setIsDragOver] = useState(false)
+  const [isLastDragOver, setIsLastDragOver] = useState(false)
   const [isAudioDragOver, setIsAudioDragOver] = useState(false)
   const isRetake = mode === 'retake'
   const isExtend = mode === 'extend'
   const isIcLora = mode === 'ic-lora'
+  const isEditingImage = mode === 'image' && !!inputImage
+  const availableModeValues = modeOptionValues({
+    canUseMultiKeyframe,
+    canUseRetake,
+    canUseExtend,
+    canUseIcLora,
+  })
 
   // Resolution selector: local only, and only when there's a lower tier to pick.
   const showResolution = isLocalMode && !!resolutionOpts && resolutionOpts.length > 1
@@ -634,11 +767,35 @@ function PromptBar({
       }
     />
   ) : null
-  const resolvedVideoOptions = mode === 'video'
+
+  // Unused while RETAKE_EXTEND_MODELS is only "pro".
+  const showRetakeExtendModel = !isLocalMode && (isRetake || isExtend) && RETAKE_EXTEND_MODELS.length > 1
+  const retakeExtendModelLabel = (value: RetakeExtendModel) =>
+    formatPipelineDisplayName(value) ?? value
+  const modelControl = showRetakeExtendModel ? (
+    <SettingsDropdown
+      title="MODEL"
+      value={retakeExtendModel ?? 'pro'}
+      onChange={(v) => onRetakeExtendModelChange?.(v as RetakeExtendModel)}
+      options={RETAKE_EXTEND_MODELS.map((value) => ({
+        value,
+        label: retakeExtendModelLabel(value),
+      }))}
+      trigger={
+        <>
+          <Sparkles className="h-3.5 w-3.5" />
+          <span>{retakeExtendModelLabel(retakeExtendModel ?? 'pro')}</span>
+          <ChevronUp className="h-3 w-3 text-zinc-500" />
+        </>
+      }
+    />
+  ) : null
+  const resolvedVideoOptions = mode === 'video' || mode === 'multi-keyframe'
     ? resolveVideoGenerationOptions({
         settings,
         modelSpecs: videoModelSpecs,
-        hasAudio: Boolean(inputAudio),
+        hasAudio: genSpaceUsesAudioInput(mode) && Boolean(inputAudio),
+        minimumDuration: isLocalMode ? undefined : GENSPACE_MIN_SELECTABLE_DURATION_S,
       })
     : null
   const showVideoFpsControl = Boolean(
@@ -646,6 +803,15 @@ function PromptBar({
     && resolvedVideoOptions.hasCompatibleOptions
     && resolvedVideoOptions.fpsOptions.length > 1,
   )
+  const showAutoDurationOption = Boolean(
+    resolvedVideoOptions
+    && autoDurationOptionVisible(mode, resolvedVideoOptions.autoDurationAvailable),
+  )
+  const selectedDuration = showAutoDurationOption && resolvedVideoOptions?.selectedDuration === null
+    ? null
+    : resolvedVideoOptions?.selectedDuration
+      ?? resolvedVideoOptions?.durationOptions[0]
+      ?? settings.duration
 
   const handleDrop = (e: React.DragEvent) => {
     e.preventDefault()
@@ -732,22 +898,70 @@ function PromptBar({
       }
     }
   }
+
+  const handleLastDrop = (e: React.DragEvent) => {
+    e.preventDefault()
+    setIsLastDragOver(false)
+
+    const assetData = e.dataTransfer.getData('asset')
+    if (assetData) {
+      const asset = JSON.parse(assetData) as Asset
+      if (asset.type === 'image') {
+        onInputLastImageChange(asset.path)
+      }
+      return
+    }
+
+    const file = e.dataTransfer.files?.[0]
+    if (file && file.type.startsWith('image/')) {
+      const filePath = window.electronAPI?.getPathForFile(file)
+      if (filePath) {
+        onInputLastImageChange(filePath)
+      }
+    }
+  }
+
+  const handleLastFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (file && file.type.startsWith('image/')) {
+      const filePath = window.electronAPI?.getPathForFile(file)
+      if (filePath) {
+        onInputLastImageChange(filePath)
+      }
+    }
+  }
   
   const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter' && !e.shiftKey && !isGenerating && canGenerate) {
+    if (e.key === 'Enter' && !e.shiftKey && !isGenerating && canGenerate && !isEnhancingPrompt) {
       e.preventDefault()
       onGenerate()
     }
   }
 
+  const showStop = Boolean(isGenerating && onStop)
+  const stopDisabled = Boolean(isCancelling)
+  const generateDisabled = isGenerating || !canGenerate || isEnhancingPrompt
+
   return (
-    <div className="bg-zinc-900 border border-zinc-800 rounded-2xl overflow-visible">
+    <div className="h-full min-h-0 flex flex-col bg-zinc-900 border border-zinc-800 rounded-2xl overflow-visible">
+      {mode === 'multi-keyframe' && (
+        <MultiKeyframePanel
+          keyframes={keyframes}
+          duration={resolvedVideoOptions?.selectedDuration ?? settings.duration}
+          fps={resolvedVideoOptions?.selectedFps ?? settings.fps}
+          maxCount={multiKeyframeMaxCount}
+          playheadFrame={playheadFrame}
+          onPlayheadChange={onPlayheadChange}
+          onChange={onKeyframesChange}
+          onDragFrameChange={onDragFrameChange}
+        />
+      )}
       {/* Top row: Image ref | Prompt | Generate */}
-      <div className="flex items-start">
-        {/* Input image drop zone — video mode only (I2V) */}
-        {mode === 'video' && !isRetake && !isIcLora && (
+      <div className="flex-1 min-h-0 flex items-stretch">
+        {/* Input image drop zone — video mode (I2V) or image mode (edit source) */}
+        {(mode === 'video' || mode === 'image') && !isRetake && !isIcLora && (
           <div
-            className={`relative w-32 aspect-video mx-2 mt-2 rounded-lg border-2 border-dashed transition-colors flex items-center justify-center flex-shrink-0 cursor-pointer ${
+            className={`relative w-10 h-10 mx-2 mt-2 self-start rounded-lg border-2 border-dashed transition-colors flex items-center justify-center flex-shrink-0 cursor-pointer ${
               isDragOver ? 'border-blue-500 bg-blue-500/10' : 'border-zinc-700 hover:border-zinc-500'
             }`}
             onDragOver={(e) => { e.preventDefault(); setIsDragOver(true) }}
@@ -759,8 +973,12 @@ function PromptBar({
               <>
                 <img src={pathToFileUrl(inputImage)} alt="" className="w-full h-full object-contain rounded-md" />
                 <button
-                  onClick={(e) => { e.stopPropagation(); onInputImageChange(null) }}
-                  className="absolute -top-1 -right-1 p-1 rounded-full bg-zinc-800 text-zinc-400 hover:text-white z-10"
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    onInputImageChange(null)
+                    onInputLastImageChange(null)
+                  }}
+                  className="absolute -top-1 -right-1 p-0.5 rounded-full bg-zinc-800 text-zinc-400 hover:text-white z-10"
                 >
                   <X className="h-3.5 w-3.5" />
                 </button>
@@ -778,10 +996,48 @@ function PromptBar({
           </div>
         )}
 
-        {/* Audio drop zone — only in video mode */}
-        {mode === 'video' && !isRetake && !isIcLora && (
+        {shouldShowLastFrameChip({
+          mode,
+          hasFirstFrame: Boolean(inputImage),
+          duration: settings.duration,
+        }) && !isRetake && !isIcLora && (
           <div
-            className={`relative w-20 h-20 mt-2 rounded-lg border-2 border-dashed transition-colors flex items-center justify-center flex-shrink-0 cursor-pointer ${
+            className={`relative w-10 h-10 mt-2 mr-2 rounded-lg border-2 border-dashed transition-colors flex items-center justify-center flex-shrink-0 cursor-pointer ${
+              isLastDragOver ? 'border-blue-500 bg-blue-500/10' : 'border-zinc-700 hover:border-zinc-500'
+            }`}
+            title="Last frame"
+            onDragOver={(e) => { e.preventDefault(); setIsLastDragOver(true) }}
+            onDragLeave={() => setIsLastDragOver(false)}
+            onDrop={handleLastDrop}
+            onClick={() => lastFrameInputRef.current?.click()}
+          >
+            {inputLastImage ? (
+              <>
+                <img src={pathToFileUrl(inputLastImage)} alt="" className="w-full h-full object-cover rounded-md" />
+                <button
+                  onClick={(e) => { e.stopPropagation(); onInputLastImageChange(null) }}
+                  className="absolute -top-1 -right-1 p-0.5 rounded-full bg-zinc-800 text-zinc-400 hover:text-white z-10"
+                >
+                  <X className="h-3 w-3" />
+                </button>
+              </>
+            ) : (
+              <Image className="h-4 w-4 text-zinc-500" />
+            )}
+            <input
+              ref={lastFrameInputRef}
+              type="file"
+              accept="image/*"
+              onChange={handleLastFileSelect}
+              className="hidden"
+            />
+          </div>
+        )}
+
+        {/* Audio drop zone — A2V is mutually exclusive with multi-keyframe */}
+        {genSpaceUsesAudioInput(mode) && !isRetake && !isIcLora && (
+          <div
+            className={`relative w-10 h-10 mt-2 self-start rounded-lg border-2 border-dashed transition-colors flex items-center justify-center flex-shrink-0 cursor-pointer ${
               isAudioDragOver ? 'border-emerald-500 bg-emerald-500/10' : inputAudio ? 'border-emerald-600' : 'border-zinc-700 hover:border-zinc-500'
             }`}
             onDragOver={(e) => { e.preventDefault(); setIsAudioDragOver(true) }}
@@ -813,8 +1069,8 @@ function PromptBar({
           </div>
         )}
 
-        {/* Prompt input - fills remaining width */}
-        <div className="flex-1 min-w-0 py-1">
+        {/* Prompt input - fills remaining width and grows with the panel */}
+        <div className="flex-1 min-h-0 min-w-0 py-1">
           <textarea
             value={prompt}
             onChange={(e) => onPromptChange(e.target.value)}
@@ -836,17 +1092,19 @@ function PromptBar({
                     ? "Describe the new area, or leave empty to extend the scene..."
                     : "Describe the style or transformation to apply...")
               : mode === 'image'
-                ? "A close-up of a woman talking on the phone..."
+                ? (isEditingImage
+                    ? "Describe the change, e.g. make it photorealistic..."
+                    : "A close-up of a woman talking on the phone...")
                 : "The woman sips from a cup of coffee..."
             }
-            className="w-full bg-transparent text-white text-sm placeholder:text-zinc-500 focus:outline-none px-2 py-2 resize-y overflow-y-auto h-[70px] min-h-[70px] max-h-[60vh] leading-5"
+            className="w-full h-full min-h-0 bg-transparent text-white text-sm placeholder:text-zinc-500 focus:outline-none px-2 py-2 resize-none overflow-y-auto leading-5"
           />
         </div>
 
       </div>
       
       {/* Bottom row: Mode selector + Settings */}
-      <div className="flex items-center gap-0.5 px-1.5 py-1.5 border-t border-zinc-800/60 text-xs text-zinc-400">
+      <div className="flex flex-shrink-0 items-center gap-0.5 px-1.5 py-1.5 border-t border-zinc-800/60 text-xs text-zinc-400">
         {/* Mode dropdown */}
         <SettingsDropdown
           title="MODE"
@@ -855,14 +1113,15 @@ function PromptBar({
           options={[
             { value: 'image', label: 'Generate Images', icon: <Image className="h-4 w-4" /> },
             { value: 'video', label: 'Generate Videos', icon: <Video className="h-4 w-4" /> },
+            { value: 'multi-keyframe', label: 'Generate Multi Keyframes Videos', icon: <Rows3 className="h-4 w-4" /> },
             { value: 'retake', label: 'Retake', icon: <Scissors className="h-4 w-4" /> },
             { value: 'extend', label: 'Extend', icon: <MoveHorizontal className="h-4 w-4" /> },
-            ...(canUseIcLora ? [{ value: 'ic-lora', label: 'IC-LoRA', icon: <Sparkles className="h-4 w-4" /> }] : []),
-          ]}
+            { value: 'ic-lora', label: 'IC-LoRA', icon: <Sparkles className="h-4 w-4" /> },
+          ].filter((option) => availableModeValues.includes(option.value as GenSpaceMode))}
           trigger={
             <>
-              {mode === 'image' ? <Image className="h-3.5 w-3.5" /> : mode === 'retake' ? <Scissors className="h-3.5 w-3.5" /> : mode === 'extend' ? <MoveHorizontal className="h-3.5 w-3.5" /> : mode === 'ic-lora' ? <Sparkles className="h-3.5 w-3.5" /> : <Video className="h-3.5 w-3.5" />}
-              <span className="text-zinc-300 font-medium">{mode === 'image' ? 'Image' : mode === 'retake' ? 'Retake' : mode === 'extend' ? 'Extend' : mode === 'ic-lora' ? 'IC-LoRA' : 'Video'}</span>
+              {mode === 'image' ? <Image className="h-3.5 w-3.5" /> : mode === 'multi-keyframe' ? <Rows3 className="h-3.5 w-3.5" /> : mode === 'retake' ? <Scissors className="h-3.5 w-3.5" /> : mode === 'extend' ? <MoveHorizontal className="h-3.5 w-3.5" /> : mode === 'ic-lora' ? <Sparkles className="h-3.5 w-3.5" /> : <Video className="h-3.5 w-3.5" />}
+              <span className="text-zinc-300 font-medium">{mode === 'image' ? 'Image' : mode === 'multi-keyframe' ? 'Multi Keyframes' : mode === 'retake' ? 'Retake' : mode === 'extend' ? 'Extend' : mode === 'ic-lora' ? 'IC-LoRA' : 'Video'}</span>
               <ChevronUp className="h-3 w-3 text-zinc-500" />
             </>
           }
@@ -882,7 +1141,16 @@ function PromptBar({
         <div className="flex-1" />
 
         {isRetake ? (
-          resolutionControl ?? <div className="text-[10px] text-zinc-500 pr-2">Trim in the panel above, then retake</div>
+          <>
+            {modelControl}
+            {modelControl && resolutionControl && (
+              <div className="w-px h-4 bg-zinc-700 mx-0.5" />
+            )}
+            {resolutionControl}
+            {/* Always available: in API mode modelControl used to replace this hint, so a
+                <2s selection disabled submit with no explanation. */}
+            <div className="text-[10px] text-zinc-500 pr-2">Trim in the panel above, then retake</div>
+          </>
         ) : isExtend ? (
           <>
             <SettingsDropdown
@@ -915,6 +1183,12 @@ function PromptBar({
                 </>
               }
             />
+            {modelControl && (
+              <>
+                <div className="w-px h-4 bg-zinc-700 mx-0.5" />
+                {modelControl}
+              </>
+            )}
             {resolutionControl && (
               <>
                 <div className="w-px h-4 bg-zinc-700 mx-0.5" />
@@ -926,63 +1200,81 @@ function PromptBar({
         <IcLoraSettingsControls {...icLoraControls} />
         ) : mode === 'image' ? (
           <>
-            {/* Model dropdown */}
-            <SettingsDropdown
-              title="MODEL"
-              value={settings.imageModel}
-              onChange={(v) => onSettingsChange({ ...settings, imageModel: v })}
-              options={[
-                { value: 'z-image-turbo', label: 'Z-Image Turbo' },
-                { value: 'krea-2-turbo', label: 'Krea 2 Turbo' },
-              ]}
-              trigger={
-                <>
-                  {settings.imageModel === 'krea-2-turbo' ? <Sparkles className="h-3.5 w-3.5" /> : <ZitIcon className="h-3.5 w-3.5" />}
-                  <span className="text-zinc-300 font-medium">
-                    {settings.imageModel === 'krea-2-turbo' ? 'Krea 2 Turbo' : 'Z-Image Turbo'}
-                  </span>
-                  <ChevronUp className="h-3 w-3 text-zinc-500" />
-                </>
-              }
-            />
+            {isEditingImage ? (
+              // Edit runs at the source image's resolution — resolution/ratio don't apply.
+              <div className="flex items-center gap-1.5 px-2 text-[10px] text-zinc-400">
+                <span>Strength</span>
+                <input
+                  type="range"
+                  min={0}
+                  max={1}
+                  step={0.01}
+                  value={settings.imageEditStrength ?? 0.6}
+                  onChange={(e) => onSettingsChange({ ...settings, imageEditStrength: parseFloat(e.target.value) })}
+                  className="w-20 accent-white"
+                />
+                <span className="w-8 text-right">{(settings.imageEditStrength ?? 0.6).toFixed(2)}</span>
+              </div>
+            ) : (
+              <>
+                {/* Model dropdown (FORK: Krea 2 / Z-Image selection) */}
+                <SettingsDropdown
+                  title="MODEL"
+                  value={settings.imageModel}
+                  onChange={(v) => onSettingsChange({ ...settings, imageModel: v })}
+                  options={[
+                    { value: 'z-image-turbo', label: 'Z-Image Turbo' },
+                    { value: 'krea-2-turbo', label: 'Krea 2 Turbo' },
+                  ]}
+                  trigger={
+                    <>
+                      {settings.imageModel === 'krea-2-turbo' ? <Sparkles className="h-3.5 w-3.5" /> : <ZitIcon className="h-3.5 w-3.5" />}
+                      <span className="text-zinc-300 font-medium">
+                        {settings.imageModel === 'krea-2-turbo' ? 'Krea 2 Turbo' : 'Z-Image Turbo'}{imageUsesFalApi ? ' (API)' : ''}
+                      </span>
+                      <ChevronUp className="h-3 w-3 text-zinc-500" />
+                    </>
+                  }
+                />
 
-            {/* Resolution dropdown */}
-            <SettingsDropdown
-              title="IMAGE RESOLUTION"
-              value={settings.imageResolution}
-              onChange={(v) => onSettingsChange({ ...settings, imageResolution: v })}
-              options={[
-                { value: '1080p', label: '1080p' },
-                { value: '1440p', label: '1440p' },
-                { value: '2048p', label: '2048p' },
-              ]}
-              trigger={
-                <>
-                  <Monitor className="h-3.5 w-3.5" />
-                  <span>{settings.imageResolution.replace('p', '')}</span>
-                </>
-              }
-            />
-            
-            {/* Aspect ratio dropdown */}
-            <SettingsDropdown
-              title="RATIO"
-              value={settings.aspectRatio}
-              onChange={(v) => onSettingsChange({ ...settings, aspectRatio: v })}
-              options={[
-                { value: '16:9', label: '16:9' },
-                { value: '1:1', label: '1:1' },
-                { value: '9:16', label: '9:16' },
-                { value: '21:9', label: '21:9' },
-              ]}
-              trigger={
-                <>
-                  <AspectIcon className="h-3.5 w-3.5" />
-                  <span>{settings.aspectRatio}</span>
-                </>
-              }
-            />
+                {/* Resolution dropdown */}
+                <SettingsDropdown
+                  title="IMAGE RESOLUTION"
+                  value={settings.imageResolution}
+                  onChange={(v) => onSettingsChange({ ...settings, imageResolution: v })}
+                  options={[
+                    { value: '1080p', label: '1080p' },
+                    { value: '1440p', label: '1440p' },
+                    { value: '2048p', label: '2048p' },
+                  ]}
+                  trigger={
+                    <>
+                      <Monitor className="h-3.5 w-3.5" />
+                      <span>{settings.imageResolution.replace('p', '')}</span>
+                    </>
+                  }
+                />
 
+                {/* Aspect ratio dropdown (FORK: keeps 21:9) */}
+                <SettingsDropdown
+                  title="RATIO"
+                  value={settings.aspectRatio}
+                  onChange={(v) => onSettingsChange({ ...settings, aspectRatio: v })}
+                  options={[
+                    { value: '16:9', label: '16:9' },
+                    { value: '1:1', label: '1:1' },
+                    { value: '9:16', label: '9:16' },
+                    { value: '21:9', label: '21:9' },
+                  ]}
+                  trigger={
+                    <>
+                      <AspectIcon className="h-3.5 w-3.5" />
+                      <span>{settings.aspectRatio}</span>
+                    </>
+                  }
+                />
+              </>
+            )}
           </>
         ) : (
           <>
@@ -1011,13 +1303,26 @@ function PromptBar({
 
                 <SettingsDropdown
                   title="DURATION"
-                  value={String(resolvedVideoOptions.selectedDuration ?? settings.duration)}
-                  onChange={(v) => onSettingsChange({ ...settings, duration: parseInt(v) })}
-                  options={resolvedVideoOptions.durationOptions.map((value) => ({ value: String(value), label: `${value} Sec` }))}
+                  value={selectedDuration === null ? 'auto' : String(selectedDuration)}
+                  onChange={(v) => onSettingsChange({
+                    ...settings,
+                    duration: v === 'auto' ? null : parseInt(v),
+                  })}
+                  options={[
+                    ...(showAutoDurationOption
+                      ? [{ value: 'auto', label: 'Auto' }]
+                      : []),
+                    ...resolvedVideoOptions.durationOptions.map((value) => ({
+                      value: String(value),
+                      label: `${value} Sec`,
+                    })),
+                  ]}
                   trigger={
                     <>
                       <Clock className="h-3.5 w-3.5" />
-                      <span>{resolvedVideoOptions.selectedDuration ?? settings.duration}s</span>
+                      <span>
+                        {selectedDuration === null ? 'Auto' : `${selectedDuration}s`}
+                      </span>
                     </>
                   }
                 />
@@ -1026,11 +1331,18 @@ function PromptBar({
                   title="RESOLUTION"
                   value={resolvedVideoOptions.selectedResolution ?? settings.videoResolution}
                   onChange={(v) => onSettingsChange({ ...settings, videoResolution: v })}
-                  options={resolvedVideoOptions.resolutionOptions.map((value) => ({ value, label: value }))}
+                  options={resolvedVideoOptions.resolutionOptions.map((value) => ({
+                    value,
+                    label: videoGenerationResolutionLabel(value),
+                  }))}
                   trigger={
                     <>
                       <Monitor className="h-3.5 w-3.5" />
-                      <span>{(resolvedVideoOptions.selectedResolution ?? settings.videoResolution).replace('p', '')}</span>
+                      <span>
+                        {videoGenerationResolutionLabel(
+                          resolvedVideoOptions.selectedResolution ?? settings.videoResolution,
+                        ).replace(/p$/, '')}
+                      </span>
                     </>
                   }
                 />
@@ -1068,12 +1380,13 @@ function PromptBar({
                   }
                 />
 
-                {isLocalMode && availableLoras && availableLoras.length > 0 && (
+                {mode === 'video' && isLocalMode && canUseUserLoras && availableLoras && availableLoras.length > 0 && (
                   <LoRAPicker
                     available={availableLoras}
                     selected={selectedLoras ?? []}
                     onChange={onSelectedLorasChange ?? (() => {})}
                     displayNames={loraDisplayNames}
+                    catalogIdsByPath={loraCatalogIdsByPath}
                   />
                 )}
               </>
@@ -1085,18 +1398,98 @@ function PromptBar({
           </>
         )}
         
-        {/* Generate button */}
+        {/* Catalog-aware prompt enhancer — video/multi-keyframe/IC-LoRA (local-generation-only)
+            or image (generation/editing, any backend). Runs either the local Gemma text encoder
+            or, if available, Gemini's hosted API. */}
+        {enhanceAvailableForMode && (
+          <>
+            {(canUndoPrompt || canRedoPrompt) && (
+              <>
+                <button
+                  type="button"
+                  onClick={onUndoPrompt}
+                  disabled={isEnhancingPrompt || !canUndoPrompt}
+                  title="Undo (previous prompt)"
+                  className="flex items-center justify-center h-7 w-7 rounded-md text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800 flex-shrink-0 disabled:opacity-30 disabled:cursor-not-allowed"
+                >
+                  <Undo2 className="h-3.5 w-3.5" />
+                </button>
+                <button
+                  type="button"
+                  onClick={onRedoPrompt}
+                  disabled={isEnhancingPrompt || !canRedoPrompt}
+                  title="Redo (next prompt)"
+                  className="flex items-center justify-center h-7 w-7 rounded-md text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800 flex-shrink-0 disabled:opacity-30 disabled:cursor-not-allowed"
+                >
+                  <Redo2 className="h-3.5 w-3.5" />
+                </button>
+              </>
+            )}
+            <div className="flex items-center flex-shrink-0">
+              <button
+                type="button"
+                onClick={onEnhancePrompt}
+                disabled={enhanceDisabled}
+                title={enhancePromptError ?? 'Enhance prompt'}
+                className={`flex items-center gap-1 px-2 py-1.5 text-xs font-medium ${
+                  onEnhanceProviderChange ? 'rounded-l-md' : 'rounded-md'
+                } ${
+                  enhanceDisabled
+                    ? 'text-zinc-600 cursor-not-allowed'
+                    : enhancePromptError
+                      ? 'text-red-400 hover:bg-red-950/40'
+                      : 'text-zinc-300 hover:bg-zinc-800'
+                }`}
+              >
+                {isEnhancingPrompt ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <Sparkle className="h-3.5 w-3.5" />
+                )}
+                {isEnhancingPrompt ? 'Enhancing...' : enhanceProvider === 'api' ? 'Enhance (API)' : 'Enhance'}
+              </button>
+              {onEnhanceProviderChange && (
+                <SettingsDropdown
+                  title="ENHANCE VIA"
+                  value={enhanceProvider ?? 'local'}
+                  onChange={(v) => onEnhanceProviderChange(v === 'api' ? 'api' : 'local')}
+                  options={[
+                    { value: 'local', label: 'Local (Gemma)' },
+                    { value: 'api', label: 'API (Gemini)' },
+                  ]}
+                  trigger={<ChevronUp className="h-3 w-3 text-zinc-500" />}
+                  triggerClassName="rounded-l-none border-l border-zinc-700 px-1"
+                />
+              )}
+            </div>
+          </>
+        )}
+
+        {/* Generate / Stop button */}
         <button
-          onClick={onGenerate}
-          disabled={isGenerating || !canGenerate}
-          className={`flex items-center gap-1.5 ml-2 px-3 py-1.5 rounded-md text-xs font-medium transition-all flex-shrink-0 ${
-            isGenerating || !canGenerate
-              ? 'bg-zinc-700 text-zinc-500 cursor-not-allowed'
-              : 'bg-white text-black hover:bg-zinc-200'
+          onClick={showStop ? onStop : onGenerate}
+          disabled={showStop ? stopDisabled : generateDisabled}
+          className={`flex items-center gap-1.5 ml-2 mt-2 self-start px-3 py-1.5 rounded-md text-xs font-medium transition-all flex-shrink-0 ${
+            showStop
+              ? stopDisabled
+                ? 'bg-zinc-700 text-zinc-500 cursor-not-allowed'
+                : 'bg-red-600 text-white hover:bg-red-500'
+              : generateDisabled
+                ? 'bg-zinc-700 text-zinc-500 cursor-not-allowed'
+                : 'bg-white text-black hover:bg-zinc-200'
           }`}
         >
-          <span className={isGenerating ? 'animate-pulse' : ''}>{buttonIcon}</span>
-          {buttonLabel}
+          {showStop ? (
+            <>
+              <Square className="h-3.5 w-3.5 fill-current" />
+              {isCancelling ? 'Stopping...' : 'Stop'}
+            </>
+          ) : (
+            <>
+              <span className={isGenerating ? 'animate-pulse' : ''}>{buttonIcon}</span>
+              {buttonLabel}
+            </>
+          )}
         </button>
       </div>
     </div>
@@ -1177,7 +1570,7 @@ function continuationResolution(shortSide: number): string {
 
 const DEFAULT_VIDEO_SETTINGS = {
   model: 'fast',
-  duration: 5,
+  duration: 5 as number | null,
   videoResolution: '540p',
   fps: 24,
   aspectRatio: '16:9',
@@ -1185,6 +1578,7 @@ const DEFAULT_VIDEO_SETTINGS = {
   imageModel: 'z-image-turbo',
   variations: 1,
   audio: true,
+  imageEditStrength: 0.6,
 }
 
 export function GenSpace() {
@@ -1192,8 +1586,8 @@ export function GenSpace() {
     activeProject,
     addAsset,
     addTakeToAsset,
-    deleteAsset,
     updateAsset,
+    deleteAsset,
     toggleFavorite,
     createBin,
     deleteBin,
@@ -1216,7 +1610,7 @@ export function GenSpace() {
     clearGenSpacePrompt,
   } = useProjects()
   const currentProjectId = activeProject?.id ?? null
-  const { shouldVideoGenerateWithLtxApi, forceApiGenerations, settings: appSettings } = useAppSettings()
+  const { shouldVideoGenerateWithLtxApi, shouldImageGenerateWithFalApi, forceApiGenerations, settings: appSettings } = useAppSettings()
   const {
     modelSpecs: videoGenerationModelSpecsResponse,
     isLoading: isLoadingVideoGenerationModelSpecs,
@@ -1224,8 +1618,19 @@ export function GenSpace() {
   } = useVideoGenerationModelSpecs()
   const [mode, setMode] = useState<GenSpaceMode>('video')
   const [prompt, setPrompt] = useState('')
+  const [isEnhancingPrompt, setIsEnhancingPrompt] = useState(false)
+  const [enhancePromptError, setEnhancePromptError] = useState<string | null>(null)
+  // Undo/redo stack for the prompt enhancer, e.g. [original, enhance#1, enhance#2].
+  // historyIndex points at whichever entry is currently shown in the textarea. Undo/Redo are
+  // pure local navigation (no network call) — only a fresh Enhance call ever grows the stack.
+  const [promptHistory, setPromptHistory] = useState<string[]>([])
+  const [historyIndex, setHistoryIndex] = useState(-1)
   const [inputImage, setInputImage] = useState<string | null>(null)
+  const [inputLastImage, setInputLastImage] = useState<string | null>(null)
   const [inputAudio, setInputAudio] = useState<string | null>(null)
+  const [keyframes, setKeyframes] = useState<KeyframeItem[]>([])
+  const [playheadFrame, setPlayheadFrame] = useState(0)
+  const [, setDragFrame] = useState<DraggedFrame | null>(null)
   const [localError, setLocalError] = useState<GenerationError | null>(null)
   const [selectedAsset, setSelectedAsset] = useState<Asset | null>(null)
   const enlargedVideoRef = useRef<HTMLVideoElement | null>(null)
@@ -1250,6 +1655,7 @@ export function GenSpace() {
   const persistedVideoKeyRef = useRef<string | null>(null)
   const retakeSubmissionRef = useRef<{
     prompt: string
+    model: RetakeExtendModel
     input: {
       videoPath: string | null
       startTime: number
@@ -1266,14 +1672,30 @@ export function GenSpace() {
       customLoraRef?: string
     }
   } | null>(null)
+  // Provenance for the completion effect below: imagePaths/isGenerating alone can't tell
+  // it whether the request that just finished was an edit or a plain generation.
+  const lastImageEditRef = useRef<{ source: string; strength: number } | null>(null)
+  // Click-time t2v/i2v/a2v/image snapshot. The live picker can change while the job
+  // runs; the completion effects must tag the asset with what was actually submitted.
+  // Survives a refresh via the recovery marker restore below — the ref itself does not.
+  const generateSubmissionRef = useRef<{
+    kind: 'video' | 'image'
+    prompt: string
+    settings: GenerationSettings
+    modelLabel?: string
+    inputImageUrl: string | null
+    inputLastImageUrl: string | null
+    inputAudioUrl: string | null
+    keyframes?: KeyframeItem[]
+  } | null>(null)
   const [settings, setSettings] = useState(() => ({ ...DEFAULT_VIDEO_SETTINGS }))
-  // "Continue as new shot": pending = the next completed gen is a continuation
-  // whose duplicate lead frame should be trimmed; processed dedupes per output.
   const continuationPendingRef = useRef(false)
   const continuationProcessedRef = useRef<string | null>(null)
-  // Memoized: this fed sanitizeVideoSettings -> handleRegenerate -> the gallery's
-  // useMemo, so rebuilding it every render silently defeated that memo and made
-  // every prompt keystroke re-render all thumbnails.
+  const previousTimelineSettingsRef = useRef({
+    duration: settings.duration,
+    fps: settings.fps,
+  })
+  // Memoized (fork perf): rebuilding every render defeated downstream gallery memos.
   const videoModelSpecs = useMemo(
     () => getVideoGenerationModelSpecs(videoGenerationModelSpecsResponse, {
       useApiSpecs: shouldVideoGenerateWithLtxApi,
@@ -1286,17 +1708,22 @@ export function GenSpace() {
       ? `Could not load generation settings: ${videoGenerationModelSpecsErrorMessage}`
       : null
   const sanitizeVideoSettings = useCallback(
-    (next: typeof settings) => {
-      if (mode !== 'video' || videoModelSpecs.length === 0) return next
+    (
+      next: typeof settings,
+      durationSelection: 'preserve' | 'smallest_valid' = 'preserve',
+    ) => {
+      if ((mode !== 'video' && mode !== 'multi-keyframe') || videoModelSpecs.length === 0) return next
       return sanitizeVideoGenerationSettings(next, videoModelSpecs, {
-        hasAudio: Boolean(inputAudio),
-        // 21:9 is only valid on the local pipeline; drop it in API mode.
+        hasAudio: genSpaceUsesAudioInput(mode) && Boolean(inputAudio),
+        // FORK: 21:9 is only valid on the local pipeline; drop it in API mode.
         allowedAspectRatios: shouldVideoGenerateWithLtxApi
           ? ['16:9', '9:16']
           : ['16:9', '9:16', '21:9'],
+        minimumDuration: shouldVideoGenerateWithLtxApi ? GENSPACE_MIN_SELECTABLE_DURATION_S : undefined,
+        durationSelection,
       }) ?? next
     },
-    [inputAudio, mode, videoModelSpecs, shouldVideoGenerateWithLtxApi],
+    [inputAudio, mode, shouldVideoGenerateWithLtxApi, videoModelSpecs],
   )
   
   const {
@@ -1309,12 +1736,42 @@ export function GenSpace() {
     imagePaths,
     error,
     reset,
-    cancel,
     resumeIfRunning,
+    cancel,
   } = useGeneration()
 
   // Locally installed LoRAs are only usable in local generation mode.
   const isLocalMode = !shouldVideoGenerateWithLtxApi
+  const localCaps = getLocalOfferingCapabilities(videoGenerationModelSpecsResponse)
+  // Retake/Extend always request RETAKE_EXTEND_MODELS (currently "pro" / 2.3 Pro),
+  // not the t2v/i2v picker in settings.model.
+  const apiCaps = getApiOfferingCapabilities(
+    videoGenerationModelSpecsResponse,
+    RETAKE_EXTEND_MODELS[0],
+  )
+  const canUseUserLoras = isLocalMode && Boolean(localCaps?.user_loras)
+  const multiKeyframeMaxCount =
+    localCaps?.multi_keyframe_max_count ?? LOCAL_MULTI_KEYFRAME_MAX_COUNT
+  const canUseIcLora = !forceApiGenerations && Boolean(localCaps?.ic_lora)
+  const canUseRetake = isLocalMode ? Boolean(localCaps?.retake) : Boolean(apiCaps?.retake)
+  const canUseExtend = isLocalMode ? Boolean(localCaps?.extend) : Boolean(apiCaps?.extend)
+  // Enhance itself is independent of the video-generation backend — the backend enhance
+  // endpoint only cares about the enhancer provider (local Gemma vs. Gemini), not whether video
+  // generation runs locally or via the LTX API. If no catalog LoRA is selected (e.g. because the
+  // LoRA picker is local-only), it just falls back to a generic rewrite. "retake"/"extend" have
+  // no prompt input, so they're excluded. Multi-keyframe uses the same video enhance path, driven
+  // by timeline stills (and optional prompt text).
+  const enhanceAvailableForMode = isEnhanceAvailableForMode(mode)
+  // The prompt enhancer can run the local Gemma text encoder OR Gemini's hosted API — this hook
+  // tracks which of those is actually available (not just which the user prefers) and picks
+  // whichever provider Enhance should use. Refetched whenever the user is in a mode the button
+  // could appear in, so downloading the checkpoint from Settings and coming back here picks it up.
+  const {
+    hasGeminiApiKey,
+    provider: enhanceProvider,
+    canToggleProvider: canToggleEnhanceProvider,
+    setProviderPreference: setEnhanceProviderPref,
+  } = usePromptEnhancerProvider(enhanceAvailableForMode)
   const isCustomIcLoraEnabled = useCustomIcLoraEnabled()
   const [localLoras, setLocalLoras] = useState<ApiSuccessOf<'listModels'>['models']>([])
   const [selectedLoras, setSelectedLoras] = useState<LoraSelection[]>([])
@@ -1330,7 +1787,12 @@ export function GenSpace() {
 
   // IC-LoRA mode: a downloadable curated IC-LoRA that resolves its own weights and builds
   // the control video server-side. When an IC-LoRA is selected, it supersedes canny/depth/custom.
-  const { advancedIcLoraControls } = useDevFlags().flags
+  const { enableMultipleKeyframesVideos, advancedIcLoraControls } = useDevFlags().flags
+  const canUseMultiKeyframe = canUseMultiKeyframeMode({
+    isLocalMode,
+    localCaps,
+    enableMultipleKeyframesVideos,
+  })
   // Values for the selected IC-LoRA's catalog controls, keyed by control id. Seeded from each
   // control's default on selection; the settings row renders + edits them generically.
   const [controlValues, setControlValues] = useState<Record<string, number | string>>({})
@@ -1411,6 +1873,11 @@ export function GenSpace() {
     return map
   }, [loraLibrary.items])
 
+  // Catalog id keyed by installed path — same cross-check as loraDisplayNames, so the LoRAPicker
+  // dropdown (list of already-installed files) can attach catalogId too, not just the "Browse
+  // LoRAs" modal flow. Without this, picking a catalog LoRA from this dropdown instead of the
+  // modal silently loses catalog awareness for the prompt enhancer.
+
   const {
     submitRetake,
     resetRetake,
@@ -1430,6 +1897,7 @@ export function GenSpace() {
     ready: false,
   })
   const [retakeResolutionKey, setRetakeResolutionKey] = useState('original')
+  const [retakeModel, setRetakeModel] = useState<RetakeExtendModel>('pro')
   const [retakePanelKey, setRetakePanelKey] = useState(0)
 
   const {
@@ -1451,6 +1919,7 @@ export function GenSpace() {
   const [extendDirection, setExtendDirection] = useState<ExtendDirection>('end')
   const [extendSeconds, setExtendSeconds] = useState<number>(DEFAULT_EXTEND_SECONDS)
   const [extendResolutionKey, setExtendResolutionKey] = useState('original')
+  const [extendModel, setExtendModel] = useState<RetakeExtendModel>('pro')
 
   const retakeResolutionOpts = useMemo(
     () => resolutionOptions(retakeInput.width, retakeInput.height),
@@ -1467,6 +1936,7 @@ export function GenSpace() {
   }>({ videoPath: null, duration: undefined })
   const extendSubmissionRef = useRef<{
     prompt: string
+    model: RetakeExtendModel
     input: { videoPath: string; direction: ExtendDirection; duration: number; videoDuration: number }
   } | null>(null)
   const [retakeInitial, setRetakeInitial] = useState<{
@@ -1594,20 +2064,37 @@ export function GenSpace() {
 
   useEffect(() => {
     if (!genSpaceRetakeSource) return
+    // Specs start null on remount (Project unmounts GenSpace off-tab). Don't drop an
+    // incoming timeline retake until we know whether the offering actually supports it.
+    if (isLoadingVideoGenerationModelSpecs) return
+    if (!canUseRetake) {
+      setGenSpaceRetakeSource(null)
+      return
+    }
     setMode('retake')
     setPrompt('')
     setActiveRetakeSource(genSpaceRetakeSource)
+    const sourceAsset = genSpaceRetakeSource.assetId
+      ? activeProject?.assets?.find((a) => a.id === genSpaceRetakeSource.assetId)
+      : undefined
+    setRetakeModel(retakeExtendModelFromPipeline(sourceAsset?.generationParams?.model))
     setRetakeInitial({
       videoPath: genSpaceRetakeSource.videoPath,
       duration: genSpaceRetakeSource.duration,
     })
     setRetakePanelKey((prev) => prev + 1)
     setGenSpaceRetakeSource(null)
-  }, [genSpaceRetakeSource, setGenSpaceRetakeSource])
+  }, [
+    genSpaceRetakeSource,
+    setGenSpaceRetakeSource,
+    activeProject?.assets,
+    canUseRetake,
+    isLoadingVideoGenerationModelSpecs,
+  ])
 
   useEffect(() => {
     if (!genSpaceIcLoraSource) return
-    if (forceApiGenerations) {
+    if (!canUseIcLora) {
       setGenSpaceIcLoraSource(null)
       return
     }
@@ -1623,21 +2110,64 @@ export function GenSpace() {
     setIcLoraCustomRef(null)
     setIcLoraPanelKey((prev) => prev + 1)
     setGenSpaceIcLoraSource(null)
-  }, [genSpaceIcLoraSource, forceApiGenerations, setGenSpaceIcLoraSource])
+  }, [genSpaceIcLoraSource, canUseIcLora, setGenSpaceIcLoraSource])
 
   useEffect(() => {
-    if (forceApiGenerations && mode === 'ic-lora') {
-      setMode('video')
-    }
-  }, [forceApiGenerations, mode])
+    if (isLoadingVideoGenerationModelSpecs) return
+    const fallbackMode = fallbackGenSpaceMode(mode, {
+      canUseMultiKeyframe,
+      canUseIcLora,
+      canUseRetake,
+      canUseExtend,
+    })
+    if (fallbackMode !== mode) setMode(fallbackMode)
+  }, [
+    canUseMultiKeyframe,
+    canUseIcLora,
+    canUseRetake,
+    canUseExtend,
+    mode,
+    isLoadingVideoGenerationModelSpecs,
+  ])
 
   useEffect(() => {
-    if (mode !== 'video' || videoModelSpecs.length === 0) return
+    if (!canUseUserLoras && selectedLoras.length > 0) setSelectedLoras([])
+  }, [canUseUserLoras, selectedLoras.length])
+
+  useEffect(() => {
+    const previous = previousTimelineSettingsRef.current
+    const next = { duration: settings.duration, fps: settings.fps }
+
+    if (previous.duration === next.duration && previous.fps === next.fps) return
+
+    setKeyframes((current) => current.length === 0
+      ? current
+      : retimeKeyframesForSettings(current, previous, next))
+    previousTimelineSettingsRef.current = next
+  }, [settings.duration, settings.fps])
+
+  useEffect(() => {
+    if (settings.duration == null) return
+    const lastFrame = lastFrameFromDuration(settings.duration, settings.fps)
+    setPlayheadFrame((frame) => Math.min(frame, lastFrame))
+  }, [settings.duration, settings.fps])
+
+  useEffect(() => {
+    if ((mode !== 'video' && mode !== 'multi-keyframe') || videoModelSpecs.length === 0) return
     setSettings((prev) => {
-      const next = sanitizeVideoSettings(prev)
+      const next = sanitizeVideoSettings(
+        prev,
+        mode === 'multi-keyframe' && prev.duration === null ? 'smallest_valid' : 'preserve',
+      )
       return areVideoGenerationSettingsEquivalent(prev, next) ? prev : next
     })
   }, [mode, sanitizeVideoSettings, videoModelSpecs.length])
+
+  useEffect(() => {
+    if (mode !== 'video' || settings.duration == null || !inputImage) {
+      setInputLastImage(null)
+    }
+  }, [mode, settings.duration, inputImage])
 
   useEffect(() => {
     if (retakeError) {
@@ -1658,9 +2188,7 @@ export function GenSpace() {
   }, [icLoraError])
 
   // Only show assets that were generated (have generationParams), not imported files
-  // Memoized: this `.filter()` built a fresh array every render, which was the
-  // input to filteredAssets -> assetCards, so it defeated those memos and made
-  // every prompt keystroke re-render the whole thumbnail gallery.
+  // Memoized (fork perf): a fresh filter array every render defeated the gallery memos.
   const assets = useMemo(
     () => (activeProject?.assets || []).filter(a => a.generationParams),
     [activeProject?.assets],
@@ -1670,23 +2198,56 @@ export function GenSpace() {
   // On mount: recover any generation that was still running when the frontend reloaded.
   const currentProjectIdRef = useRef(currentProjectId)
   currentProjectIdRef.current = currentProjectId
+
+  // Tell the background recovery watcher (App.tsx) that THIS mount has a live generation request
+  // of its own in flight for this project — it backs off for this project id so the two never
+  // race to import the same completion twice. Deliberately scoped to "actually generating", not
+  // just "mounted for this project": a mount that's only here to recover a marker left by an
+  // earlier mount (e.g. the user left mid-generation and came back before it finished) has
+  // nothing live of its own, and must NOT block the watcher — otherwise nothing ever revisits
+  // that marker again for as long as this mount stays open, even long after the generation
+  // backing it actually finishes. Also covers the "isGenerating just flipped false, completion
+  // effect below is still copying the result into project storage" window — the marker is only
+  // removed once that effect's own reset()/resetX() runs, so ownership must last at least that
+  // long too, or the watcher can import the same completion a second time.
+  const isAnyLocalGenerationInFlight = isGenerating || isRetaking || isExtending || isIcLoraGenerating
+    || !!videoPath || imagePaths.length > 0 || !!retakeResult || !!extendResult || !!icLoraResult
+  useEffect(() => {
+    if (!isAnyLocalGenerationInFlight) return
+    setActiveGenerationOwner(currentProjectId)
+    return () => setActiveGenerationOwner(null)
+  }, [currentProjectId, isAnyLocalGenerationInFlight])
+
   useEffect(() => {
     const saved = localStorage.getItem(GENERATION_RECOVERY_KEY)
     if (!saved) return
     let ctx: GenerationRecoveryContext
-    try { ctx = JSON.parse(saved) as GenerationRecoveryContext } catch { localStorage.removeItem(GENERATION_RECOVERY_KEY); return }
-    if (ctx.projectId !== currentProjectIdRef.current) { localStorage.removeItem(GENERATION_RECOVERY_KEY); return }
+    try { ctx = JSON.parse(saved) as GenerationRecoveryContext } catch { return }
+    if (!hasValidBaselineId(ctx)) return // legacy/corrupt marker — the watcher will drop it
+    // Belongs to a different project (e.g. the user started this generation in project A, then
+    // navigated Home and into project B — GenSpace remounts per project). Not ours to touch.
+    if (ctx.projectId !== currentProjectIdRef.current) return
+    // Enhance recovery is handled by its own effect (different state: isEnhancingPrompt, not
+    // isGenerating/videoPath/imagePath) — leave the marker for it to consume.
+    if (ctx.genType === 'enhance') return
 
-    resumeIfRunning().then(status => {
-      if (status === 'none') {
-        localStorage.removeItem(GENERATION_RECOVERY_KEY)
-        return
-      }
-      // Restore the inputs the completion effects read, so the recovered asset is
-      // persisted with the right prompt/mode/settings (incl. selected LoRAs). This
-      // runs for 'running' AND 'complete': a generation that finished during the
-      // unmount window still triggers the completion effect, which would otherwise
-      // import it with an empty prompt and default settings.
+    void (async () => {
+      const progress = await ApiClient.getGenerationProgress()
+      if (!progress.ok) return
+      // Same identity check as the background watcher (checkAndConsumeRecovery in
+      // lib/generation-recovery.ts): the handler that starts a generation loads its pipeline —
+      // which can take many seconds, worse for image models loading checkpoint shards — BEFORE
+      // it ever reports a new id, so a poll right after remounting can still be looking at
+      // whatever the single global progress slot held before this marker was even written.
+      if (progress.data.id === ctx.baselineId) return // unchanged since before we wrote this marker — not started reporting yet
+      if (progress.data.status !== 'running') return // already past 'running' (complete/error/etc) — that's the watcher's job to persist, not ours to restore UI for
+
+      const status = await resumeIfRunning()
+      if (status !== 'running') return // finished between our two checks — again, the watcher's job now
+
+      // Restore the inputs the completion effect reads, so the recovered asset is eventually
+      // persisted (once it finishes) with the right prompt/mode/settings (incl. selected LoRAs),
+      // not an empty prompt and default settings.
       setPrompt(ctx.prompt)
       setLastPrompt(ctx.prompt)
       // ic-lora/retake carry no settings: recover as a standalone video asset.
@@ -1694,10 +2255,16 @@ export function GenSpace() {
       if (!s) {
         setMode('video')
       } else {
-        setMode(ctx.genType === 'image' ? 'image' : 'video')
+        setMode(ctx.genType === 'image' ? 'image' : ctx.keyframes?.length ? 'multi-keyframe' : 'video')
         setInputImage(ctx.inputImageUrl ?? null)
+        setInputLastImage(ctx.inputLastImageUrl ?? null)
         setInputAudio(ctx.inputAudioUrl ?? null)
+        setKeyframes(fromPersistedKeyframes(ctx.keyframes ?? []))
         setSelectedLoras(s.loras ?? [])
+        // Restored stills already use this clip's frame grid (e.g. 10s last
+        // frame 240). Adopt before setSettings so the retime effect does not
+        // treat remount's default 5s as the previous clip and bunch them.
+        previousTimelineSettingsRef.current = { duration: s.duration, fps: s.fps }
         setSettings(prev => ({
           ...prev,
           model: s.model,
@@ -1708,12 +2275,26 @@ export function GenSpace() {
           aspectRatio: s.aspectRatio ?? prev.aspectRatio,
           imageResolution: s.imageResolution,
           variations: s.variations ?? prev.variations,
+          imageEditStrength: s.imageEditStrength ?? prev.imageEditStrength,
         }))
+        generateSubmissionRef.current = {
+          kind: ctx.genType === 'image' ? 'image' : 'video',
+          prompt: ctx.prompt,
+          settings: s,
+          modelLabel: ctx.modelLabel,
+          inputImageUrl: ctx.inputImageUrl ?? null,
+          inputLastImageUrl: ctx.inputLastImageUrl ?? null,
+          inputAudioUrl: ctx.inputAudioUrl ?? null,
+          keyframes: fromPersistedKeyframes(ctx.keyframes ?? []),
+        }
+        // The completion effect reads this ref (not settings/inputImage) to tag a
+        // recovered image asset as an edit — restore it so recovery matches the
+        // live handleGenerate() path.
+        if (ctx.genType === 'image' && ctx.inputImageUrl) {
+          lastImageEditRef.current = { source: ctx.inputImageUrl, strength: s.imageEditStrength ?? 0.6 }
+        }
       }
-      // Already finished: the completion effect imports it now (idempotently), so the
-      // marker has done its job. 'running' keeps the marker until polling completes.
-      if (status === 'complete') localStorage.removeItem(GENERATION_RECOVERY_KEY)
-    }).catch(() => { localStorage.removeItem(GENERATION_RECOVERY_KEY) })
+    })()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []) // mount only
 
@@ -1749,10 +2330,36 @@ export function GenSpace() {
     if (persistedVideoKeyRef.current === generationKey) return
     persistedVideoKeyRef.current = generationKey
 
-    const genMode = inputAudio
-      ? 'audio-to-video'
-      : inputImage ? 'image-to-video' : 'text-to-video'
-    const savedVideoSettings = sanitizeVideoSettings(settings)
+    const submission = generateSubmissionRef.current
+    if (submission?.kind !== 'video') {
+      logger.error('Video completed without a click-time submission; tagging from live picker state')
+    }
+    const usedPrompt = submission?.kind === 'video' ? submission.prompt : lastPrompt
+    const usedSettings: GenerationSettings = submission?.kind === 'video'
+      ? submission.settings
+      : {
+          model: settings.model as VideoGenerationPipeline,
+          duration: settings.duration,
+          videoResolution: settings.videoResolution,
+          fps: settings.fps,
+          audio: settings.audio,
+          cameraMotion: 'none',
+          aspectRatio: settings.aspectRatio,
+          imageResolution: settings.imageResolution,
+          imageAspectRatio: settings.aspectRatio ?? '16:9',
+          imageSteps: 4,
+          variations: settings.variations,
+          imageEditStrength: settings.imageEditStrength,
+        }
+    const usedImage = submission?.kind === 'video' ? submission.inputImageUrl : inputImage
+    const usedLastImage = submission?.kind === 'video' ? submission.inputLastImageUrl : inputLastImage
+    const usedAudio = submission?.kind === 'video' ? submission.inputAudioUrl : inputAudio
+    const usedKeyframes = submission?.kind === 'video' ? submission.keyframes : keyframes
+    const genMode = videoGenerationModeFromInputs({
+      keyframes: usedKeyframes,
+      audioUrl: usedAudio,
+      imageUrl: usedImage,
+    })
 
     ;(async () => {
       try {
@@ -1765,25 +2372,32 @@ export function GenSpace() {
           smallThumbnailPath: copied.smallThumbnailPath,
           width: copied.width,
           height: copied.height,
-          prompt: lastPrompt,
-          resolution: savedVideoSettings.videoResolution,
-          duration: savedVideoSettings.duration,
+          prompt: usedPrompt,
+          resolution: usedSettings.videoResolution,
+          duration: usedSettings.duration ?? undefined,
           renderMs,
           generationParams: {
-            mode: genMode as 'text-to-video' | 'image-to-video' | 'audio-to-video',
-            prompt: lastPrompt,
-            model: savedVideoSettings.model,
-            duration: savedVideoSettings.duration,
-            resolution: savedVideoSettings.videoResolution,
-            fps: savedVideoSettings.fps,
-            audio: savedVideoSettings.audio || false,
+            mode: genMode,
+            prompt: usedPrompt,
+            model: usedSettings.model,
+            modelLabel: (submission?.kind === 'video' ? submission.modelLabel : undefined)
+              ?? resolvePipelineDisplayName(videoModelSpecs, usedSettings.model)
+              ?? undefined,
+            duration: usedSettings.duration,
+            resolution: usedSettings.videoResolution,
+            fps: usedSettings.fps,
+            audio: usedSettings.audio || false,
             cameraMotion: 'none',
-            imageAspectRatio: savedVideoSettings.aspectRatio,
+            imageAspectRatio: usedSettings.aspectRatio,
             imageSteps: 4,
-            inputImageUrl: inputImage || undefined,
-            inputAudioUrl: inputAudio || undefined,
-            loras: isLocalMode && selectedLoras.length > 0
-              ? selectedLoras.map(l => ({ ...l, ref: toModelsDirRelativeRef(l.ref, appSettings.modelsDir) }))
+            inputImageUrl: usedImage || undefined,
+            inputLastImageUrl: usedLastImage || undefined,
+            inputAudioUrl: usedAudio || undefined,
+            keyframes: usedKeyframes && usedKeyframes.length > 0
+              ? toPersistedKeyframes(usedKeyframes)
+              : undefined,
+            loras: usedSettings.loras && usedSettings.loras.length > 0
+              ? usedSettings.loras.map(l => ({ ...l, ref: toModelsDirRelativeRef(l.ref, appSettings.modelsDir) }))
               : undefined,
           },
           takes: [{
@@ -1796,13 +2410,16 @@ export function GenSpace() {
           }],
           activeTakeIndex: 0,
         })
+        generateSubmissionRef.current = null
         reset()
+        const nextMode = modeAfterCompletedGeneration(genMode)
+        if (nextMode) setMode(nextMode)
       } catch (err) {
         persistedVideoKeyRef.current = null
         logger.error(`Failed to persist generated video asset: ${err}`)
       }
     })()
-  }, [videoPath, currentProjectId, isGenerating, sanitizeVideoSettings, settings, inputImage, inputAudio, lastPrompt, addAsset, reset, selectedLoras, isLocalMode, appSettings.modelsDir])
+  }, [videoPath, currentProjectId, isGenerating, settings, inputImage, inputLastImage, inputAudio, keyframes, lastPrompt, addAsset, reset, appSettings.modelsDir, videoModelSpecs, setMode])
 
   // "Continue as new shot": once the seeded continuation finishes, drop the
   // duplicate lead frame (a copy of the source's last frame the i2v conditioning
@@ -1860,6 +2477,18 @@ export function GenSpace() {
             height: copied.height,
             createdAt: Date.now(),
           })
+          // Takes don't carry their own model; bump the parent asset's pipeline label so a
+          // 2.5 retake of a 2.3 clip doesn't keep showing the source pipeline in preview.
+          // Only in API mode — local retakes don't select a MODEL and shouldn't overwrite.
+          if (!isLocalMode && sourceAsset.generationParams) {
+            updateAsset(currentProjectId, sourceAsset.id, {
+              generationParams: {
+                ...sourceAsset.generationParams,
+                model: submission.model,
+                modelLabel: resolvePipelineDisplayName(videoModelSpecs, submission.model) ?? undefined,
+              },
+            })
+          }
           if (activeRetakeSource.linkedClipIds?.length) {
             setPendingRetakeUpdate({
               assetId: sourceAsset.id,
@@ -1882,7 +2511,9 @@ export function GenSpace() {
           generationParams: {
             mode: 'retake',
             prompt: usedPrompt,
-            model: 'pro',
+            // Local mode hides the MODEL dropdown; don't persist the leftover API-mode
+            // selection (e.g. 'pro' / 'pro-2.5') as a confident pipeline label.
+            model: isLocalMode ? '' : submission.model,
             duration: usedInput.duration,
             resolution: '',
             fps: 24,
@@ -1909,7 +2540,65 @@ export function GenSpace() {
       setActiveRetakeSource(null)
       resetRetake()
     })()
-  }, [retakeResult, isRetaking, currentProjectId, activeProject?.assets, activeRetakeSource, addAsset, addTakeToAsset, setPendingRetakeUpdate, resetRetake])
+  }, [retakeResult, isRetaking, currentProjectId, activeProject?.assets, activeRetakeSource, addAsset, addTakeToAsset, updateAsset, setPendingRetakeUpdate, resetRetake, isLocalMode])
+
+  // When extend completes, save the longer video as a new asset.
+  useEffect(() => {
+    if (!extendResult || !currentProjectId || isExtending) return
+    const submission = extendSubmissionRef.current
+    if (!submission) return
+    extendSubmissionRef.current = null
+    localStorage.removeItem(GENERATION_RECOVERY_KEY)
+
+    ;(async () => {
+      const usedPrompt = submission.prompt
+      const usedInput = submission.input
+      const copied = await addVisualAssetToProject(extendResult.videoPath, currentProjectId, 'video')
+      if (!copied) {
+        logger.error('Could not persist extend result to project storage')
+        setLocalError(createLocalGenerationError('Failed to save extend output to project storage.'))
+        resetExtend()
+        return
+      }
+
+      addAsset(currentProjectId, {
+        type: 'video',
+        path: copied.path,
+        bigThumbnailPath: copied.bigThumbnailPath,
+        smallThumbnailPath: copied.smallThumbnailPath,
+        width: copied.width,
+        height: copied.height,
+        prompt: usedPrompt,
+        resolution: '',
+        duration: usedInput.videoDuration + usedInput.duration,
+        generationParams: {
+          mode: 'extend',
+          prompt: usedPrompt,
+          // Local mode hides the MODEL dropdown; don't persist a leftover API selection.
+          model: isLocalMode ? '' : submission.model,
+          duration: usedInput.videoDuration + usedInput.duration,
+          resolution: '',
+          fps: 24,
+          audio: true,
+          cameraMotion: 'none',
+          extendVideoPath: copied.path,
+          extendDuration: usedInput.duration,
+          extendDirection: usedInput.direction,
+        },
+        takes: [{
+          path: copied.path,
+          bigThumbnailPath: copied.bigThumbnailPath,
+          smallThumbnailPath: copied.smallThumbnailPath,
+          width: copied.width,
+          height: copied.height,
+          createdAt: Date.now(),
+        }],
+        activeTakeIndex: 0,
+      })
+      setMode('video')
+      resetExtend()
+    })()
+  }, [extendResult, isExtending, currentProjectId, addAsset, resetExtend, isLocalMode])
 
   // When extend completes, save the longer video as a new asset.
   useEffect(() => {
@@ -2058,7 +2747,26 @@ export function GenSpace() {
     if (imagePaths.length === 0 || !currentProjectId || isGenerating) return
     if (addingImagesRef.current) return
     addingImagesRef.current = true
-    const genMode = 'text-to-image'
+    const submission = generateSubmissionRef.current
+    if (submission?.kind !== 'image') {
+      logger.error('Image completed without a click-time submission; tagging from live picker state')
+    }
+    const usedPrompt = submission?.kind === 'image' ? submission.prompt : lastPrompt
+    const usedSettings: GenerationSettings = submission?.kind === 'image'
+      ? submission.settings
+      : {
+          model: 'fast',
+          duration: 5,
+          videoResolution: settings.videoResolution,
+          fps: 24,
+          audio: false,
+          cameraMotion: 'none',
+          imageResolution: settings.imageResolution,
+          imageAspectRatio: settings.aspectRatio ?? '16:9',
+          imageSteps: 4,
+        }
+    const editContext = lastImageEditRef.current
+    const genMode = editContext ? 'image-edit' : 'text-to-image'
 
     ;(async () => {
       try {
@@ -2080,19 +2788,20 @@ export function GenSpace() {
             smallThumbnailPath: copied.smallThumbnailPath,
             width: copied.width,
             height: copied.height,
-            prompt: lastPrompt,
-            resolution: settings.imageResolution,
+            prompt: usedPrompt,
+            resolution: usedSettings.imageResolution,
             generationParams: {
               mode: genMode,
-              prompt: lastPrompt,
+              prompt: usedPrompt,
               model: 'fast',
               duration: 5,
-              resolution: settings.imageResolution,
+              resolution: usedSettings.imageResolution,
               fps: 24,
               audio: false,
               cameraMotion: 'none',
-              imageAspectRatio: settings.aspectRatio,
-              imageSteps: 4,
+              imageAspectRatio: usedSettings.imageAspectRatio || usedSettings.aspectRatio,
+              imageSteps: editContext ? IMAGE_STEPS_EDIT : IMAGE_STEPS_GENERATE,
+              ...(editContext ? { inputImageUrl: editContext.source, imageEditStrength: editContext.strength } : {}),
             },
             takes: [{
               path: copied.path,
@@ -2105,6 +2814,7 @@ export function GenSpace() {
             activeTakeIndex: 0,
           })
         }
+        generateSubmissionRef.current = null
         reset()
       } catch (err) {
         logger.error(`Failed to persist generated image asset(s): ${err}`)
@@ -2114,14 +2824,290 @@ export function GenSpace() {
     })()
   }, [imagePaths, currentProjectId, isGenerating, addAsset, lastPrompt, settings, reset])
   
-  // Single writer for the recovery marker so the per-mode branches below can't drift.
-  const writeRecoveryContext = (ctx: Omit<GenerationRecoveryContext, 'projectId'>) => {
+  // Single writer for the recovery marker so the per-mode branches below can't drift. Captures
+  // whatever generation id is active RIGHT NOW, before this generation starts, as baselineId —
+  // see GenerationRecoveryContext for why: the handler that starts a generation loads its
+  // pipeline (can take many seconds) before it ever reports a new id, so without a baseline
+  // captured up front, a poll can't tell "my generation hasn't started reporting yet" apart from
+  // "a stale, unrelated result predates this marker entirely".
+  const writeRecoveryContext = async (
+    ctx: Omit<GenerationRecoveryContext, 'projectId' | 'baselineId' | 'canCancel'>,
+  ) => {
     if (!currentProjectId) return
+    const before = await ApiClient.getGenerationProgress()
+    if (!before.ok) {
+      // Fail closed: a failed fetch is indistinguishable from a legitimate idle baseline
+      // (both would otherwise write baselineId: null), but if a prior generation is still
+      // sticky-complete with a real id, that null baseline lets the very first recovery tick
+      // mistake the old generation's result for this one's. No marker means this generation
+      // just isn't recoverable if the user navigates away mid-flight — safer than misimporting.
+      logger.error(`Skipping recovery marker: failed to fetch baseline generation id (${before.error})`)
+      return
+    }
+    const baselineId = before.data.id ?? null
+    const canCancel = ctx.genType === 'enhance'
+      ? false
+      : mode === 'ic-lora'
+        ? true
+        : canCancelLocalJob(
+          ctx.genType === 'image' ? 'image' : 'video',
+          shouldVideoGenerateWithLtxApi,
+          shouldImageGenerateWithFalApi,
+        )
+    logger.info(`Writing recovery marker for ${currentProjectId} (genType=${ctx.genType ?? 'video'}, baselineId=${baselineId}, canCancel=${canCancel})`)
     localStorage.setItem(
       GENERATION_RECOVERY_KEY,
-      JSON.stringify({ projectId: currentProjectId, ...ctx } satisfies GenerationRecoveryContext),
+      JSON.stringify({
+        projectId: currentProjectId,
+        baselineId,
+        ...ctx,
+        canCancel,
+      } satisfies GenerationRecoveryContext),
     )
   }
+
+  // Catalog-aware prompt enhancer: rewrites `prompt` in place using either the local Gemma text
+  // encoder or, if available, Gemini's hosted API — informed by whichever catalog LoRA(s)/
+  // IC-LoRA are currently selected (or a generic rewrite if none are). Regular-LoRA and IC-LoRA
+  // selection are mutually exclusive UI surfaces, so at most one of loraCatalogIds/icLoraId is
+  // ever sent.
+  // Only one generation can run at a time across the whole app — this catches the case where
+  // it's a DIFFERENT project's, which this instance's own isGenerating/isRetaking/etc (all local
+  // state) can't see. Without it, Enhance/Generate stayed clickable and the request just 409'd.
+  const {
+    isRunning: isOtherGenerationRunning,
+  } = useGlobalGenerationLock()
+  const isGenerationInProgressForEnhance = mode === 'ic-lora' ? isIcLoraGenerating : isGenerating
+  const hasEnhanceText = prompt.trim().length > 0
+  const hasEnhanceImage = mode === 'multi-keyframe'
+    ? keyframes.length > 0
+    : (mode === 'video' || mode === 'image') && !!inputImage
+  const canEnhancePrompt = enhanceAvailableForMode
+    && (enhanceProvider === 'api' ? hasGeminiApiKey : true)
+    && (hasEnhanceText || hasEnhanceImage) && !isGenerationInProgressForEnhance && !isOtherGenerationRunning
+  const enhanceBlockedByMissingGeminiKey = isEnhanceBlockedByMissingGeminiKey({
+    enhanceAvailableForMode,
+    enhanceProvider,
+    hasGeminiApiKey,
+    hasEnhanceInput: hasEnhanceText || hasEnhanceImage,
+    isGenerationInProgressForEnhance,
+    isOtherGenerationRunning,
+  })
+  const canUndoPrompt = historyIndex > 0
+  const canRedoPrompt = historyIndex >= 0 && historyIndex < promptHistory.length - 1
+
+  // Appends [sourcePrompt (if not already the top of the stack), enhancedPrompt] and truncates
+  // any redo entries beyond the current position first — the same rule any undo/redo stack
+  // uses: taking a new action after an undo discards the redone-away future.
+  const applyEnhanceResult = useCallback((sourcePrompt: string, enhancedPrompt: string) => {
+    const truncated = promptHistory.slice(0, historyIndex + 1)
+    const withSource = truncated.length > 0 && truncated[truncated.length - 1] === sourcePrompt
+      ? truncated
+      : [...truncated, sourcePrompt]
+    const nextHistory = [...withSource, enhancedPrompt]
+    setPromptHistory(nextHistory)
+    setHistoryIndex(nextHistory.length - 1)
+    setPrompt(enhancedPrompt)
+  }, [promptHistory, historyIndex])
+
+  const runEnhance = useCallback(async (sourcePrompt: string) => {
+    if (isEnhancingPrompt) return
+    setIsEnhancingPrompt(true)
+    setEnhancePromptError(null)
+
+    // Recovery marker so a reload mid-enhance can reconnect to the still-running backend call
+    // (see the mount effect below) instead of silently losing the result.
+    await writeRecoveryContext({ prompt: sourcePrompt, genType: 'enhance' })
+
+    const loraCatalogIds = mode === 'video'
+      ? (selectedLoras ?? []).map(l => l.catalogId).filter((id): id is string => !!id)
+      : []
+    // The "bring your own IC-LoRA" custom flow has no catalog entry — canny/depth conditioning
+    // still get a dedicated (non-catalog) system prompt; a fully custom LoRA with neither gets
+    // the generic fallback, same as no selection at all.
+    const conditioningType = mode === 'ic-lora' && !selectedIcLoraId && (icLoraCondType === 'canny' || icLoraCondType === 'depth')
+      ? icLoraCondType
+      : undefined
+
+    // inputImage is the image-edit/i2v reference and isn't cleared on mode change — only
+    // meaningful in image mode or video's i2v; IC-LoRA's own reference is always a driving
+    // video (icLoraInput.videoPath), never this. Multi-keyframe uses the timeline stills
+    // instead, so leftover first/last-frame chips must not leak into that enhance call.
+    const enhanceKeyframes = mode === 'multi-keyframe'
+      ? enhanceKeyframesPayload(keyframes)
+      : undefined
+    const imagePathForEnhance = mode === 'multi-keyframe'
+      ? undefined
+      : (mode === 'image' || mode === 'video' ? inputImage ?? undefined : undefined)
+    const lastImagePathForEnhance = mode === 'multi-keyframe'
+      ? undefined
+      : (mode === 'video' && imagePathForEnhance
+        ? inputLastImage ?? undefined
+        : undefined)
+
+    // Local-provider Enhance runs the same GIL-holding Gemma text encoder as local video/image
+    // generation (see electron/python-backend.ts) — needs the same liveness-kill suppression.
+    const result = await withGenerationActive(() => ApiClient.enhancePrompt({
+      prompt: sourcePrompt,
+      loraCatalogIds,
+      icLoraId: mode === 'ic-lora' ? selectedIcLoraId ?? undefined : undefined,
+      conditioningType,
+      imagePath: imagePathForEnhance,
+      lastImagePath: lastImagePathForEnhance,
+      keyframes: enhanceKeyframes,
+      ...(mode === 'multi-keyframe'
+        ? {
+            duration: settings.duration ?? undefined,
+            fps: settings.fps,
+          }
+        : {}),
+      provider: enhanceProvider,
+      mediaType: mode === 'image' ? 'image' : 'video',
+    }))
+
+    setIsEnhancingPrompt(false)
+    if (!result.ok) {
+      if (result.error.code === 'GEMINI_INVALID_API_KEY' || result.error.code === 'GEMINI_API_KEY_MISSING') {
+        window.dispatchEvent(new CustomEvent('open-settings', {
+          detail: GEMINI_KEY_REQUIRED_SETTINGS_DETAIL,
+        }))
+      }
+      // Don't clear the marker here: this "failure" can just be our own fetch getting cut by a
+      // refresh that's already in progress (backendFetch throws, api-client.ts reports it as a
+      // synthetic NETWORK_ERROR) — the backend enhance call itself is a plain in-process Python
+      // call, unaffected by the client's connection dying, and keeps running for real. Clearing
+      // unconditionally here wiped the marker for a generation that was still active, leaving
+      // nothing to reconnect to after the reload. A genuine failure still gets cleaned up once
+      // the mount-recovery effect below actually confirms a non-running terminal state.
+      logger.info(`Enhance request failed (${result.error.code}), leaving recovery marker for reconciliation`)
+      setEnhancePromptError(result.error.message)
+      return
+    }
+    logger.info('Enhance request succeeded, clearing recovery marker')
+    localStorage.removeItem(GENERATION_RECOVERY_KEY)
+    applyEnhanceResult(sourcePrompt, result.data.enhancedPrompt)
+  }, [isEnhancingPrompt, mode, selectedLoras, selectedIcLoraId, icLoraCondType, inputImage, inputLastImage, keyframes, settings.duration, settings.fps, enhanceProvider, applyEnhanceResult, writeRecoveryContext])
+
+  const handleEnhanceProviderChange = useCallback((provider: EnhanceProvider) => {
+    setEnhanceProviderPref(provider)
+    if (provider === 'api' && !hasGeminiApiKey) {
+      window.dispatchEvent(new CustomEvent('open-settings', {
+        detail: GEMINI_KEY_REQUIRED_SETTINGS_DETAIL,
+      }))
+    }
+  }, [setEnhanceProviderPref, hasGeminiApiKey])
+
+  const handleEnhancePrompt = useCallback(() => {
+    if (enhanceBlockedByMissingGeminiKey) {
+      window.dispatchEvent(new CustomEvent('open-settings', {
+        detail: GEMINI_KEY_REQUIRED_SETTINGS_DETAIL,
+      }))
+      return
+    }
+    if (!canEnhancePrompt) return
+    void runEnhance(prompt)
+  }, [enhanceBlockedByMissingGeminiKey, canEnhancePrompt, prompt, runEnhance])
+
+  const handleUndoPrompt = useCallback(() => {
+    if (!canUndoPrompt) return
+    const newIndex = historyIndex - 1
+    setHistoryIndex(newIndex)
+    setPrompt(promptHistory[newIndex])
+  }, [canUndoPrompt, historyIndex, promptHistory])
+
+  const handleRedoPrompt = useCallback(() => {
+    if (!canRedoPrompt) return
+    const newIndex = historyIndex + 1
+    setHistoryIndex(newIndex)
+    setPrompt(promptHistory[newIndex])
+  }, [canRedoPrompt, historyIndex, promptHistory])
+
+
+
+
+
+  // On mount: reconnect to an enhance that was still running when the frontend reloaded.
+  // Separate from the video/image recovery effect above (different state: isEnhancingPrompt,
+  // not isGenerating/videoPath/imagePath) — that effect already skips genType === 'enhance'
+  // and leaves the marker for this one.
+  useEffect(() => {
+    const saved = localStorage.getItem(GENERATION_RECOVERY_KEY)
+    if (!saved) return
+    let ctx: GenerationRecoveryContext
+    try { ctx = JSON.parse(saved) as GenerationRecoveryContext } catch { return }
+    if (ctx.genType !== 'enhance') return
+    if (!hasValidBaselineId(ctx)) {
+      logger.warn(`Enhance recovery marker for ${ctx.projectId} has an invalid baselineId — leaving as-is`)
+      return // legacy/corrupt marker — nothing to recover
+    }
+    // Same project-mismatch case as the generation-recovery effect above: belongs to a
+    // different (still open elsewhere) project, not stale — leave it for that project's mount.
+    if (ctx.projectId !== currentProjectIdRef.current) {
+      logger.info(`Enhance recovery marker belongs to ${ctx.projectId}, this mount is ${currentProjectIdRef.current} — leaving it`)
+      return
+    }
+
+    logger.info(`Reconnecting to in-flight enhance for ${ctx.projectId} (baselineId=${ctx.baselineId})`)
+    setIsEnhancingPrompt(true)
+    let cancelled = false
+    const poll = async () => {
+      if (cancelled) return
+      const result = await ApiClient.getGenerationProgress()
+      if (cancelled) return
+      if (!result.ok) {
+        setTimeout(poll, 2000)
+        return
+      }
+
+      // The server's own "nothing running" signal: no reservation, no active generation. If the
+      // marker was written but the backend never actually started a matching generation (e.g.
+      // reload raced the request, or the backend restarted before picking it up), this is what
+      // proves it — no need to guess from id comparisons.
+      if (result.data.status === 'idle') {
+        logger.warn(`Enhance recovery for ${ctx.projectId}: server reports idle, no generation ever started — dropping stale marker`)
+        localStorage.removeItem(GENERATION_RECOVERY_KEY)
+        setIsEnhancingPrompt(false)
+        return
+      }
+
+      const observedId = result.data.id
+
+      // Same identity confirmation as checkAndConsumeRecovery (lib/generation-recovery.ts): the
+      // enhance endpoint's own pipeline/provider setup can take a moment before it ever reports
+      // a new id, so an unconfirmed poll can still be looking at whatever the single global
+      // progress slot held before this marker was even written — trusting that blindly can
+      // misapply a stale, unrelated result (even a video path) as an "enhanced prompt".
+      if (ctx.generationId == null) {
+        if (observedId === ctx.baselineId) {
+          setTimeout(poll, 2000)
+          return
+        }
+        ctx = { ...ctx, generationId: observedId ?? undefined }
+        localStorage.setItem(GENERATION_RECOVERY_KEY, JSON.stringify(ctx))
+      } else if (observedId !== ctx.generationId) {
+        // A different generation superseded ours before we ever saw it finish.
+        logger.warn(`Enhance recovery: id changed from ${ctx.generationId} to ${observedId} before we saw it finish — dropping marker`)
+        localStorage.removeItem(GENERATION_RECOVERY_KEY)
+        setIsEnhancingPrompt(false)
+        return
+      }
+
+      if (result.data.status === 'running') {
+        setTimeout(poll, 2000)
+        return
+      }
+
+      logger.info(`Enhance recovery: generation ${ctx.generationId} settled with status=${result.data.status}, clearing marker`)
+      localStorage.removeItem(GENERATION_RECOVERY_KEY)
+      setIsEnhancingPrompt(false)
+      if (result.data.status === 'complete' && typeof result.data.result === 'string') {
+        applyEnhanceResult(ctx.prompt, result.data.result)
+      }
+    }
+    void poll()
+    return () => { cancelled = true }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []) // mount only
 
   const handleGenerate = async () => {
     if (mode === 'ic-lora') {
@@ -2138,7 +3124,7 @@ export function GenSpace() {
             conditioningStrength: icLoraStrength,
           },
         }
-        writeRecoveryContext({ prompt })
+        await writeRecoveryContext({ prompt })
         await submitIcLora({
           videoPath: '',
           conditioningType: 'custom',
@@ -2183,7 +3169,7 @@ export function GenSpace() {
           customLoraRef: isCustomIcLora ? icLoraCustomRef ?? undefined : undefined,
         },
       }
-      writeRecoveryContext({ prompt })
+      await writeRecoveryContext({ prompt })
       await submitIcLora({
         videoPath: icLoraInput.videoPath,
         conditioningType: icLoraCondType,
@@ -2206,6 +3192,7 @@ export function GenSpace() {
       if (!retakeInput.videoPath || retakeInput.duration < 2) return
       retakeSubmissionRef.current = {
         prompt,
+        model: retakeModel,
         input: {
           videoPath: retakeInput.videoPath,
           startTime: retakeInput.startTime,
@@ -2213,7 +3200,7 @@ export function GenSpace() {
           videoDuration: retakeInput.videoDuration,
         },
       }
-      writeRecoveryContext({ prompt })
+      await writeRecoveryContext({ prompt, model: retakeModel })
       await submitRetake({
         videoPath: retakeInput.videoPath,
         startTime: retakeInput.startTime,
@@ -2221,6 +3208,7 @@ export function GenSpace() {
         prompt,
         mode: 'replace_audio_and_video',
         resolution: resolveResolution(retakeResolutionOpts, retakeResolutionKey),
+        model: retakeModel,
       })
       return
     }
@@ -2229,6 +3217,7 @@ export function GenSpace() {
       if (!extendInput.videoPath || !extendInput.ready) return
       extendSubmissionRef.current = {
         prompt,
+        model: extendModel,
         input: {
           videoPath: extendInput.videoPath,
           direction: extendDirection,
@@ -2236,17 +3225,14 @@ export function GenSpace() {
           videoDuration: extendInput.videoDuration,
         },
       }
-      if (currentProjectId) {
-        localStorage.setItem(GENERATION_RECOVERY_KEY, JSON.stringify({
-          projectId: currentProjectId, prompt,
-        } satisfies GenerationRecoveryContext))
-      }
+      await writeRecoveryContext({ prompt, model: extendModel })
       await submitExtend({
         videoPath: extendInput.videoPath,
         duration: extendSeconds,
         prompt,
         mode: extendDirection,
         resolution: resolveResolution(extendResolutionOpts, extendResolutionKey),
+        model: extendModel,
       })
       return
     }
@@ -2257,48 +3243,83 @@ export function GenSpace() {
     setLastPrompt(prompt)
 
     if (mode === 'image') {
-      const imageSettings = {
-        model: 'fast' as 'fast' | 'pro',
+      const editSource = inputImage || null
+      lastImageEditRef.current = editSource
+        ? { source: editSource, strength: settings.imageEditStrength ?? 0.6 }
+        : null
+      const imageSettings: GenerationSettings = {
+        model: 'fast',
         duration: 5,
         videoResolution: settings.videoResolution,
         fps: 24,
         audio: false,
         cameraMotion: 'none',
         imageResolution: settings.imageResolution,
-        imageAspectRatio: settings.aspectRatio,
-        // Krea 2 Turbo needs 8 steps; Z-Image Turbo is fine at 4 (fork).
-        imageSteps: settings.imageModel === 'krea-2-turbo' ? 8 : 4,
+        imageAspectRatio: settings.aspectRatio ?? '16:9',
+        // FORK: Krea 2 Turbo needs 8 steps; Z-Image is fine at 4. Editing uses IMAGE_STEPS_EDIT.
+        imageSteps: editSource ? IMAGE_STEPS_EDIT : (settings.imageModel === 'krea-2-turbo' ? 8 : IMAGE_STEPS_GENERATE),
         imageModel: settings.imageModel as 'z-image-turbo' | 'krea-2-turbo',
         variations: settings.variations,
+        imageEditStrength: settings.imageEditStrength,
       }
-      writeRecoveryContext({ prompt, settings: imageSettings, genType: 'image' })
-      generateImage(prompt, imageSettings)
+      const modelLabel = resolvePipelineDisplayName(videoModelSpecs, imageSettings.model) ?? undefined
+      generateSubmissionRef.current = {
+        kind: 'image',
+        prompt,
+        settings: imageSettings,
+        modelLabel,
+        inputImageUrl: editSource,
+        inputLastImageUrl: null,
+        inputAudioUrl: null,
+      }
+      await writeRecoveryContext({
+        prompt,
+        settings: imageSettings,
+        modelLabel,
+        genType: 'image',
+        inputImageUrl: editSource ?? undefined,
+      })
+      generateImage(prompt, imageSettings, editSource)
     } else {
       // Generate video (t2v if no image/audio, i2v if image, a2v if audio)
-      const imagePath = inputImage || null
-      const audioPath = inputAudio || null
+      const imagePath = mode === 'multi-keyframe' ? null : inputImage || null
+      const audioPath = genSpaceUsesAudioInput(mode) ? inputAudio || null : null
       const videoSettings = sanitizeVideoSettings(settings)
-      const genSettings = {
-          model: videoSettings.model as 'fast' | 'pro',
-          duration: videoSettings.duration,
-          videoResolution: videoSettings.videoResolution,
-          fps: videoSettings.fps,
-          audio: videoSettings.audio || false,
+      if (!videoSettings) return
+      const lastImagePath = imagePath && videoSettings.duration != null ? inputLastImage : null
+      const genSettings: GenerationSettings = {
+          ...videoSettings,
+          model: videoSettings.model as VideoGenerationPipeline,
+          imageModel: settings.imageModel as 'z-image-turbo' | 'krea-2-turbo',
           cameraMotion: 'none',
-          aspectRatio: videoSettings.aspectRatio,
-          imageResolution: videoSettings.imageResolution,
-          imageAspectRatio: videoSettings.aspectRatio,
+          imageAspectRatio: videoSettings.aspectRatio ?? '16:9',
           imageSteps: 4,
           // Local LoRA refs are filesystem paths the cloud API can't resolve.
-          loras: isLocalMode && selectedLoras.length > 0 ? selectedLoras : undefined,
+          loras: mode !== 'multi-keyframe' && canUseUserLoras && selectedLoras.length > 0
+            ? selectedLoras
+            : undefined,
       }
-      writeRecoveryContext({
+      const modelLabel = resolvePipelineDisplayName(videoModelSpecs, genSettings.model) ?? undefined
+      generateSubmissionRef.current = {
+        kind: 'video',
         prompt,
         settings: genSettings,
+        modelLabel,
+        inputImageUrl: imagePath,
+        inputLastImageUrl: lastImagePath,
+        inputAudioUrl: audioPath,
+        keyframes: mode === 'multi-keyframe' ? keyframes : undefined,
+      }
+      await writeRecoveryContext({
+        prompt,
+        settings: genSettings,
+        modelLabel,
         inputImageUrl: imagePath ?? undefined,
+        inputLastImageUrl: lastImagePath ?? undefined,
         inputAudioUrl: audioPath ?? undefined,
+        keyframes: mode === 'multi-keyframe' ? toPersistedKeyframes(keyframes) : undefined,
       })
-      generate(prompt, imagePath, genSettings, audioPath)
+      generate(prompt, imagePath, genSettings, audioPath, lastImagePath, { mode, keyframes })
     }
   }
   
@@ -2362,11 +3383,19 @@ export function GenSpace() {
     )
   }, [sanitizeVideoSettings, loraLibrary.items, appSettings.modelsDir])
 
+  const handleEditImage = (imageAsset: Asset) => {
+    setMode('image')
+    setInputImage(imageAsset.path)
+    setPrompt((prev) => (prev.trim() ? prev : imageAsset.prompt || ''))
+  }
+
   const handleRetake = useCallback((videoAsset: Asset) => {
+    if (!canUseRetake) return
     setMode('retake')
     setPrompt('')
     setActiveRetakeSource(null)
     setRetakeResolutionKey('original')
+    setRetakeModel(retakeExtendModelFromPipeline(videoAsset.generationParams?.model))
     setRetakeInitial({
       videoPath: videoAsset.path,
       duration: videoAsset.duration,
@@ -2375,17 +3404,19 @@ export function GenSpace() {
   }, [])
 
   const handleExtend = useCallback((videoAsset: Asset) => {
+    if (!canUseExtend) return
     setMode('extend')
     setPrompt('')
     setExtendDirection('end')
     setExtendSeconds(DEFAULT_EXTEND_SECONDS)
     setExtendResolutionKey('original')
+    setExtendModel(retakeExtendModelFromPipeline(videoAsset.generationParams?.model))
     setExtendInitial({
       videoPath: videoAsset.path,
       duration: videoAsset.duration,
     })
     setExtendPanelKey((prev) => prev + 1)
-  }, [])
+  }, [canUseExtend])
 
   // "Continue as new shot": extract the clip's last frame, seed a fresh i2v gen
   // with it, and match the source's geometry/fps. The user tweaks the prompt and
@@ -2413,34 +3444,42 @@ export function GenSpace() {
   }, [])
 
   const handleIcLora = useCallback((videoAsset: Asset) => {
-    if (forceApiGenerations) return
+    if (!canUseIcLora) return
     setMode('ic-lora')
     setPrompt('')
     setActiveIcLoraSource(null)
     setIcLoraInitial({ videoPath: videoAsset.path })
     setIcLoraPanelKey((prev) => prev + 1)
-  }, [forceApiGenerations])
+  }, [forceApiGenerations, canUseIcLora])
 
   const isRetakeMode = mode === 'retake'
   const isExtendMode = mode === 'extend'
   const isIcLoraMode = mode === 'ic-lora'
-  const hasCompatibleVideoSettings = mode !== 'video' || (
+  const hasCompatibleVideoSettings = (mode !== 'video' && mode !== 'multi-keyframe') || (
     !isLoadingVideoGenerationModelSpecs
     && videoModelSpecs.length > 0
     && resolveVideoGenerationOptions({
       settings,
       modelSpecs: videoModelSpecs,
-      hasAudio: Boolean(inputAudio),
+      hasAudio: genSpaceUsesAudioInput(mode) && Boolean(inputAudio),
+      minimumDuration: shouldVideoGenerateWithLtxApi ? GENSPACE_MIN_SELECTABLE_DURATION_S : undefined,
     }).hasCompatibleOptions
   )
-  const canSubmit = isRetakeMode
-    ? retakeInput.ready && !!retakeInput.videoPath && !isRetaking
+  // One global backend slot: Stop / Generate-disable must follow the in-flight job, not the
+  // GenSpace mode tab. Retake/extend/IC-LoRA live in different hooks than video/image.
+  // After a UI refresh those hooks remount at false; the same progress poll that disables
+  // Generate (isOtherGenerationRunning) is the SSOT for "slot busy" / Stop.
+  const slotBusyLocally = isGenerating || isRetaking || isExtending || isIcLoraGenerating
+  const canSubmit = !isOtherGenerationRunning && !slotBusyLocally && (isRetakeMode
+    ? retakeInput.ready && !!retakeInput.videoPath
     : isExtendMode
-      ? extendInput.ready && !!extendInput.videoPath && !isExtending
+      ? extendInput.ready && !!extendInput.videoPath
       : isIcLoraMode
-        ? (!!prompt.trim() || promptOptional) && icLoraInput.ready && !!icLoraInput.videoPath && !isIcLoraGenerating
+        ? (!!prompt.trim() || promptOptional) && icLoraInput.ready && !!icLoraInput.videoPath
           && (isCatalogIcLora || icLoraCondType !== 'custom' || !!icLoraCustomRef)
-        : !!prompt.trim() && hasCompatibleVideoSettings
+        : !!prompt.trim()
+          && (mode !== 'multi-keyframe' || keyframes.length >= 1)
+          && hasCompatibleVideoSettings)
   const promptButtonLabel = isRetakeMode ? 'Retake' : isExtendMode ? 'Extend' : isIcLoraMode ? 'Generate' : 'Generate'
   const promptButtonIcon = isRetakeMode
     ? <Scissors className="h-3.5 w-3.5" />
@@ -2486,6 +3525,7 @@ export function GenSpace() {
       onDragStart={handleDragStart}
       onCreateVideo={handleCreateVideo}
       onRegenerate={handleRegenerate}
+      onEditImage={handleEditImage}
       onRetake={handleRetake}
       onExtend={handleExtend}
       onContinue={handleContinue}
@@ -2514,17 +3554,12 @@ export function GenSpace() {
     if (canGoNext) setSelectedAsset(filteredAssets[selectedIndex + 1])
   }, [canGoNext, filteredAssets, selectedIndex])
 
-  // Keyboard navigation for the preview modal
   useEffect(() => {
     if (!selectedAsset) return
-    const handleKey = (e: KeyboardEvent) => {
-      if (e.key === 'ArrowLeft') { e.preventDefault(); goToPrev() }
-      else if (e.key === 'ArrowRight') { e.preventDefault(); goToNext() }
-      else if (e.key === 'Escape') setSelectedAsset(null)
+    if (!filteredAssets.some(asset => asset.id === selectedAsset.id)) {
+      setSelectedAsset(null)
     }
-    window.addEventListener('keydown', handleKey)
-    return () => window.removeEventListener('keydown', handleKey)
-  }, [selectedAsset, goToPrev, goToNext])
+  }, [filteredAssets, selectedAsset])
 
   // Shared IC-LoRA control props — consumed by the bottom-row settings (PromptBar) and the
   // advanced side panel beside the prompt.
@@ -2603,7 +3638,7 @@ export function GenSpace() {
         </div>
       )}
 
-      {/* Assets area — full width, no background, above the prompt bar */}
+      {/* Assets area â€” full width, no background, above the prompt bar */}
       {/* Kept mounted even with no assets so the Browse LoRAs / Favorites / size toolbar survives the empty state. */}
       {isLibraryMode && (
         <div className="absolute inset-x-0 top-0 bottom-[160px] flex flex-col px-4 pt-4">
@@ -2738,7 +3773,7 @@ export function GenSpace() {
             </div>
           </div>
 
-          {/* Assets grid — fills remaining space, scrollable */}
+          {/* Assets grid â€” fills remaining space, scrollable */}
           <div className="overflow-y-auto overflow-x-hidden [scrollbar-gutter:stable] flex-1">
             <div className={`grid ${gallerySizeClasses[gallerySize]} gap-4`}>
               {isGenerating && (
@@ -2852,7 +3887,7 @@ export function GenSpace() {
         </div>
       )}
 
-      {/* Floating prompt panel — wider, responsive, centered */}
+      {/* Floating prompt panel â€” wider, responsive, centered */}
       <div className="absolute bottom-5 left-1/2 w-[min(700px,calc(100%-2rem))] -translate-x-1/2">
 
         <FreeApiKeyBubble
@@ -2877,7 +3912,7 @@ export function GenSpace() {
           }]} />
         )}
 
-        {/* Selected plain LoRAs (video gen only) — one chip each, info from the matched catalog entry. */}
+        {/* Selected plain LoRAs (video gen only) â€” one chip each, info from the matched catalog entry. */}
         {mode === 'video' && isLocalMode && selectedLoras.length > 0 && (
           <SelectedLoraInfo items={selectedLoras.map(s => {
             const entry = loraLibrary.items.find(e => e.installedPath === s.ref)
@@ -2896,6 +3931,32 @@ export function GenSpace() {
           onModeChange={setMode}
           canUseIcLora={!forceApiGenerations}
           allowUltrawideVideo={!shouldVideoGenerateWithLtxApi}
+          canUseMultiKeyframe={canUseMultiKeyframe}
+          canUseRetake={canUseRetake}
+          canUseExtend={canUseExtend}
+          canUseUserLoras={canUseUserLoras}
+          loraCatalogIdsByPath={loraDisplayNames}
+          imageUsesFalApi={shouldImageGenerateWithFalApi}
+          enhanceAvailableForMode={enhanceAvailableForMode}
+          canEnhancePrompt={canEnhancePrompt}
+          enhanceBlockedByMissingGeminiKey={enhanceBlockedByMissingGeminiKey}
+          isEnhancingPrompt={isEnhancingPrompt}
+          enhancePromptError={enhancePromptError}
+          onEnhancePrompt={handleEnhancePrompt}
+          enhanceProvider={canToggleEnhanceProvider ? enhanceProvider : undefined}
+          onEnhanceProviderChange={handleEnhanceProviderChange}
+          canUndoPrompt={canUndoPrompt}
+          onUndoPrompt={handleUndoPrompt}
+          canRedoPrompt={canRedoPrompt}
+          onRedoPrompt={handleRedoPrompt}
+          inputLastImage={inputLastImage}
+          onInputLastImageChange={setInputLastImage}
+          keyframes={keyframes}
+          onKeyframesChange={setKeyframes}
+          multiKeyframeMaxCount={multiKeyframeMaxCount}
+          playheadFrame={playheadFrame}
+          onPlayheadChange={setPlayheadFrame}
+          onDragFrameChange={setDragFrame}
           prompt={prompt}
           onPromptChange={setPrompt}
           onClearPrompt={clearGenSpacePrompt}
@@ -2928,7 +3989,7 @@ export function GenSpace() {
           loraDisplayNames={loraDisplayNames}
         />
 
-        {/* Advanced IC-LoRA controls — bottom-aligned to the right of the prompt panel. */}
+        {/* Advanced IC-LoRA controls â€” bottom-aligned to the right of the prompt panel. */}
         {mode === 'ic-lora' && !forceApiGenerations && advancedIcLoraControls && (
           <div className="absolute left-full bottom-0 ml-3">
             <IcLoraAdvancedPanel {...icLoraControlsProps} />
@@ -3035,7 +4096,7 @@ export function GenSpace() {
                     const asset = selectedAsset
                     if (!asset) return
                     // Grab the currently shown frame. The modal <video> autoplays,
-                    // so it's usually AT the end when clicked — seeking exactly at
+                    // so it's usually AT the end when clicked â€” seeking exactly at
                     // duration decodes no frame (ffmpeg writes nothing), which is
                     // why this failed. Back off ~one frame from the end, matching
                     // saveVideoFrame's fix.
@@ -3079,7 +4140,7 @@ export function GenSpace() {
                   selectedAsset.resolution,
                   selectedAsset.duration ? `${formatSeconds(selectedAsset.duration)}s` : 'Image',
                   selectedAsset.renderMs != null ? `${formatClock(selectedAsset.renderMs)} render` : null,
-                ].filter(Boolean).join(' • ')}
+                ].filter(Boolean).join(' â€¢ ')}
               </p>
             </div>
           </div>
@@ -3117,7 +4178,7 @@ export function GenSpace() {
                   setNewTagName('')
                 }
               }}
-              placeholder="Tag name…"
+              placeholder="Tag nameâ€¦"
               className="w-full rounded-md px-2 py-1.5 text-sm bg-zinc-800 text-white border border-zinc-700 outline-none focus:border-blue-500"
             />
             <div className="flex justify-end gap-2 mt-3">
@@ -3162,3 +4223,4 @@ export function GenSpace() {
     </div>
   )
 }
+
