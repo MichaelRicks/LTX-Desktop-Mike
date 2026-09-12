@@ -288,14 +288,17 @@ def _resolve_local_generations_mode() -> LocalGenerationMode:
 
 LOCAL_GENERATIONS_MODE = _resolve_local_generations_mode()
 
-# Opt the diffusion-stage cache's session-scoped streaming kind in only for the
-# streaming runtime mode. Load-bearing gate: IC-LoRA's use_lora_in_stage_2 forces
-# a CPU-mode streaming stage_2 even on full-loading (5090) cards, which must NOT
-# get session-cached there -- see that module's TWO CACHED KINDS docstring section.
+# Opt the diffusion-stage and aux-block caches' session-scoped streaming kinds in
+# only for the streaming runtime mode. Load-bearing gate: IC-LoRA's use_lora_in_stage_2
+# forces a CPU-mode streaming stage_2 even on full-loading (5090) cards, which must NOT
+# get session-cached there -- see those modules' streaming-kind docstring sections.
 import services.patches.aux_block_cache as _aux_block_cache_gate
+import services.patches.diffusion_stage_cache as _diffusion_stage_cache_gate
 
-_aux_block_cache_gate.set_streaming_enabled(LOCAL_GENERATIONS_MODE == "streaming_models_loading")
-del _aux_block_cache_gate
+_streaming_mode = LOCAL_GENERATIONS_MODE == "streaming_models_loading"
+_aux_block_cache_gate.set_streaming_enabled(_streaming_mode)
+_diffusion_stage_cache_gate.set_streaming_enabled(_streaming_mode)
+del _aux_block_cache_gate, _diffusion_stage_cache_gate
 
 CAMERA_MOTION_PROMPTS = {
     "none": "",

@@ -142,7 +142,9 @@ def test_non_cuda_device_and_non_single_gpu_builder_delegate(monkeypatch: pytest
     orig_calls: list[str] = []
     monkeypatch.setattr(abc_, "_orig_image_conditioner_call", lambda self, fn: orig_calls.append("ic"))
     monkeypatch.setattr(
-        abc_, "_orig_video_decoder_call", lambda self, latent, tc, gen: iter(orig_calls.append("vd") or [])
+        abc_,
+        "_orig_video_decoder_call",
+        lambda self, latent, tc, gen, dtype=None: iter(orig_calls.append("vd") or []),
     )
 
     _FakeImageConditioner(_FakeBuilder("ckpt.safetensors"), device=torch.device("mps"))(lambda m: m)
@@ -150,7 +152,7 @@ def test_non_cuda_device_and_non_single_gpu_builder_delegate(monkeypatch: pytest
     class _CustomBuilder:  # multi-GPU style, not a SingleGPUModelBuilder
         pass
 
-    list(_FakeVideoDecoder(_CustomBuilder())("latent"))
+    list(_FakeVideoDecoder(_CustomBuilder())(torch.zeros(1)))
 
     assert orig_calls == ["ic", "vd"]
     assert not abc_._cache
@@ -215,18 +217,18 @@ def test_video_decoder_iterator_lifecycle() -> None:
     decoder_block = _FakeVideoDecoder(builder)
 
     # (a) never-started iterator leaves no checkout
-    _unused = decoder_block("latent")
+    _unused = decoder_block(torch.zeros(1))
     assert builder.build_count == 0, "checkout must happen at first next(), not at call"
     assert all(e.in_use == 0 for e in abc_._cache.values())
 
     # (b) full consumption releases
-    chunks = list(decoder_block("latent"))
+    chunks = list(decoder_block(torch.zeros(1)))
     assert chunks == ["chunk-0", "chunk-1"]
     assert builder.build_count == 1
     assert next(iter(abc_._cache.values())).in_use == 0
 
     # (c) close() after first next() releases (GeneratorExit path)
-    it = decoder_block("latent")
+    it = decoder_block(torch.zeros(1))
     assert next(it) == "chunk-0"
     assert next(iter(abc_._cache.values())).in_use == 1
     it.close()

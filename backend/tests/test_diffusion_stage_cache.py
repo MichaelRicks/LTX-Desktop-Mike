@@ -12,24 +12,28 @@ tests do not depend on the patch actually being installed on the class.
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pytest
+import torch
 
 from ltx_core.block_streaming import StreamingModelBuilder
 from ltx_core.loader.single_gpu_model_builder import SingleGPUModelBuilder
+from ltx_core.model.transformer.model import X0Model
 from ltx_core.allocator_trim_strategy import AllocatorTrimStrategy
 from services.patches import diffusion_stage_cache as dsc
+
+# MPS disk streaming uses a small positive slot count (ltx_pipelines.utils.blocks
+# passes DISK_CPU_SLOTS); any positive value exercises the same exclusion branch.
+_DISK_SLOTS = 4
 
 
 class _FakeModel:
     def __init__(self) -> None:
-        self.freed_to: str | None = None
         self.disposed = False
 
-    def to(self, device: str) -> "_FakeModel":
-        self.freed_to = device
-        return self
-
     def dispose(self) -> None:
+        # 1.2.0 frees resident (X0Model) storage via Disposable.dispose(), not .to("meta").
         self.disposed = True
 
 
@@ -67,12 +71,59 @@ def _single_gpu_builder(model_path: str, loras: tuple[object, ...] = ()) -> Sing
     return SingleGPUModelBuilder(model_class_configurator=object, model_path=model_path, loras=loras)
 
 
+class _FakeStreamingWrapper(torch.nn.Module):
+    """Stands in for BlockStreamingWrapper: a real nn.Module (so X0Model accepts it)
+    with recording teardown()/to()."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.events: list[str] = []
+
+    def teardown(self) -> None:
+        self.events.append("teardown")
+
+    def dispose(self) -> None:
+        # 1.2.0 streaming evict metas storage via Disposable.dispose() (not .to("meta")).
+        self.events.append("dispose")
+
+    def to(self, device: str) -> "_FakeStreamingWrapper":  # type: ignore[override]
+        self.events.append(f"to:{device}")
+        return self
+
+
+class _FakeStreamingBuilder(StreamingModelBuilder):
+    """Real StreamingModelBuilder (so isinstance + the key's content properties work)
+    whose build() returns a fake wrapper instead of touching disk/GPU."""
+
+    def __init__(self, model_path: str, *, cpu_slots_count: int | None = None, loras: tuple[object, ...] = ()) -> None:
+        super().__init__(
+            model_class_configurator=object,  # type: ignore[arg-type]
+            model_path=model_path,
+            loras=loras,  # type: ignore[arg-type]
+            cpu_slots_count=cpu_slots_count,
+        )
+        self.build_count = 0
+        self.built: list[_FakeStreamingWrapper] = []
+
+    def build(self, *args: object, **kwargs: object) -> _FakeStreamingWrapper:  # type: ignore[override]
+        self.build_count += 1
+        wrapper = _FakeStreamingWrapper()
+        self.built.append(wrapper)
+        return wrapper
+
+
+def _streaming_stage(builder: _FakeStreamingBuilder) -> _FakeStage:
+    return _FakeStage(builder, is_streaming=True)
+
+
 @pytest.fixture(autouse=True)
 def _reset_cache_state():
     dsc.set_enabled(True)
+    dsc.set_streaming_enabled(False)
     dsc.evict()
     yield
     dsc.set_enabled(True)
+    dsc.set_streaming_enabled(False)
     dsc.evict()
 
 
@@ -101,7 +152,7 @@ def test_cache_miss_on_different_checkpoint_evicts_old_model() -> None:
 
     assert stage_a.build_count == 1
     assert stage_b.build_count == 1
-    assert model_a.freed_to == "meta", "old model must be freed before building the new one"
+    assert model_a.disposed, "old model must be freed (disposed) before building the new one"
     assert model_b is not model_a
 
 
@@ -118,11 +169,25 @@ def test_different_loras_are_treated_as_a_different_config() -> None:
     assert stage_b.build_count == 1, "different LoRA set must miss the cache, not reuse stage_a's build"
 
 
-def test_cacheable_returns_false_for_a_streaming_stage() -> None:
-    streaming_builder = StreamingModelBuilder(model_class_configurator=object, model_path="ckpt.safetensors")
-    streaming_stage = _FakeStage(streaming_builder, is_streaming=True)
+def test_streaming_stage_not_cacheable_until_opted_in() -> None:
+    """The streaming kind is gated on set_streaming_enabled (pushed by ltx2_server
+    only in streaming_models_loading mode) -- load-bearing: IC-LoRA forces CPU-mode
+    streaming stages even on full-loading cards, which must NOT session-cache."""
+    stage = _streaming_stage(_FakeStreamingBuilder("ckpt.safetensors"))
 
-    assert dsc._cacheable(streaming_stage) is False
+    assert dsc._cacheable(stage) is False
+
+    dsc.set_streaming_enabled(True)
+    assert dsc._cacheable(stage) is True
+
+
+def test_disk_mode_streaming_builder_is_not_cacheable() -> None:
+    """Only CPU/RAM streaming (cpu_slots_count None, all blocks pinned) is cacheable;
+    MPS disk streaming stays on the build-per-call path."""
+    dsc.set_streaming_enabled(True)
+    disk_stage = _streaming_stage(_FakeStreamingBuilder("ckpt.safetensors", cpu_slots_count=_DISK_SLOTS))
+
+    assert dsc._cacheable(disk_stage) is False
 
 
 class _OtherBuilder:
@@ -145,7 +210,7 @@ def test_non_single_gpu_builder_bypasses_cache_and_evicts_resident_model() -> No
     with dsc._cached_transformer_ctx(other_stage) as other_model:
         pass
 
-    assert cached_model.freed_to == "meta", "resident cache must be freed before the non-cacheable build"
+    assert cached_model.disposed, "resident cache must be freed before the non-cacheable build"
     assert dsc._cached_model is None
     assert other_stage.build_count == 1
     assert other_model is not cached_model
@@ -158,7 +223,7 @@ def test_disabled_bypasses_cache_and_evicts_immediately() -> None:
     assert dsc._cached_model is not None
 
     dsc.set_enabled(False)
-    assert cached_model.freed_to == "meta"
+    assert cached_model.disposed
     assert dsc._cached_model is None
 
     with dsc._cached_transformer_ctx(stage):
@@ -177,7 +242,7 @@ def test_evict_frees_and_clears_cache() -> None:
 
     dsc.evict()
 
-    assert model.freed_to == "meta"
+    assert model.disposed
     assert dsc._cached_model is None
     assert dsc._cached_key is None
 
@@ -194,27 +259,27 @@ def test_cache_key_self_check() -> None:
 # --- hardening: dead-reference gc pass + in-use concurrency guard ------------ #
 
 
-def test_evict_runs_gc_collect_before_meta_swap(monkeypatch: pytest.MonkeyPatch) -> None:
-    """The pre-free gc.collect() must run BEFORE .to('meta') (ComfyUI ordering)."""
+def test_evict_runs_gc_collect_before_dispose(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The pre-free gc.collect() must run BEFORE dispose() metas the storage (ComfyUI ordering)."""
     stage = _FakeStage(_single_gpu_builder("ckpt.safetensors"))
     with dsc._cached_transformer_ctx(stage) as model:
         pass
 
     events: list[str] = []
     monkeypatch.setattr(dsc.gc, "collect", lambda *a, **k: events.append("gc"))
-    original_to = model.to
+    original_dispose = model.dispose
 
-    def _record_to(device: str) -> "_FakeModel":
-        events.append(f"to:{device}")
-        return original_to(device)
+    def _record_dispose() -> None:
+        events.append("dispose")
+        original_dispose()
 
-    monkeypatch.setattr(model, "to", _record_to)
+    monkeypatch.setattr(model, "dispose", _record_dispose)
 
     dsc.evict()
 
-    # cleanup_memory() runs its own gc.collect() AFTER the meta-swap, so a trailing
-    # "gc" is expected; assert only that the pre-free gc precedes the meta-swap.
-    assert events[:2] == ["gc", "to:meta"], f"pre-free gc must precede the meta-swap, got {events}"
+    # cleanup_memory() runs its own gc.collect() AFTER the dispose, so a trailing
+    # "gc" is expected; assert only that the pre-free gc precedes the dispose.
+    assert events[:2] == ["gc", "dispose"], f"pre-free gc must precede dispose(), got {events}"
 
 
 def test_in_use_is_tracked_across_the_yield() -> None:
@@ -232,12 +297,12 @@ def test_evict_while_in_use_raises_and_does_not_free() -> None:
         # transformer is mid-denoise. It must fail loud rather than free the model.
         with pytest.raises(RuntimeError, match="in use"):
             dsc.evict()
-        assert model.freed_to is None, "model must NOT be freed while in use"
+        assert not model.disposed, "model must NOT be freed while in use"
         assert dsc._cached_model is model, "cache must remain intact after a rejected evict"
 
     # Once the caller is done, eviction works normally again.
     dsc.evict()
-    assert model.freed_to == "meta"
+    assert model.disposed
     assert dsc._cached_model is None
 
 
@@ -249,3 +314,223 @@ def test_set_enabled_false_while_in_use_raises() -> None:
             dsc.set_enabled(False)
         # Evict runs before the flag flips, so a rejected toggle stays un-applied.
         assert dsc._enabled is True, "failed toggle-off must not half-apply"
+
+
+# --- streaming (session-scoped) kind ------------------------------------------ #
+
+
+def test_streaming_hit_builds_once_and_rewraps_fresh_x0model() -> None:
+    dsc.set_streaming_enabled(True)
+    builder = _FakeStreamingBuilder("ckpt.safetensors")
+    stage_1 = _streaming_stage(builder)
+    stage_2 = _streaming_stage(builder)
+
+    with dsc._cached_transformer_ctx(stage_1) as model_1:
+        pass
+    with dsc._cached_transformer_ctx(stage_2) as model_2:
+        pass
+
+    assert builder.build_count == 1, "stage_2 must reuse stage_1's cached streaming build"
+    assert isinstance(model_1, X0Model)
+    assert isinstance(model_2, X0Model)
+    assert model_1 is not model_2, "each checkout gets a fresh stateless X0Model wrapper"
+    assert model_1.velocity_model is model_2.velocity_model, "both wrap the SAME cached wrapper"
+    assert dsc._cached_kind == "streaming"
+
+
+def test_streaming_evict_tears_down_before_meta_swap() -> None:
+    dsc.set_streaming_enabled(True)
+    builder = _FakeStreamingBuilder("ckpt.safetensors")
+    with dsc._cached_transformer_ctx(_streaming_stage(builder)):
+        pass
+    wrapper = builder.built[0]
+
+    dsc.evict()
+
+    assert wrapper.events == ["teardown", "dispose"], (
+        "eviction must mirror _streaming_model's finally: teardown() (frees pins) "
+        f"BEFORE the meta-swap, got {wrapper.events}"
+    )
+    assert dsc._cached_model is None
+    assert dsc._cached_kind is None
+
+
+def _fake_virtual_memory(available_gb: float) -> SimpleNamespace:
+    return SimpleNamespace(available=int(available_gb * 2**30))
+
+
+def test_generation_start_keeps_streaming_entry_when_ram_is_fine(monkeypatch: pytest.MonkeyPatch) -> None:
+    dsc.set_streaming_enabled(True)
+    builder = _FakeStreamingBuilder("ckpt.safetensors")
+    with dsc._cached_transformer_ctx(_streaming_stage(builder)):
+        pass
+    monkeypatch.setattr(dsc.psutil, "virtual_memory", lambda: _fake_virtual_memory(20.0))
+
+    dsc.evict_for_generation_start()
+
+    assert dsc._cached_model is not None, "session-scoped streaming entry must survive generation start"
+    assert builder.built[0].events == []
+
+
+def test_generation_start_evicts_streaming_entry_under_ram_pressure(monkeypatch: pytest.MonkeyPatch) -> None:
+    dsc.set_streaming_enabled(True)
+    builder = _FakeStreamingBuilder("ckpt.safetensors")
+    with dsc._cached_transformer_ctx(_streaming_stage(builder)):
+        pass
+    monkeypatch.setattr(dsc.psutil, "virtual_memory", lambda: _fake_virtual_memory(dsc._MIN_FREE_RAM_GB - 1))
+
+    dsc.evict_for_generation_start()
+
+    assert dsc._cached_model is None, "streaming entry must be evicted under external RAM pressure"
+    assert builder.built[0].events == ["teardown", "dispose"]
+
+
+def test_generation_start_always_evicts_resident_entry(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The 5090 VRAM-collision fix: a resident (VRAM) entry never survives into the
+    next generation, regardless of RAM headroom."""
+    stage = _FakeStage(_single_gpu_builder("ckpt.safetensors"))
+    with dsc._cached_transformer_ctx(stage) as model:
+        pass
+    monkeypatch.setattr(dsc.psutil, "virtual_memory", lambda: _fake_virtual_memory(64.0))
+
+    dsc.evict_for_generation_start()
+
+    assert model.disposed
+    assert dsc._cached_model is None
+
+
+def test_resident_and_streaming_keys_never_collide() -> None:
+    """Identical content must still miss across builder types (e.g. IC-LoRA's
+    resident stage_1 vs forced-streaming stage_2 on a full-loading card)."""
+    dsc.set_streaming_enabled(True)
+    resident_stage = _FakeStage(_single_gpu_builder("ckpt.safetensors"))
+    streaming_stage = _streaming_stage(_FakeStreamingBuilder("ckpt.safetensors"))
+
+    assert dsc._cache_key(resident_stage) != dsc._cache_key(streaming_stage)
+
+
+def test_streaming_checkout_tracks_in_use_and_rejects_evict() -> None:
+    dsc.set_streaming_enabled(True)
+    builder = _FakeStreamingBuilder("ckpt.safetensors")
+    with dsc._cached_transformer_ctx(_streaming_stage(builder)):
+        assert dsc._in_use == 1
+        with pytest.raises(RuntimeError, match="in use"):
+            dsc.evict()
+        assert builder.built[0].events == [], "wrapper must NOT be torn down while checked out"
+    assert dsc._in_use == 0
+
+
+def test_set_streaming_enabled_false_evicts_streaming_entry() -> None:
+    dsc.set_streaming_enabled(True)
+    builder = _FakeStreamingBuilder("ckpt.safetensors")
+    with dsc._cached_transformer_ctx(_streaming_stage(builder)):
+        pass
+    assert dsc._cached_kind == "streaming"
+
+    dsc.set_streaming_enabled(False)
+
+    assert dsc._cached_model is None
+    assert builder.built[0].events == ["teardown", "dispose"]
+    # A resident entry is unaffected by the streaming gate.
+    stage = _FakeStage(_single_gpu_builder("ckpt.safetensors"))
+    with dsc._cached_transformer_ctx(stage):
+        pass
+    assert dsc._cached_kind == "resident"
+
+
+def test_abnormal_exit_marks_dirty_and_next_checkout_rebuilds() -> None:
+    """An exception unwinding through the denoise loop can leak BufferPool slots
+    (observed live: 'BufferPool exhausted: all 2 buffers are in use' on every
+    retry) -- the entry must be rebuilt, never reused."""
+    dsc.set_streaming_enabled(True)
+    builder = _FakeStreamingBuilder("ckpt.safetensors")
+    with pytest.raises(RuntimeError, match="boom"):
+        with dsc._cached_transformer_ctx(_streaming_stage(builder)):
+            raise RuntimeError("boom")
+
+    assert dsc._dirty is True
+    assert dsc._in_use == 0, "abnormal exit must still release the checkout"
+    assert builder.built[0].events == [], "dirty entry is kept (lazily evicted), not freed mid-unwind"
+
+    with dsc._cached_transformer_ctx(_streaming_stage(builder)):
+        pass
+
+    assert builder.build_count == 2, "dirty entry must be rebuilt, not reused"
+    assert builder.built[0].events == ["teardown", "dispose"], "dirty wrapper torn down before rebuild"
+    assert dsc._dirty is False, "rebuild clears the dirty flag"
+
+
+def test_generation_start_evicts_dirty_streaming_entry_despite_free_ram(monkeypatch: pytest.MonkeyPatch) -> None:
+    dsc.set_streaming_enabled(True)
+    builder = _FakeStreamingBuilder("ckpt.safetensors")
+    with pytest.raises(RuntimeError, match="boom"):
+        with dsc._cached_transformer_ctx(_streaming_stage(builder)):
+            raise RuntimeError("boom")
+    monkeypatch.setattr(dsc.psutil, "virtual_memory", lambda: _fake_virtual_memory(64.0))
+
+    dsc.evict_for_generation_start()
+
+    assert dsc._cached_model is None, "dirty entry must never survive into a new generation"
+    assert builder.built[0].events == ["teardown", "dispose"]
+
+
+def test_concurrent_checkout_bypasses_cache_with_isolated_build(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A zombie generation's checkout must not share the cached wrapper (2-slot
+    BufferPool) with a new generation -- the second checkout gets an isolated
+    one-shot build via the original ctx, mirroring pre-cache behavior."""
+    from contextlib import contextmanager
+
+    dsc.set_streaming_enabled(True)
+    builder = _FakeStreamingBuilder("ckpt.safetensors")
+    orig_calls: list[object] = []
+
+    @contextmanager
+    def _fake_orig(stage: object, **kwargs: object):
+        orig_calls.append(stage)
+        yield object()
+
+    monkeypatch.setattr(dsc, "_orig_transformer_ctx", _fake_orig)
+
+    outer_stage = _streaming_stage(builder)
+    inner_stage = _streaming_stage(builder)
+    with dsc._cached_transformer_ctx(outer_stage):
+        assert dsc._in_use == 1
+        with dsc._cached_transformer_ctx(inner_stage):
+            pass
+        assert orig_calls == [inner_stage], "concurrent checkout must delegate to the original ctx"
+        assert builder.build_count == 1, "cached wrapper must not be rebuilt or shared"
+        assert dsc._in_use == 1, "bypassed checkout must not touch the in-use counter"
+    assert dsc._in_use == 0
+    assert dsc._cached_model is not None, "cached entry survives a concurrent bypass"
+
+
+def test_streaming_stage_bypasses_and_evicts_when_gate_is_off() -> None:
+    """With the gate off (full-loading cards), a streaming stage takes the bypass
+    branch and unconditionally evicts -- the original NON-CACHEABLE TRANSITIONS
+    behavior (IC-LoRA repro) must be preserved."""
+    cacheable_stage = _FakeStage(_single_gpu_builder("ckpt.safetensors"))
+    with dsc._cached_transformer_ctx(cacheable_stage) as cached_model:
+        pass
+    assert dsc._cached_model is cached_model
+
+    streaming_stage = _streaming_stage(_FakeStreamingBuilder("ckpt.safetensors"))
+    orig_calls: list[object] = []
+
+    from contextlib import contextmanager
+
+    @contextmanager
+    def _fake_orig(stage: object, **kwargs: object):
+        orig_calls.append(stage)
+        yield object()
+
+    original = dsc._orig_transformer_ctx
+    dsc._orig_transformer_ctx = _fake_orig  # type: ignore[assignment]
+    try:
+        with dsc._cached_transformer_ctx(streaming_stage):
+            pass
+    finally:
+        dsc._orig_transformer_ctx = original  # type: ignore[assignment]
+
+    assert cached_model.disposed, "bypass must evict the resident entry first"
+    assert dsc._cached_model is None
+    assert orig_calls == [streaming_stage], "gate-off streaming must delegate to the original ctx"

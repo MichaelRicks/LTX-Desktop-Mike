@@ -267,16 +267,24 @@ def _cached_video_decoder_call(
     latent: torch.Tensor,
     tiling_config: object = None,
     generator: torch.Generator | None = None,
+    *,
+    dtype: torch.dtype | None = None,
 ) -> Iterator[torch.Tensor]:
+    # 1.2.0 added a keyword-only ``dtype`` override (float32 for HDR raw-in/raw-out);
+    # None keeps the constructor dtype. Mirror upstream: it selects the effective build
+    # dtype and casts the latent to it before decode. build_dtype flows into _checkout,
+    # which keys the cache on dtype, so an HDR float32 call caches separately from SDR.
+    build_dtype = self._dtype if dtype is None else dtype  # noqa: SLF001
+    latent = latent.to(dtype=build_dtype)
     if not _cacheable(self._decoder_builder, self._device):  # noqa: SLF001
-        return _orig_video_decoder_call(self, latent, tiling_config, generator)  # type: ignore[arg-type]
+        return _orig_video_decoder_call(self, latent, tiling_config, generator, dtype=dtype)  # type: ignore[arg-type]
 
     def _decode() -> Iterator[torch.Tensor]:
         # Checkout at first next(): a never-iterated generator must not leak in_use.
-        entry = _checkout(self._decoder_builder, self._dtype, self._device, "video_decoder")  # noqa: SLF001
+        entry = _checkout(self._decoder_builder, build_dtype, self._device, "video_decoder")  # noqa: SLF001
         if entry is None:
             logger.warning("[aux-block-cache] video_decoder in use (overlapping generation?) -- isolated build")
-            yield from _orig_video_decoder_call(self, latent, tiling_config, generator)  # type: ignore[arg-type]
+            yield from _orig_video_decoder_call(self, latent, tiling_config, generator, dtype=dtype)  # type: ignore[arg-type]
             return
         try:
             # No gpu_model wrapper: its teardown would meta-swap the cached

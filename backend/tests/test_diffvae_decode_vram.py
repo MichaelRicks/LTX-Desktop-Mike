@@ -13,11 +13,11 @@ from services.patches import diffvae_decode_vram as patch
 
 class _FakeModel:
     def __init__(self) -> None:
-        self.freed_to: str | None = None
+        self.disposed = False
 
-    def to(self, device: str) -> "_FakeModel":
-        self.freed_to = device
-        return self
+    def dispose(self) -> None:
+        # 1.2.0 diffusion_stage_cache evict frees storage via Disposable.dispose().
+        self.disposed = True
 
 
 class _FakeDecoder:
@@ -47,24 +47,42 @@ def test_patch_rebinds_video_decoder_call() -> None:
 
 
 def test_video_decoder_call_evicts_cached_transformer(monkeypatch) -> None:
+    # DiffVAE decode (is_diffusion_video_vae True) frees the resident transformer.
     model = _FakeModel()
     dsc._cached_model = model
     dsc._cached_key = ("planted",)
+    monkeypatch.setattr(patch, "is_diffusion_video_vae", lambda _path: True)
     monkeypatch.setattr(patch, "_orig_video_decoder_call", lambda *args, **kwargs: "ok")
 
-    assert patch._patched_video_decoder_call(object()) == "ok"
-    assert model.freed_to == "meta"
+    assert patch._patched_video_decoder_call(_FakeDecoder(torch.device("cuda"))) == "ok"
+    assert model.disposed
     assert dsc._cached_model is None
+
+
+def test_conv_video_decoder_keeps_cached_transformer(monkeypatch) -> None:
+    # Conv VAE decode (is_diffusion_video_vae False) is small and must NOT evict the
+    # session-cached streaming transformer -- keeping it resident across generations is
+    # the cross-gen win. Only DiffVAE, which needs the ~20GB, evicts it.
+    model = _FakeModel()
+    dsc._cached_model = model
+    dsc._cached_key = ("planted",)
+    monkeypatch.setattr(patch, "is_diffusion_video_vae", lambda _path: False)
+    monkeypatch.setattr(patch, "_orig_video_decoder_call", lambda *args, **kwargs: "ok")
+
+    assert patch._patched_video_decoder_call(_FakeDecoder(torch.device("cuda"))) == "ok"
+    assert not model.disposed, "conv decode must keep the cached transformer resident"
+    assert dsc._cached_model is model
 
 
 def test_video_decoder_call_cleans_allocator_even_when_cache_empty(monkeypatch) -> None:
     cleaned: list[bool] = []
     dsc.set_enabled(False)
     dsc.evict()
+    monkeypatch.setattr(patch, "is_diffusion_video_vae", lambda _path: True)
     monkeypatch.setattr(patch, "_orig_video_decoder_call", lambda *args, **kwargs: "ok")
     monkeypatch.setattr(patch, "cleanup_memory", lambda: cleaned.append(True))
 
-    assert patch._patched_video_decoder_call(object()) == "ok"
+    assert patch._patched_video_decoder_call(_FakeDecoder(torch.device("cuda"))) == "ok"
     assert cleaned == [True]
 
 
@@ -141,6 +159,7 @@ def test_cuda_diffvae_caps_29gib_budget_before_recommend(monkeypatch) -> None:
 
 
 def test_non_cuda_decoder_keeps_pipeline_tiling(monkeypatch) -> None:
+    monkeypatch.setattr(patch, "is_diffusion_video_vae", lambda _path: True)
     monkeypatch.setattr(patch, "tiling_config_for_vae", lambda *_args, **_kwargs: pytest.fail("should not re-resolve"))
     monkeypatch.setattr(patch, "_orig_video_decoder_call", lambda _self, *args, **kwargs: (args, kwargs))
     latent = torch.zeros(1, 4, 61, 18, 32)

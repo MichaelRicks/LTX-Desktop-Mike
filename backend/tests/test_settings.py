@@ -355,24 +355,15 @@ class TestSettingsSchemaDrift:
 
 
 class TestResolvedUseConvVae:
-    def test_none_defaults_on_for_darwin(self, monkeypatch):
-        monkeypatch.setattr("state.app_settings.sys.platform", "darwin")
+    def test_none_defaults_on(self):
+        # Conv VAE ("fast decode") is the default on every platform now; the diffusion
+        # VAE decode is opt-out via an explicit False, not the CUDA default it once was.
         assert resolved_use_conv_vae(AppSettings()) is True
 
-    def test_none_defaults_off_for_linux(self, monkeypatch):
-        monkeypatch.setattr("state.app_settings.sys.platform", "linux")
-        assert resolved_use_conv_vae(AppSettings()) is False
-
-    def test_none_defaults_off_for_windows(self, monkeypatch):
-        monkeypatch.setattr("state.app_settings.sys.platform", "win32")
-        assert resolved_use_conv_vae(AppSettings()) is False
-
-    def test_explicit_true_overrides_linux_default(self, monkeypatch):
-        monkeypatch.setattr("state.app_settings.sys.platform", "linux")
+    def test_explicit_true(self):
         assert resolved_use_conv_vae(AppSettings(use_conv_vae=True)) is True
 
-    def test_explicit_false_overrides_darwin_default(self, monkeypatch):
-        monkeypatch.setattr("state.app_settings.sys.platform", "darwin")
+    def test_explicit_false_overrides_default(self):
         assert resolved_use_conv_vae(AppSettings(use_conv_vae=False)) is False
 
 

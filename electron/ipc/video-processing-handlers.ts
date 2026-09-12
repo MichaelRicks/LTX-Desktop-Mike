@@ -54,10 +54,10 @@ export function registerVideoProcessingHandlers(): void {
 
   // Drop the duplicate lead frame from a freshly generated continuation and save
   // the clean clip into Continuations.
-  handle('continuationSaveTrimmed', async ({ videoPath }) => {
+  handle('continuationSaveTrimmed', async ({ videoPath, colorMatchReference }) => {
     const dir = ensureLibFolder(CONTINUATIONS_FOLDER)
     const outPath = path.join(dir, `continuation_${stamp()}.mp4`)
-    trimFirstFrameToFile({ videoPath, outputPath: outPath })
+    trimFirstFrameToFile({ videoPath, outputPath: outPath, colorMatchReferencePath: colorMatchReference })
     return { path: outPath }
   })
 }

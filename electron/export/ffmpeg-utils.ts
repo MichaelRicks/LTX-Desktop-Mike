@@ -217,14 +217,67 @@ export function extractLastFrameToFile({ videoPath, outputPath, timeoutMs = 1500
 }
 
 /**
+ * Average RGB of one frame, via a true box-average downscale to 1x1 read as raw
+ * rgb24 (3 bytes). `vf` selects/prepares the frame(s) before the scale (e.g.
+ * "trim=start_frame=1:end_frame=2" to grab a video's second frame). Returns null
+ * if ffmpeg produces nothing usable — callers must treat that as "skip matching".
+ */
+function averageRgb(ffmpegPath: string, inputPath: string, vf: string): [number, number, number] | null {
+  const result = spawnSync(
+    ffmpegPath,
+    ['-v', 'error', '-i', inputPath, '-vf', `${vf},scale=1:1:flags=area`, '-frames:v', '1',
+     '-f', 'rawvideo', '-pix_fmt', 'rgb24', '-'],
+    { maxBuffer: 1024 * 1024, timeout: 15000 },
+  )
+  const buf = result.stdout
+  if (!buf || buf.length < 3) return null
+  return [buf[0], buf[1], buf[2]]
+}
+
+// Cap per-channel correction: the systematic VAE darkening is ~2-3/255, so a
+// larger measured delta means the continuation legitimately changed grade (a
+// light turned on, the camera moved to a brighter area) -- clamp so the match
+// only cancels the bias and never fights real content.
+const _MAX_COLOR_MATCH_OFFSET = 8
+
+/**
+ * Per-channel additive offset (as an ffmpeg lutrgb filter fragment) that nudges the
+ * continuation's grade back to the source's, or null when no meaningful correction
+ * applies. `referencePath` is the seed frame (the source clip's last frame); the
+ * clip's second frame (index 1 -- the one that becomes the new lead after the trim)
+ * is what we match, since it is the boundary the viewer sees against the source.
+ */
+function colorMatchLutFilter(ffmpegPath: string, videoPath: string, referencePath: string): string | null {
+  const seed = averageRgb(ffmpegPath, referencePath, 'null')
+  const clip = averageRgb(ffmpegPath, videoPath, 'trim=start_frame=1:end_frame=2,setpts=PTS-STARTPTS')
+  if (!seed || !clip) return null
+  const clamp = (v: number) => Math.max(-_MAX_COLOR_MATCH_OFFSET, Math.min(_MAX_COLOR_MATCH_OFFSET, v))
+  const [dr, dg, db] = [clamp(seed[0] - clip[0]), clamp(seed[1] - clip[1]), clamp(seed[2] - clip[2])]
+  // Sub-level offsets are below what encode rounding would preserve -- skip the
+  // extra filter pass rather than apply a no-op.
+  if (Math.abs(dr) < 0.5 && Math.abs(dg) < 0.5 && Math.abs(db) < 0.5) return null
+  const r = dr.toFixed(1), g = dg.toFixed(1), b = db.toFixed(1)
+  logger.info(`[trim-first-frame] color-match offset r=${r} g=${g} b=${b} (seed=${seed} clip1=${clip})`)
+  // lutrgb clamps expression output to [0,255] itself, so no explicit clip() needed.
+  return `lutrgb=r=val+(${r}):g=val+(${g}):b=val+(${b})`
+}
+
+/**
  * Re-encode a video with its first frame removed (and the matching audio slice
  * dropped so A/V stays in sync). Used by "Continue as new shot" to delete the
  * duplicate lead frame the i2v conditioning reproduces from the source's last
  * frame, so the continuation butt-joins the source with no stutter.
+ *
+ * `colorMatchReferencePath` (the seed frame) enables a subtle per-channel grade
+ * match: the i2v VAE reproduces the conditioning frame ~2-3/255 darker, which
+ * compounds across chained continuations; matching the clip's lead frame back to
+ * the seed cancels that at the join. Measured/clamped, so it only removes the
+ * systematic bias.
  */
-export function trimFirstFrameToFile({ videoPath, outputPath, timeoutMs = 120000 }: {
+export function trimFirstFrameToFile({ videoPath, outputPath, colorMatchReferencePath, timeoutMs = 120000 }: {
   videoPath: string
   outputPath: string
+  colorMatchReferencePath?: string
   timeoutMs?: number
 }): string {
   const ffmpegPath = findFfmpegPath()
@@ -233,9 +286,14 @@ export function trimFirstFrameToFile({ videoPath, outputPath, timeoutMs = 120000
 
   const hasAudio = fileHasAudio(ffmpegPath, videoPath)
   const fps = getVideoFps(ffmpegPath, videoPath)
+  const colorMatchLut =
+    colorMatchReferencePath && fs.existsSync(colorMatchReferencePath)
+      ? colorMatchLutFilter(ffmpegPath, videoPath, colorMatchReferencePath)
+      : null
+  const videoFilter = ['trim=start_frame=1', 'setpts=PTS-STARTPTS', ...(colorMatchLut ? [colorMatchLut] : [])].join(',')
   const args: string[] = [
     '-i', videoPath,
-    '-vf', 'trim=start_frame=1,setpts=PTS-STARTPTS',
+    '-vf', videoFilter,
     ...(hasAudio
       ? ['-af', `atrim=start=${(1 / fps).toFixed(6)},asetpts=PTS-STARTPTS`, '-c:a', 'aac', '-b:a', '192k']
       : ['-an']),

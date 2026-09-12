@@ -45,7 +45,10 @@ export const DEFAULT_APP_SETTINGS: AppSettings = {
   seedLocked: false,
   lockedSeed: 42,
   modelsDir: '',
-  useConvVae: false,
+  // Fast decode (conv VAE) is on by default, mirroring the backend's
+  // resolved_use_conv_vae default -- so the whole-settings sync can never POST an
+  // explicit false that overrides the backend default before the user opts out.
+  useConvVae: true,
 }
 
 type BackendProcessStatus = 'alive' | 'restarting' | 'dead'

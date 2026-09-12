@@ -118,26 +118,21 @@ class GenerationHandler(StateHandlerBase):
             raise GenerationCancelledError()
         self.state.generation_starting_since = None
 
-        # EXPERIMENTAL: push the live Settings toggle, then drop any transformer
-        # cached from the previous generation before this one starts -- otherwise
-        # it stays resident while this generation's own text encoder/VAE/etc.
-        # build, double-booking VRAM. See that module's GENERATION-SCOPED
-        # docstring section for the RTX 5090 repro (~42GB reported on a 32GB card).
-        diffusion_stage_cache.set_enabled(self.state.app_settings.diffusion_stage_cache_enabled)
-        diffusion_stage_cache.evict()
-        generation_interrupt.clear()
-
         # EXPERIMENTAL: push the live Settings toggle, then apply the kind-scoped
         # generation-start eviction: a VRAM-resident cached transformer is dropped
         # (it would double-book VRAM with this generation's own text encoder/VAE
         # builds -- see that module's GENERATION-SCOPED docstring section for the
         # RTX 5090 repro, ~42GB reported on a 32GB card), while a streaming entry
-        # (pinned host RAM) is session-scoped and kept unless system RAM is under
-        # pressure -- see the SESSION-SCOPED section.
+        # (pinned host RAM) is session-scoped and kept across generations unless
+        # system RAM is under pressure -- see the SESSION-SCOPED section. This is
+        # the win on the 3090 (streaming path): the transformer stays resident in
+        # pinned host RAM across generations instead of rebuilding every stage.
         diffusion_stage_cache.set_enabled(self.state.app_settings.diffusion_stage_cache_enabled)
         # The aux-model cache shares the same Settings toggle; its (VRAM, small)
         # entries are kept across generations unconditionally -- no gen-start evict.
         aux_block_cache.set_enabled(self.state.app_settings.diffusion_stage_cache_enabled)
+        diffusion_stage_cache.evict_for_generation_start()
+        generation_interrupt.clear()
 
         self.state.active_generation = GpuGeneration(
             state=GenerationRunning(
@@ -160,12 +155,6 @@ class GenerationHandler(StateHandlerBase):
         self.state.generation_starting_since = None
 
         # EXPERIMENTAL: see start_generation -- an API generation doesn't build a
-        # local transformer itself, but evicting here still releases VRAM held by
-        # a previous local generation's cached build.
-        diffusion_stage_cache.evict()
-        generation_interrupt.clear()
-
-        # EXPERIMENTAL: see start_generation -- an API generation doesn't build a
         # local transformer itself, but the kind-scoped eviction still releases
         # VRAM held by a previous local generation's resident build, while keeping
         # a session-scoped streaming entry warm for the next local generation.
@@ -173,6 +162,8 @@ class GenerationHandler(StateHandlerBase):
         # runs API generations must still reclaim the pinned host RAM.
         diffusion_stage_cache.set_enabled(self.state.app_settings.diffusion_stage_cache_enabled)
         aux_block_cache.set_enabled(self.state.app_settings.diffusion_stage_cache_enabled)
+        diffusion_stage_cache.evict_for_generation_start()
+        generation_interrupt.clear()
 
         self.state.active_generation = ApiGeneration(
             state=GenerationRunning(

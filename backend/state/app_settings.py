@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import sys
 from typing import Any, Literal, TypeGuard, TypeVar, cast, get_args
 
 from pydantic import BaseModel, ConfigDict, Field, create_model, field_validator
@@ -157,10 +156,16 @@ class SettingsResponse(SettingsBaseModel):
 
 
 def resolved_use_conv_vae(settings: AppSettings) -> bool:
-    """Effective Fast decode setting: user override, else Mac on / CUDA off."""
+    """Effective Fast decode setting: user override, else on by default.
+
+    Conv VAE ("fast decode") is the default on every platform. On a 24GB CUDA card
+    the diffusion VAE decode costs ~20s/gen; conv decode collapses that to a few
+    seconds at slightly lower fidelity, so it's the right default for the 3090-class
+    target. Was Mac-only-default before (CUDA fell back to the slow DiffVAE).
+    """
     if settings.use_conv_vae is not None:
         return settings.use_conv_vae
-    return sys.platform == "darwin"
+    return True
 
 
 def to_settings_response(settings: AppSettings) -> SettingsResponse:

@@ -347,7 +347,10 @@ export const electronAPISchemas = {
   // Drop the duplicate lead frame from a freshly generated continuation and save
   // the clean clip into Continuations, ready to butt-join the source.
   continuationSaveTrimmed: {
-    input: z.object({ videoPath: z.string() }),
+    // colorMatchReference (the seed frame = the source clip's last frame) lets the
+    // trim step neutralize the i2v VAE's systematic ~2-3/255 darkening of the
+    // continuation, which otherwise compounds across chained continuations.
+    input: z.object({ videoPath: z.string(), colorMatchReference: z.string().optional() }),
     output: z.object({ path: z.string() }),
   },
 

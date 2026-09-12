@@ -943,7 +943,7 @@ function PromptBar({
   const generateDisabled = isGenerating || !canGenerate || isEnhancingPrompt
 
   return (
-    <div className="h-full min-h-0 flex flex-col bg-zinc-900 border border-zinc-800 rounded-2xl overflow-visible">
+    <div className="flex flex-col bg-zinc-900 border border-zinc-800 rounded-2xl overflow-visible">
       {mode === 'multi-keyframe' && (
         <MultiKeyframePanel
           keyframes={keyframes}
@@ -957,11 +957,11 @@ function PromptBar({
         />
       )}
       {/* Top row: Image ref | Prompt | Generate */}
-      <div className="flex-1 min-h-0 flex items-stretch">
+      <div className="flex items-start">
         {/* Input image drop zone — video mode (I2V) or image mode (edit source) */}
         {(mode === 'video' || mode === 'image') && !isRetake && !isIcLora && (
           <div
-            className={`relative w-10 h-10 mx-2 mt-2 self-start rounded-lg border-2 border-dashed transition-colors flex items-center justify-center flex-shrink-0 cursor-pointer ${
+            className={`relative w-32 aspect-video mx-2 mt-2 self-start rounded-lg border-2 border-dashed transition-colors flex items-center justify-center flex-shrink-0 cursor-pointer ${
               isDragOver ? 'border-blue-500 bg-blue-500/10' : 'border-zinc-700 hover:border-zinc-500'
             }`}
             onDragOver={(e) => { e.preventDefault(); setIsDragOver(true) }}
@@ -984,7 +984,7 @@ function PromptBar({
                 </button>
               </>
             ) : (
-              <Image className="h-8 w-8 text-zinc-500" />
+              <Image className="h-10 w-10 text-zinc-500" />
             )}
             <input
               ref={inputRef}
@@ -1002,7 +1002,7 @@ function PromptBar({
           duration: settings.duration,
         }) && !isRetake && !isIcLora && (
           <div
-            className={`relative w-10 h-10 mt-2 mr-2 rounded-lg border-2 border-dashed transition-colors flex items-center justify-center flex-shrink-0 cursor-pointer ${
+            className={`relative w-32 aspect-video mt-2 mr-2 rounded-lg border-2 border-dashed transition-colors flex items-center justify-center flex-shrink-0 cursor-pointer ${
               isLastDragOver ? 'border-blue-500 bg-blue-500/10' : 'border-zinc-700 hover:border-zinc-500'
             }`}
             title="Last frame"
@@ -1022,7 +1022,7 @@ function PromptBar({
                 </button>
               </>
             ) : (
-              <Image className="h-4 w-4 text-zinc-500" />
+              <Image className="h-8 w-8 text-zinc-500" />
             )}
             <input
               ref={lastFrameInputRef}
@@ -1037,7 +1037,7 @@ function PromptBar({
         {/* Audio drop zone — A2V is mutually exclusive with multi-keyframe */}
         {genSpaceUsesAudioInput(mode) && !isRetake && !isIcLora && (
           <div
-            className={`relative w-10 h-10 mt-2 self-start rounded-lg border-2 border-dashed transition-colors flex items-center justify-center flex-shrink-0 cursor-pointer ${
+            className={`relative w-20 h-20 mt-2 self-start rounded-lg border-2 border-dashed transition-colors flex items-center justify-center flex-shrink-0 cursor-pointer ${
               isAudioDragOver ? 'border-emerald-500 bg-emerald-500/10' : inputAudio ? 'border-emerald-600' : 'border-zinc-700 hover:border-zinc-500'
             }`}
             onDragOver={(e) => { e.preventDefault(); setIsAudioDragOver(true) }}
@@ -1048,7 +1048,7 @@ function PromptBar({
           >
             {inputAudio ? (
               <>
-                <Music className="h-8 w-8 text-emerald-400" />
+                <Music className="h-10 w-10 text-emerald-400" />
                 <button
                   onClick={(e) => { e.stopPropagation(); onInputAudioChange(null) }}
                   className="absolute -top-1 -right-1 p-1 rounded-full bg-zinc-800 text-zinc-400 hover:text-white z-10"
@@ -1057,7 +1057,7 @@ function PromptBar({
                 </button>
               </>
             ) : (
-              <Music className="h-8 w-8 text-zinc-500" />
+              <Music className="h-10 w-10 text-zinc-500" />
             )}
             <input
               ref={audioInputRef}
@@ -1069,8 +1069,8 @@ function PromptBar({
           </div>
         )}
 
-        {/* Prompt input - fills remaining width and grows with the panel */}
-        <div className="flex-1 min-h-0 min-w-0 py-1">
+        {/* Prompt input - fills remaining width; drag the corner to resize height */}
+        <div className="flex-1 min-w-0 py-1">
           <textarea
             value={prompt}
             onChange={(e) => onPromptChange(e.target.value)}
@@ -1097,14 +1097,16 @@ function PromptBar({
                     : "A close-up of a woman talking on the phone...")
                 : "The woman sips from a cup of coffee..."
             }
-            className="w-full h-full min-h-0 bg-transparent text-white text-sm placeholder:text-zinc-500 focus:outline-none px-2 py-2 resize-none overflow-y-auto leading-5"
+            className="w-full bg-transparent text-white text-sm placeholder:text-zinc-500 focus:outline-none px-2 py-2 resize-y overflow-y-auto h-[70px] min-h-[70px] max-h-[60vh] leading-5"
           />
         </div>
 
       </div>
       
-      {/* Bottom row: Mode selector + Settings */}
-      <div className="flex flex-shrink-0 items-center gap-0.5 px-1.5 py-1.5 border-t border-zinc-800/60 text-xs text-zinc-400">
+      {/* Bottom row: Mode selector + Settings. Wraps (flex-wrap) so a narrow panel
+          pushes overflowing controls onto a second line INSIDE the box, instead of
+          spilling the Generate button past the rounded border. */}
+      <div className="flex flex-wrap flex-shrink-0 items-center gap-0.5 gap-y-1.5 px-1.5 py-1.5 border-t border-zinc-800/60 text-xs text-zinc-400">
         {/* Mode dropdown */}
         <SettingsDropdown
           title="MODE"
@@ -1469,7 +1471,7 @@ function PromptBar({
         <button
           onClick={showStop ? onStop : onGenerate}
           disabled={showStop ? stopDisabled : generateDisabled}
-          className={`flex items-center gap-1.5 ml-2 mt-2 self-start px-3 py-1.5 rounded-md text-xs font-medium transition-all flex-shrink-0 ${
+          className={`flex items-center gap-1.5 ml-auto px-3 py-1.5 rounded-md text-xs font-medium transition-all flex-shrink-0 ${
             showStop
               ? stopDisabled
                 ? 'bg-zinc-700 text-zinc-500 cursor-not-allowed'
@@ -1691,6 +1693,11 @@ export function GenSpace() {
   const [settings, setSettings] = useState(() => ({ ...DEFAULT_VIDEO_SETTINGS }))
   const continuationPendingRef = useRef(false)
   const continuationProcessedRef = useRef<string | null>(null)
+  // The seed frame (source clip's last frame) for the pending continuation, used to
+  // color-match the trimmed clip back to the source and cancel the i2v VAE's
+  // systematic darkening (see continuation-color-shift). Captured here rather than
+  // read from inputImage at trim time, which the user may have cleared/changed.
+  const continuationSeedRef = useRef<string | null>(null)
   const previousTimelineSettingsRef = useRef({
     duration: settings.duration,
     fps: settings.fps,
@@ -2434,9 +2441,10 @@ export function GenSpace() {
     const api = window.electronAPI
     if (!api) return
     const src = videoPath
+    const colorMatchReference = continuationSeedRef.current ?? undefined
     void (async () => {
       try {
-        await api.continuationSaveTrimmed({ videoPath: src })
+        await api.continuationSaveTrimmed({ videoPath: src, colorMatchReference })
       } catch (err) {
         logger.error(`Continuation trim/save failed: ${err}`)
       }
@@ -3429,6 +3437,7 @@ export function GenSpace() {
       const res = await api.continuationExtractLastFrame({ videoPath: videoAsset.path, seekTime })
       setMode('video')
       setInputImage(res.framePath)
+      continuationSeedRef.current = res.framePath
       setPrompt(videoAsset.prompt || '')
       setLastPrompt(videoAsset.prompt || '')
       setSettings((prev) => ({

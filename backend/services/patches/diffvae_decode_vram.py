@@ -120,9 +120,28 @@ def _with_post_evict_cuda_tiling(
     return _replace_tiling_arg(args, kwargs, tiling)
 
 
+def _decoder_checkpoint(decoder: Any) -> str | None:
+    checkpoint = getattr(decoder, "checkpoint_path", None)
+    if not isinstance(checkpoint, str):
+        checkpoint = getattr(decoder, "_checkpoint_path", None)
+    return checkpoint if isinstance(checkpoint, str) else None
+
+
+def _is_diffusion_video_decoder(decoder: Any) -> bool:
+    checkpoint = _decoder_checkpoint(decoder)
+    return checkpoint is not None and is_diffusion_video_vae(checkpoint)
+
+
 def _patched_video_decoder_call(self: VideoDecoder, *args: Any, **kwargs: Any) -> Any:
-    _release_denoise_weights()
-    args, kwargs = _with_post_evict_cuda_tiling(self, args, kwargs)
+    # Only the DiffVAE (diffusion) decoder needs the resident transformer freed for its
+    # ~20GB tiled decode. The conv VAE ("fast decode", ~1.5GB) fits alongside the
+    # streaming transformer, so keep it resident for conv decode -- that is what lets
+    # the session-scoped diffusion_stage_cache survive across generations on the
+    # streaming path (the cross-gen win). Freeing it unconditionally would evict the
+    # cached transformer after every gen, forcing a stage_1 rebuild on the next one.
+    if _is_diffusion_video_decoder(self):
+        _release_denoise_weights()
+        args, kwargs = _with_post_evict_cuda_tiling(self, args, kwargs)
     return _orig_video_decoder_call(self, *args, **kwargs)
 
 
