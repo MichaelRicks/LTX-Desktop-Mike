@@ -200,7 +200,7 @@ function ActionRow({
       </button>
       <button
         onClick={() => onInject(text)} disabled={disabled}
-        title="Send the assembled prompt to the LTX Gen Space prompt box"
+        title="Send the assembled prompt to the LTX Create prompt box"
         className="flex items-center justify-center gap-1.5 rounded-md px-3 py-2 text-xs font-semibold disabled:opacity-40"
         style={{ background: C.green, color: '#fff' }}
       >
@@ -543,7 +543,7 @@ function ShotPanel({
         </button>
         <button
           onClick={applyShot} disabled={!shotOut.trim()}
-          title={srcImage ? 'Inject the shot prompt and send the source image to Gen Space' : 'Inject the shot prompt'}
+          title={srcImage ? 'Inject the shot prompt and send the source image to Create' : 'Inject the shot prompt'}
           className="flex items-center justify-center gap-1.5 rounded-md px-3 py-2 text-xs font-semibold disabled:opacity-40"
           style={{ background: C.green, color: '#fff' }}
         >
@@ -860,7 +860,7 @@ function WorkflowPanel({
         </button>
         <button
           onClick={injectWorkflow} disabled={!wfOut.trim() && boundImages.length === 0}
-          title="Inject the prompt and send the first bound image to Gen Space"
+          title="Inject the prompt and send the first bound image to Create"
           className="flex items-center justify-center gap-1.5 rounded-md px-3 py-2 text-xs font-semibold disabled:opacity-40"
           style={{ background: C.green, color: '#fff' }}
         >
@@ -964,7 +964,7 @@ function SceneViewer({ pano, onPlate, onClose, lens, setLens, aimRef }: {
         <button onClick={resetAim} className="flex items-center gap-1 rounded px-2 py-1 text-[10px]" style={{ background: C.card, color: C.text, border: `1px solid ${C.border}` }}><RotateCcw size={11} />Reset aim</button>
         <button onClick={() => post({ type: 'gpm-scene-capture', requestId: ++reqId.current, width: 1280, height: 720 })} disabled={!ready} className="flex items-center gap-1 rounded px-2 py-1 text-[10px] font-semibold ml-auto disabled:opacity-40" style={{ background: C.green, color: '#fff' }}><Camera size={11} />Generate plate</button>
       </div>
-      <div className="px-2 pb-2 text-[10px]" style={{ background: C.card, color: C.faint }}>Drag to look around · pick a lens · "Generate plate" sends the framed 1280×720 view to Gen Space.</div>
+      <div className="px-2 pb-2 text-[10px]" style={{ background: C.card, color: C.faint }}>Drag to look around · pick a lens · "Generate plate" sends the framed 1280×720 view to Create.</div>
     </div>
   )
 }
@@ -1006,7 +1006,7 @@ function PlatesPanel({ onUse, flash, activeId, setActiveId, sceneLens, setSceneL
   const active = panos.find((p) => p.id === activeId) ?? null
   const onPlate = (dataUrl: string, name: string) => {
     onUse({ id: gpmId(), name: `plate-${name}`, folderId: null, dataUrl, addedAt: Date.now(), isVideo: false })
-    flash('Plate sent to Gen Space')
+    flash('Plate sent to Create')
   }
 
   return (
@@ -1329,7 +1329,7 @@ function ImagesPanel({ ctl, onCopy, onUse, flash }: { ctl: SectionCtl; onCopy: (
         >
           <div className="absolute top-1 right-1 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
             {!im.isVideo && (
-              <button onClick={() => onUse(im)} title="Send to Gen Space as input image" className="h-5 w-5 flex items-center justify-center rounded" style={{ background: C.green, color: '#fff' }}><Send size={11} /></button>
+              <button onClick={() => onUse(im)} title="Send to Create as input image" className="h-5 w-5 flex items-center justify-center rounded" style={{ background: C.green, color: '#fff' }}><Send size={11} /></button>
             )}
             <button onClick={() => onCopy(im.name)} title="Copy filename" className="h-5 w-5 flex items-center justify-center rounded" style={{ background: 'rgba(0,0,0,0.6)', color: '#fff' }}><Copy size={11} /></button>
             <button onClick={() => removeImage(im.id)} title="Delete" className="h-5 w-5 flex items-center justify-center rounded" style={{ background: 'rgba(0,0,0,0.6)', color: '#fff' }}><Trash2 size={11} /></button>
@@ -1503,7 +1503,7 @@ function Dock({ onClose }: { onClose: () => void }) {
       const path = await saveDataUrlToTempFile(img.dataUrl, img.name)
       setGenSpaceInputImagePath(path)
       setCurrentTab('gen-space')
-      flash('Image sent to Gen Space')
+      flash('Image sent to Create')
     } catch (e) {
       flash('Send failed: ' + (e instanceof Error ? e.message : 'error'))
     }
@@ -1569,7 +1569,7 @@ function Dock({ onClose }: { onClose: () => void }) {
         <div className="flex items-center gap-2">
           <button
             onClick={() => { clearGenSpacePrompt(); flash('Prompt box cleared') }}
-            title="Clear the LTX Gen Space prompt box"
+            title="Clear the LTX Create prompt box"
             className="text-[11px] flex items-center gap-1 px-2 py-1 rounded"
             style={{ color: C.muted, background: C.card, border: `1px solid ${C.border}` }}
           >

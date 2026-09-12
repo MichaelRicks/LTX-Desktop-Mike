@@ -1461,7 +1461,7 @@ export function SettingsModal({ isOpen, onClose, initialTab, initialReason, upda
                 <p className="text-xs text-zinc-500 leading-relaxed">
                   When enabled, Generate rewrites your prompt with visual detail, sound, and camera
                   motion before the model sees it. Local generations use the on-device enhancer;
-                  LTX API text encoding enhances on the server. The Enhance button in Gen Space is
+                  LTX API text encoding enhances on the server. The Enhance button in Create is
                   separate — it rewrites the prompt box so you can edit it first. Control
                   independently for each generation type.
                 </p>

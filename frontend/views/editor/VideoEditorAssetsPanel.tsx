@@ -771,7 +771,7 @@ export const VideoEditorAssetsPanel = forwardRef<VideoEditorAssetsPanelHandle, V
           {filteredAssets.length === 0 ? (
             <div className="text-center py-8">
               <p className="text-sm text-zinc-500">No assets yet</p>
-              <p className="text-xs text-zinc-600 mt-1">Generate in Gen Space or import</p>
+              <p className="text-xs text-zinc-600 mt-1">Generate in Create or import</p>
               <button
                 onClick={() => fileInputRef.current?.click()}
                 className="mt-3 px-3 py-1.5 rounded-lg bg-zinc-800 text-zinc-300 text-xs hover:bg-zinc-700 transition-colors"

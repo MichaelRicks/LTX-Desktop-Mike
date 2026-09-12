@@ -530,7 +530,7 @@ function SingleClipMenu({
                 <ChevronRight className="h-3 w-3 text-zinc-500" />
               </button>
               <div className="absolute left-full top-0 ml-0.5 min-w-[200px] bg-zinc-800 border border-zinc-700 rounded-lg shadow-xl py-1 z-[70] hidden group-hover/capture:block">
-                <MenuItem icon={Video} iconClass="text-blue-400" label="Generate Video in Gen Space"
+                <MenuItem icon={Video} iconClass="text-blue-400" label="Generate Video in Create"
                   onClick={() => { onCaptureFrameForVideo(contextClip); close() }} />
                 {isImage && (
                   <MenuItem icon={Film} iconClass="text-blue-400" label="Image to Video (I2V)"

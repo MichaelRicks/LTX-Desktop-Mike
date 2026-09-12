@@ -369,7 +369,7 @@ export function QwenMultiAnglePanel({ state, setState, onUse, flash }: {
   const inject = () => {
     if (!current) return
     onUse({ id: current.id, name: `qwen-angle-${current.seed}`, folderId: null, dataUrl: current.dataUrl, addedAt: Date.now(), isVideo: false })
-    flash('Sent to Gen Space')
+    flash('Sent to Create')
   }
 
   const chooseFolder = async () => {

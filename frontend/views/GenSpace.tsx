@@ -333,7 +333,7 @@ function AssetCard({
           {onRegenerate && canRegenerateAsset(asset) && (
             <button
               onClick={(e) => { e.stopPropagation(); onRegenerate(asset) }}
-              title="Load this generation's image, prompt and settings back into Gen Space"
+              title="Load this generation's image, prompt and settings back into Create"
               className="px-2.5 py-1.5 rounded-lg bg-black/40 backdrop-blur-md text-white hover:bg-black/60 transition-colors flex items-center gap-1.5 text-xs font-medium whitespace-nowrap"
             >
               <RefreshCw className="h-3 w-3" />
@@ -1564,9 +1564,12 @@ function continuationAspectRatio(width: number, height: number): string {
   const opts: Array<[string, number]> = [['16:9', 16 / 9], ['9:16', 9 / 16], ['21:9', 21 / 9]]
   return opts.reduce((best, o) => (Math.abs(o[1] - r) < Math.abs(best[1] - r) ? o : best))[0]
 }
+// Fallback tier from a clip's short side, for a source with no stored resolution.
+// Thresholds sit at the midpoints between tiers' actual short-side outputs (540p ~512-576,
+// 720p ~704-768, 1080p ~1056+) so a 540p 16:9 clip (576) buckets as 540p, not 720p.
 function continuationResolution(shortSide: number): string {
-  if (shortSide <= 560) return '540p'
-  if (shortSide <= 760) return '720p'
+  if (shortSide <= 640) return '540p'
+  if (shortSide <= 912) return '720p'
   return '1080p'
 }
 
@@ -3443,7 +3446,12 @@ export function GenSpace() {
       setSettings((prev) => ({
         ...prev,
         aspectRatio: continuationAspectRatio(res.width, res.height),
-        videoResolution: continuationResolution(Math.min(res.width, res.height)),
+        // Use the source clip's stored resolution tier, not one derived from its pixel
+        // dimensions: a "540p" 16:9 gen outputs at 1024x576, and mapping short-side 576
+        // by threshold lands it in 720p (the tier's actual short side varies by aspect,
+        // e.g. 21:9 540p is 512, so a pixel-threshold map can't be exact). Fall back to
+        // the pixel derivation only for a source with no stored tier (e.g. an import).
+        videoResolution: videoAsset.resolution || continuationResolution(Math.min(res.width, res.height)),
         fps: Math.round(res.fps) || prev.fps,
       }))
       continuationPendingRef.current = true
@@ -3647,7 +3655,7 @@ export function GenSpace() {
         </div>
       )}
 
-      {/* Assets area â€” full width, no background, above the prompt bar */}
+      {/* Assets area — full width, no background, above the prompt bar */}
       {/* Kept mounted even with no assets so the Browse LoRAs / Favorites / size toolbar survives the empty state. */}
       {isLibraryMode && (
         <div className="absolute inset-x-0 top-0 bottom-[160px] flex flex-col px-4 pt-4">
@@ -3782,7 +3790,7 @@ export function GenSpace() {
             </div>
           </div>
 
-          {/* Assets grid â€” fills remaining space, scrollable */}
+          {/* Assets grid — fills remaining space, scrollable */}
           <div className="overflow-y-auto overflow-x-hidden [scrollbar-gutter:stable] flex-1">
             <div className={`grid ${gallerySizeClasses[gallerySize]} gap-4`}>
               {isGenerating && (
@@ -3896,7 +3904,7 @@ export function GenSpace() {
         </div>
       )}
 
-      {/* Floating prompt panel â€” wider, responsive, centered */}
+      {/* Floating prompt panel — wider, responsive, centered */}
       <div className="absolute bottom-5 left-1/2 w-[min(700px,calc(100%-2rem))] -translate-x-1/2">
 
         <FreeApiKeyBubble
@@ -3921,7 +3929,7 @@ export function GenSpace() {
           }]} />
         )}
 
-        {/* Selected plain LoRAs (video gen only) â€” one chip each, info from the matched catalog entry. */}
+        {/* Selected plain LoRAs (video gen only) — one chip each, info from the matched catalog entry. */}
         {mode === 'video' && isLocalMode && selectedLoras.length > 0 && (
           <SelectedLoraInfo items={selectedLoras.map(s => {
             const entry = loraLibrary.items.find(e => e.installedPath === s.ref)
@@ -3998,7 +4006,7 @@ export function GenSpace() {
           loraDisplayNames={loraDisplayNames}
         />
 
-        {/* Advanced IC-LoRA controls â€” bottom-aligned to the right of the prompt panel. */}
+        {/* Advanced IC-LoRA controls — bottom-aligned to the right of the prompt panel. */}
         {mode === 'ic-lora' && !forceApiGenerations && advancedIcLoraControls && (
           <div className="absolute left-full bottom-0 ml-3">
             <IcLoraAdvancedPanel {...icLoraControlsProps} />
@@ -4105,7 +4113,7 @@ export function GenSpace() {
                     const asset = selectedAsset
                     if (!asset) return
                     // Grab the currently shown frame. The modal <video> autoplays,
-                    // so it's usually AT the end when clicked â€” seeking exactly at
+                    // so it's usually AT the end when clicked — seeking exactly at
                     // duration decodes no frame (ffmpeg writes nothing), which is
                     // why this failed. Back off ~one frame from the end, matching
                     // saveVideoFrame's fix.
@@ -4149,7 +4157,7 @@ export function GenSpace() {
                   selectedAsset.resolution,
                   selectedAsset.duration ? `${formatSeconds(selectedAsset.duration)}s` : 'Image',
                   selectedAsset.renderMs != null ? `${formatClock(selectedAsset.renderMs)} render` : null,
-                ].filter(Boolean).join(' â€¢ ')}
+                ].filter(Boolean).join(' • ')}
               </p>
             </div>
           </div>
@@ -4187,7 +4195,7 @@ export function GenSpace() {
                   setNewTagName('')
                 }
               }}
-              placeholder="Tag nameâ€¦"
+              placeholder="Tag name…"
               className="w-full rounded-md px-2 py-1.5 text-sm bg-zinc-800 text-white border border-zinc-700 outline-none focus:border-blue-500"
             />
             <div className="flex justify-end gap-2 mt-3">

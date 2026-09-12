@@ -151,7 +151,7 @@ function Dock({ onClose }: { onClose: () => void }) {
     if (f.isVideo) return
     setGenSpaceInputImagePath(f.path)
     setCurrentTab('gen-space')
-    flash('Sent to Gen Space')
+    flash('Sent to Create')
   }
   const openMove = (f: LibFile) => {
     setMoveTarget(f)
@@ -301,7 +301,7 @@ function Dock({ onClose }: { onClose: () => void }) {
                           >
                             <div className="absolute top-1 right-1 flex gap-1 opacity-0 group-hover:opacity-100">
                               {!file.isVideo && !file.isAudio && (
-                                <button onClick={() => sendToGenSpace(file)} title="Send to Gen Space as input image" className="h-5 w-5 flex items-center justify-center rounded" style={{ background: C.green, color: '#fff' }}><Send size={11} /></button>
+                                <button onClick={() => sendToGenSpace(file)} title="Send to Create as input image" className="h-5 w-5 flex items-center justify-center rounded" style={{ background: C.green, color: '#fff' }}><Send size={11} /></button>
                               )}
                               <button onClick={() => openMove(file)} title="Move to folder…" className="h-5 w-5 flex items-center justify-center rounded" style={{ background: 'rgba(0,0,0,0.6)', color: '#fff' }}><FolderOpen size={11} /></button>
                               <button onClick={() => void deleteFile(file)} title="Delete" className="h-5 w-5 flex items-center justify-center rounded" style={{ background: 'rgba(0,0,0,0.6)', color: '#fff' }}><Trash2 size={11} /></button>
