@@ -13,6 +13,7 @@ import { useProjects } from '../../contexts/ProjectContext'
 import { MediaThumb } from './MediaThumb'
 import { useDownloadsBrowserOpen, setDownloadsBrowserOpen } from './downloads-browser-store'
 import { GPM_IMAGE_DND_TYPE, saveDataUrlToTempFile, type GpmDndImage } from './gpm-image-file'
+import { setStudioAssetsTarget } from '../../lib/studio-assets-target'
 
 const C = {
   panel: '#0e0e12', card: '#16161b', elev: '#1c1c22',
@@ -49,6 +50,7 @@ function Dock({ onClose }: { onClose: () => void }) {
   const [files, setFiles] = useState<LibFile[]>([])
   const [openFolders, setOpenFolders] = useState<Set<string>>(new Set())
   const [newName, setNewName] = useState('')
+  const newNameRef = useRef<HTMLInputElement>(null)
   const [renaming, setRenaming] = useState<string | null>(null)
   const [renameVal, setRenameVal] = useState('')
   const [toast, setToast] = useState<string | null>(null)
@@ -97,18 +99,25 @@ function Dock({ onClose }: { onClose: () => void }) {
     setOpenFolders((prev) => {
       const next = new Set(prev)
       if (next.has(name)) next.delete(name)
-      else next.add(name)
+      else { next.add(name); setStudioAssetsTarget(name) } // opening = "the folder I'm working in" → quick-save target
       return next
     })
   }
   const collapseAll = () => setOpenFolders(new Set())
 
   const createFolder = async () => {
-    const n = newName.trim(); if (!n || !api) return
+    const n = newName.trim()
+    // The name comes from the inline box, not a popup — clicking the button with an
+    // empty box is a common "where do I type the name?" mistake, so nudge + focus it.
+    if (!n) { flash('Type a folder name in the box first, then click Create'); newNameRef.current?.focus(); return }
+    if (!api) return
     const r = await api.gpmLibCreateFolder({ name: n })
     if (r.success) {
-      saveOrder([...loadOrder(), n]); setNewName('')
+      // New folder at the TOP of the list (not appended below an expanded Inbox of
+      // hundreds of files, where it looks like nothing happened).
+      saveOrder([n, ...loadOrder().filter((f) => f !== n)]); setNewName('')
       setOpenFolders((prev) => new Set(prev).add(n))
+      setStudioAssetsTarget(n) // route quick-saves into the folder just created
       await refresh()
     } else flash(r.error)
   }
@@ -203,8 +212,8 @@ function Dock({ onClose }: { onClose: () => void }) {
       </div>
 
       <div className="flex gap-2 px-3 py-2 shrink-0" style={{ borderBottom: `1px solid ${C.border}` }}>
-        <input value={newName} onChange={(e) => setNewName(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') void createFolder() }} placeholder="New folder…" className="flex-1 rounded-md px-2 py-1.5 text-xs outline-none" style={{ background: C.elev, color: C.text, border: `1px solid ${C.border}` }} />
-        <button onClick={() => void createFolder()} title="Create folder" className="flex items-center gap-1 rounded-md px-2.5 py-1.5 text-xs font-medium" style={{ background: C.blue, color: '#fff' }}><FolderPlus size={13} /></button>
+        <input ref={newNameRef} value={newName} onChange={(e) => setNewName(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') void createFolder() }} placeholder="Type a folder name…" className="flex-1 rounded-md px-2 py-1.5 text-xs outline-none" style={{ background: C.elev, color: C.text, border: `1px solid ${C.border}` }} />
+        <button onClick={() => void createFolder()} title={newName.trim() ? 'Create folder' : 'Type a folder name in the box first'} className="flex items-center gap-1 rounded-md px-2.5 py-1.5 text-xs font-medium transition-opacity" style={{ background: C.blue, color: '#fff', opacity: newName.trim() ? 1 : 0.45 }}><FolderPlus size={13} />Create</button>
       </div>
 
       <div className="flex items-center gap-2 px-3 py-2 shrink-0" style={{ borderBottom: `1px solid ${C.border}` }}>
@@ -318,7 +327,7 @@ function Dock({ onClose }: { onClose: () => void }) {
         {folders.length === 0 && <p className="text-[11px] text-center py-4" style={{ color: C.faint }}>No folders yet.</p>}
       </div>
 
-      {toast && <div className="absolute left-1/2 bottom-4 -translate-x-1/2 px-3 py-2 rounded-lg text-xs" style={{ background: C.elev, border: `1px solid ${C.borderLt}`, color: C.text }}>{toast}</div>}
+      {toast && <div className="absolute left-1/2 top-3 -translate-x-1/2 z-30 px-3 py-2 rounded-lg text-xs text-center" style={{ background: C.elev, border: `1px solid ${C.borderLt}`, color: C.text, boxShadow: '0 8px 24px rgba(0,0,0,0.5)' }}>{toast}</div>}
 
       <button
         onClick={onClose} title="Close Studio Assets"

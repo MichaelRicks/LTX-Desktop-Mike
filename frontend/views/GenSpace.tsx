@@ -91,6 +91,7 @@ import {
 import { lastFrameFromDuration, retimeKeyframesForSettings, type DraggedFrame } from '../lib/keyframe-timeline'
 import { useVideoSaveMenu } from '../components/useVideoSaveMenu'
 import { useImageSaveMenu } from '../components/useImageSaveMenu'
+import { saveToStudioAssets } from '../lib/video-save-actions'
 
 // Sentinel binFilter value meaning "show every asset" (vs. a real binId, or
 // null for the default untagged-only view).
@@ -183,10 +184,9 @@ function AssetCard({
 
   const handleDownload = (e: React.MouseEvent) => {
     e.stopPropagation()
-    const a = document.createElement('a')
-    a.href = pathToFileUrl(asset.path)
-    a.download = asset.path.split('/').pop() || `${asset.type}-${asset.id}`
-    a.click()
+    // Quick-save into the last-used Studio Assets folder (no native Save dialog).
+    // Right-click the enlarged asset for the "Save…" menu to choose a location instead.
+    void saveToStudioAssets(asset.path)
   }
 
   // "Lightweight" post-to-X: no API keys/OAuth — opens X's compose page with

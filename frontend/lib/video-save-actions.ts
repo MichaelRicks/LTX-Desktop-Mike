@@ -6,6 +6,7 @@
  */
 
 import { fileUrlToPath } from './file-url'
+import { getStudioAssetsTarget } from './studio-assets-target'
 
 function baseNameNoExt(p: string): string {
   const base = p.split(/[\\/]/).pop() ?? 'video'
@@ -102,6 +103,31 @@ export async function saveImageFile(pathOrUrl: string, suggestedName?: string): 
     flashToast(res?.success ? 'Image saved' : 'Could not save image', !res?.success)
   } catch {
     flashToast('Could not save image', true)
+  }
+}
+
+/**
+ * One-click quick-save: copy a video/image straight into the Studio Assets library's
+ * last-used folder — no native Save dialog. The panel sorts newest-first, so the file
+ * lands at the TOP of that folder. `pathOrUrl` may be a raw path or a file:// URL.
+ * (The right-click "Save video/image" menu still uses the dialog for a chosen location.)
+ */
+export async function saveToStudioAssets(pathOrUrl: string): Promise<void> {
+  const api = window.electronAPI
+  if (!api?.gpmLibAddFiles) {
+    flashToast('Save unavailable — please restart the app', true)
+    return
+  }
+  const srcPath = fileUrlToPath(pathOrUrl)
+  const folder = getStudioAssetsTarget()
+  try {
+    const res = await api.gpmLibAddFiles({ folder, srcPaths: [srcPath] })
+    flashToast(
+      res?.success ? `Saved to Studio Assets · ${folder}` : (res?.error || 'Could not save'),
+      !res?.success,
+    )
+  } catch {
+    flashToast('Could not save to Studio Assets', true)
   }
 }
 

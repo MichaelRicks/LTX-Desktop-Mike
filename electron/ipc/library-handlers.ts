@@ -127,6 +127,7 @@ export function registerLibraryHandlers(): void {
   handle('gpmLibAddFiles', ({ folder, srcPaths }) => {
     try {
       const dest = folderPath(folder)
+      fs.mkdirSync(dest, { recursive: true }) // robust: quick-save target may have been deleted
       let added = 0
       for (const src of srcPaths) {
         if (!fs.existsSync(src) || !fs.statSync(src).isFile()) continue
