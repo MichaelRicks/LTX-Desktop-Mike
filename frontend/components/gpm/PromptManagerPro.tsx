@@ -32,14 +32,7 @@ import { FILE_DND, type LibFile } from './DownloadsBrowser'
 import { usePromptManagerProOpen, setPromptManagerProOpen } from './prompt-manager-pro-store'
 import { MediaThumb } from './MediaThumb'
 import { QwenMultiAnglePanel, DEFAULT_QWEN_ANGLE_STATE, type QwenAngleState } from './QwenMultiAnglePanel'
-
-/* Theme tokens sampled from the LTX / GPM screenshots (from the prototype). */
-const C = {
-  panel: '#0e0e12', card: '#16161b', elev: '#1c1c22',
-  border: '#26262d', borderLt: '#34343d',
-  text: '#f3f3f6', muted: '#8c8c95', faint: '#5c5c65',
-  blue: '#1f8fff', green: '#28c76f', amber: '#f5a623',
-}
+import { C } from './gpm-theme'
 
 // Camera reference thumbnails, bundled by Vite. Map filename -> resolved URL.
 const CAM_IMAGE_URLS = import.meta.glob('../../assets/gpm-camera/*.jpg', {
@@ -537,7 +530,7 @@ function ShotPanel({
               <button
                 key={a.id} onClick={() => toggleAnchor(a.id)}
                 className="rounded-full px-2.5 py-1 text-[10px]"
-                style={{ background: on ? 'rgba(31,143,255,0.15)' : C.elev, color: on ? C.blue : C.muted, border: `1px solid ${on ? C.blue : C.border}` }}
+                style={{ background: on ? 'rgb(var(--accent) / 0.15)' : C.elev, color: on ? C.blue : C.muted, border: `1px solid ${on ? C.blue : C.border}` }}
               >
                 {a.label}
               </button>
@@ -1086,7 +1079,7 @@ function PlatesPanel({ onUse, flash, activeId, setActiveId, sceneLens, setSceneL
           className="rounded-md py-6 px-3 text-center text-xs font-medium mb-3 transition-colors"
           style={{
             border: `2px dashed ${dragActive ? C.blue : C.borderLt}`,
-            background: dragActive ? 'rgba(31,143,255,0.14)' : 'transparent',
+            background: dragActive ? 'rgb(var(--accent) / 0.14)' : 'transparent',
             color: dragActive ? C.blue : C.muted,
           }}
         >

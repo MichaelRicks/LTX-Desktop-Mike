@@ -9,6 +9,7 @@ import {
   AZIMUTH_BUCKETS, ELEVATION_BUCKETS, DISTANCE_BUCKETS,
   snapAzimuth, snapElevation, snapPose, poseToPrompt,
 } from './qwen-angle-mapping'
+import { useGpmColors } from './gpm-theme'
 
 // Matches the standalone app's own detent labels — easier to scan than raw
 // degrees, and these are the LoRA's real vocabulary words anyway.
@@ -20,14 +21,9 @@ const SAVE_FOLDER_KEY = 'gpm_qwen_angle_save_folder'
 // cap extra references at 2. Also keeps the panel's in-memory state light.
 const MAX_EXTRA_REFS = 2
 
-/* Theme tokens — matches PromptManagerPro.tsx's C object exactly. */
-const C = {
-  panel: '#0e0e12', card: '#16161b', elev: '#1c1c22',
-  border: '#26262d', borderLt: '#34343d',
-  text: '#f3f3f6', muted: '#8c8c95', faint: '#5c5c65',
-  blue: '#1f8fff', green: '#28c76f', amber: '#f5a623',
-}
-const ACCENT2 = '#ff5c93' // camera-dot / sight-line accent, distinct from C.blue
+// Camera-dot / sight-line accent. Deliberately a fixed hue (not the palette
+// accent) so the marker stays distinct from C.blue, which now follows the theme.
+const ACCENT2 = '#ff5c93'
 
 export interface ResultEntry {
   id: string
@@ -141,6 +137,7 @@ export function QwenMultiAnglePanel({ state, setState, onUse, flash }: {
   onUse: (img: GpmImage) => void
   flash: (m: string) => void
 }) {
+  const C = useGpmColors() // palette-aware; also redraws the canvas below on theme change
   const { source, extraRefs, view, azDeg, elDeg, znIdx, extraPrompt, seed, randomizeSeed, useLightning, history, histIdx } = state
   const setSource = makeFieldSetter(setState, 'source')
   const setExtraRefs = makeFieldSetter(setState, 'extraRefs')
@@ -282,7 +279,7 @@ export function QwenMultiAnglePanel({ state, setState, onUse, flash }: {
     front.font = '600 9px sans-serif'; front.textAlign = 'center'; front.fillStyle = C.muted
     front.fillText('FRONT', fpnt.sx, fpnt.sy + 3)
     front.restore()
-  }, [view, azDeg, elDeg, znIdx, azIdx])
+  }, [view, azDeg, elDeg, znIdx, azIdx, C])
 
   const onGizmoPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
     dragState.current = { lastX: e.clientX, lastY: e.clientY }
@@ -515,7 +512,7 @@ export function QwenMultiAnglePanel({ state, setState, onUse, flash }: {
                     <path
                       key={b.deg}
                       d={`M ${xi0} ${yi0} L ${x0} ${y0} A 84 84 0 0 1 ${x1} ${y1} L ${xi1} ${yi1} A 36 36 0 0 0 ${xi0} ${yi0} Z`}
-                      fill={i === azIdx ? 'rgba(31,143,255,0.35)' : C.card}
+                      fill={i === azIdx ? C.blueSoft : C.card}
                       stroke={i === azIdx ? C.blue : C.border}
                       onClick={() => setAzDeg(b.deg)}
                       style={{ cursor: 'pointer' }}

@@ -102,6 +102,18 @@ export function getPalette(id: string): Palette {
   return PALETTES.find((p) => p.id === id) ?? PALETTES[0]
 }
 
+/** Palette-change listeners. Most of the UI re-themes purely via the CSS
+ *  variables below, but a few JS consumers can't read var() (e.g. the GPM
+ *  panels' <canvas>/SVG drawing) and subscribe here to recompute concrete
+ *  colors. The active palette id is passed to each listener. */
+type ThemeListener = (id: string) => void
+const listeners = new Set<ThemeListener>()
+
+export function subscribeTheme(cb: ThemeListener): () => void {
+  listeners.add(cb)
+  return () => { listeners.delete(cb) }
+}
+
 /** Write a palette's variables onto :root. The derived --bg/--surface/etc.
  *  (defined in index.css) reference these, so they follow automatically. */
 export function applyPalette(id: string): void {
@@ -112,6 +124,7 @@ export function applyPalette(id: string): void {
   }
   root.style.setProperty('--accent', palette.accent)
   root.style.setProperty('--accent-dark', palette.accentDark)
+  for (const cb of listeners) cb(palette.id)
 }
 
 export function getStoredPaletteId(): string {

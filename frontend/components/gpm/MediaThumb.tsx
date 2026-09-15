@@ -38,8 +38,8 @@ export function MediaThumb({
     >
       {isAudio
         ? (
-          <div className="w-full h-full flex items-center justify-center" style={{ background: '#16161b' }}>
-            <Music size={28} style={{ color: '#5c5c65' }} />
+          <div className="w-full h-full flex items-center justify-center" style={{ background: 'rgb(var(--zinc-900))' }}>
+            <Music size={28} style={{ color: 'rgb(var(--zinc-500))' }} />
           </div>
         )
         : isVideo

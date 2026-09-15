@@ -25,8 +25,8 @@ function ensureHover(): HTMLDivElement {
   el.id = 'gpm-hover-preview'
   el.style.cssText = [
     'position:fixed', 'z-index:2147483600', 'pointer-events:none', 'display:none',
-    'border-radius:10px', 'overflow:hidden', 'background:#0e0e12',
-    'border:1px solid #34343d', 'box-shadow:0 18px 50px rgba(0,0,0,0.6)',
+    'border-radius:10px', 'overflow:hidden', 'background:rgb(var(--zinc-950))',
+    'border:1px solid rgb(var(--zinc-700))', 'box-shadow:0 18px 50px rgba(0,0,0,0.6)',
   ].join(';')
   document.body.appendChild(el)
   window.addEventListener('scroll', hidePreview, true)
@@ -137,7 +137,7 @@ export function openLightbox(media: PreviewMedia): void {
   close.title = 'Close (Esc)'
   close.style.cssText = [
     'position:absolute', 'top:16px', 'right:20px', 'width:36px', 'height:36px',
-    'border-radius:8px', 'border:1px solid #34343d', 'background:#16161b', 'color:#f3f3f6',
+    'border-radius:8px', 'border:1px solid rgb(var(--zinc-700))', 'background:rgb(var(--zinc-900))', 'color:rgb(var(--zinc-100))',
     'font-size:16px', 'cursor:pointer',
   ].join(';')
   close.onclick = closeLightbox
@@ -145,7 +145,7 @@ export function openLightbox(media: PreviewMedia): void {
   if (media.name) {
     const label = document.createElement('div')
     label.textContent = media.name
-    label.style.cssText = 'position:absolute;bottom:16px;left:0;right:0;text-align:center;color:#8c8c95;font-size:12px;font-family:system-ui,sans-serif;'
+    label.style.cssText = 'position:absolute;bottom:16px;left:0;right:0;text-align:center;color:rgb(var(--zinc-400));font-size:12px;font-family:system-ui,sans-serif;'
     overlay.appendChild(label)
   }
   overlay.addEventListener('click', closeLightbox)
@@ -177,15 +177,15 @@ function showLightboxContextMenu(
     'position:fixed', `left:${Math.min(clientX, window.innerWidth - W - 8)}px`,
     `top:${Math.min(clientY, window.innerHeight - H - 8)}px`, `width:${W}px`,
     'z-index:2147483602', 'padding:4px', 'border-radius:8px',
-    'background:#18181b', 'border:1px solid #34343d',
+    'background:rgb(var(--zinc-900))', 'border:1px solid rgb(var(--zinc-700))',
     'box-shadow:0 12px 40px rgba(0,0,0,0.5)', 'font:500 13px system-ui,sans-serif',
   ].join(';')
   menu.oncontextmenu = (e) => e.preventDefault()
   const mkItem = (label: string, onPick: () => void): HTMLButtonElement => {
     const b = document.createElement('button')
     b.textContent = label
-    b.style.cssText = 'display:block;width:100%;text-align:left;padding:7px 12px;background:transparent;border:none;color:#e4e4e7;font-size:13px;cursor:pointer;border-radius:6px;'
-    b.onmouseenter = () => { b.style.background = '#27272a' }
+    b.style.cssText = 'display:block;width:100%;text-align:left;padding:7px 12px;background:transparent;border:none;color:rgb(var(--zinc-200));font-size:13px;cursor:pointer;border-radius:6px;'
+    b.onmouseenter = () => { b.style.background = 'rgb(var(--zinc-800))' }
     b.onmouseleave = () => { b.style.background = 'transparent' }
     b.onclick = (e) => { e.stopPropagation(); removeLightboxMenu(); onPick() }
     return b

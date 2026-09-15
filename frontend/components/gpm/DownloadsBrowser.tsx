@@ -14,13 +14,7 @@ import { MediaThumb } from './MediaThumb'
 import { useDownloadsBrowserOpen, setDownloadsBrowserOpen } from './downloads-browser-store'
 import { GPM_IMAGE_DND_TYPE, saveDataUrlToTempFile, type GpmDndImage } from './gpm-image-file'
 import { setStudioAssetsTarget } from '../../lib/studio-assets-target'
-
-const C = {
-  panel: '#0e0e12', card: '#16161b', elev: '#1c1c22',
-  border: '#26262d', borderLt: '#34343d',
-  text: '#f3f3f6', muted: '#8c8c95', faint: '#5c5c65',
-  blue: '#1f8fff', green: '#28c76f',
-}
+import { C } from './gpm-theme'
 
 export interface LibFile { folder: string; name: string; path: string; isVideo: boolean; isAudio: boolean; mtimeMs: number }
 type TypeFilter = 'all' | 'image' | 'video' | 'audio'
@@ -272,7 +266,7 @@ function Dock({ onClose }: { onClose: () => void }) {
                 onDragEnd={() => { dragFolder.current = null; setDropLine(null) }}
                 onClick={() => toggleFolder(f)}
                 className="relative flex items-center gap-1.5 px-3 py-2.5 cursor-pointer group"
-                style={{ background: isOpen ? 'rgba(31,143,255,0.12)' : 'transparent', borderLeft: `2px solid ${isOpen ? C.blue : 'transparent'}`, borderBottom: `1px solid ${C.border}` }}
+                style={{ background: isOpen ? 'rgb(var(--accent) / 0.12)' : 'transparent', borderLeft: `2px solid ${isOpen ? C.blue : 'transparent'}`, borderBottom: `1px solid ${C.border}` }}
               >
                 {dropLine?.target === f && (
                   <div
