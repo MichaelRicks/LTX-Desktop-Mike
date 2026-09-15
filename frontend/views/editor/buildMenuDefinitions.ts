@@ -242,7 +242,7 @@ export function useBuildMenuDefinitions(p: MenuDepsParams): MenuDefinition[] {
       label: 'Help',
       items: [
         { id: 'shortcuts', label: 'Keyboard Shortcuts...', action: () => p.setKbEditorOpen(true) },
-        { id: 'about', label: 'About LTX Desktop', action: () => window.dispatchEvent(new CustomEvent('open-settings', { detail: { tab: 'about' } })) },
+        { id: 'about', label: 'About RiX Desktop Studio Pro', action: () => window.dispatchEvent(new CustomEvent('open-settings', { detail: { tab: 'about' } })) },
       ],
     },
   ]), [

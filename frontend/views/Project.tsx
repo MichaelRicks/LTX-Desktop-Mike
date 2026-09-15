@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { ArrowLeft, Sparkles, Film, Save, Download, Pencil } from 'lucide-react'
 import { useProjects } from '../contexts/ProjectContext'
 import { useView } from '../contexts/ViewContext'
-import { LtxLogo } from '../components/LtxLogo'
+import { RixLogo } from '../components/RixLogo'
 import { Button } from '../components/ui/button'
 import { GenSpace } from './GenSpace'
 import { VideoEditor } from './VideoEditor'
@@ -214,7 +214,7 @@ export function Project() {
             <ArrowLeft className="h-5 w-5 text-zinc-400" />
           </button>
           
-          <LtxLogo className="h-5 w-auto text-white" />
+          <RixLogo className="h-5 w-auto text-white" />
 
           {/* Project name */}
           {isEditingName ? (

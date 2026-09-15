@@ -1,14 +1,14 @@
 {
-  "name": "ltx-desktop",
+  "name": "rix-desktop-studio-pro",
+  "productName": "RiX Desktop Studio Pro",
   "version": "1.2.7",
-  "description": "LTX-2 Video Generation - Desktop App",
+  "description": "RiX Desktop Studio Pro — AI video studio built on LTX-2",
   "type": "module",
   "main": "dist-electron/main.js",
   "author": {
-    "name": "Lightricks",
-    "email": "ltx-desktop-dev@lightricks.com"
+    "name": "Michael Ricks"
   },
-  "homepage": "https://github.com/Lightricks/LTX-Desktop",
+  "homepage": "https://github.com/MichaelRicks/LTX-Desktop-Mike",
   "license": "Apache-2.0",
   "private": true,
   "packageManager": "pnpm@10.30.3",

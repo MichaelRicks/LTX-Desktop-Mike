@@ -107,7 +107,7 @@ export function PythonSetup({ onReady }: PythonSetupProps) {
         // @ts-expect-error - Electron-specific CSS property
         WebkitAppRegion: 'drag'
       }}>
-        <span style={{ fontSize: 13, color: '#a0a0a0' }}>LTX Desktop Studio Pro</span>
+        <span style={{ fontSize: 13, color: '#a0a0a0' }}>RiX Desktop Studio Pro</span>
       </div>
 
       {/* Main Container */}
@@ -292,7 +292,7 @@ export function PythonSetup({ onReady }: PythonSetupProps) {
           justifyContent: 'space-between',
           alignItems: 'center'
         }}>
-          <div style={{ fontSize: 11, color: '#666' }}>&copy; 2026 Lightricks</div>
+          <div style={{ fontSize: 11, color: '#666' }}>&copy; 2026 Michael Ricks</div>
         </div>
       </div>
     </div>

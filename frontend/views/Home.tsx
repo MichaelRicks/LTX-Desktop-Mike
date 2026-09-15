@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react'
 import { Plus, Folder, MoreVertical, Trash2, Pencil, Upload, Copy } from 'lucide-react'
 import { useProjects } from '../contexts/ProjectContext'
 import { useView } from '../contexts/ViewContext'
-import { LtxLogo } from '../components/LtxLogo'
+import { RixLogo } from '../components/RixLogo'
 import { Button } from '../components/ui/button'
 import { pathToFileUrl } from '../lib/file-url'
 import type { Project } from '../types/project-model'
@@ -229,7 +229,7 @@ export function Home() {
       {/* Sidebar */}
       <aside className="w-64 border-r border-zinc-800 flex flex-col">
         <div className="p-6">
-          <LtxLogo className="h-6 w-auto text-white" />
+          <RixLogo className="h-6 w-auto text-white" />
         </div>
         
         <nav className="flex-1 px-3">
@@ -293,7 +293,7 @@ export function Home() {
           {/* Dark overlay for text readability */}
           <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-black/30 to-black/10" />
           <div className="absolute bottom-6 left-8 z-10">
-            <h1 className="text-3xl font-bold text-white mb-2 drop-shadow-lg">LTX Desktop Studio Pro</h1>
+            <h1 className="text-3xl font-bold text-white mb-2 drop-shadow-lg">RiX Desktop Studio Pro</h1>
             <p className="text-zinc-200 drop-shadow-md">Create and manage your video projects</p>
           </div>
         </div>

@@ -1171,7 +1171,7 @@ export function LaunchGate({
           justifyContent: 'space-between',
           alignItems: 'center'
         }}>
-          <div style={{ fontSize: 11, color: '#666' }}>© 2026 Lightricks</div>
+          <div style={{ fontSize: 11, color: '#666' }}>© 2026 Michael Ricks</div>
 
           <div style={{ display: 'flex', gap: 10 }}>
             {/* Next/Install/Finish Button */}

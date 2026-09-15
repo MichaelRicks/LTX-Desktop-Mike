@@ -1112,7 +1112,7 @@ export function SettingsModal({ isOpen, onClose, initialTab, initialReason, upda
                       </label>
                     </div>
                     <p className="text-xs text-zinc-500 leading-relaxed">
-                      Share anonymous usage data to help improve LTX Desktop.
+                      Share anonymous usage data to help improve RiX Desktop Studio Pro.
                       Only basic technical information is collected — never personal data or generated content.
                     </p>
                   </div>
@@ -1568,7 +1568,7 @@ export function SettingsModal({ isOpen, onClose, initialTab, initialReason, upda
                 <div className="space-y-6">
                   {/* App Identity */}
                   <div className="text-center space-y-2">
-                    <h3 className="text-lg font-bold text-white">LTX Desktop Studio Pro</h3>
+                    <h3 className="text-lg font-bold text-white">RiX Desktop Studio Pro</h3>
                     <p className="text-sm text-zinc-400">Version {appVersion || '...'}</p>
                     <p className="text-xs text-zinc-500">AI-Powered Video Editor</p>
                   </div>
@@ -1702,7 +1702,7 @@ export function SettingsModal({ isOpen, onClose, initialTab, initialReason, upda
 
                   {/* Copyright */}
                   <p className="text-center text-xs text-zinc-600">
-                    Copyright © 2026 Lightricks
+                    Copyright © 2026 Michael Ricks
                   </p>
                 </div>
               )}

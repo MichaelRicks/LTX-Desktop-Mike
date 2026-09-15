@@ -1,6 +1,6 @@
-appId: com.lightricks.ltx-desktop
-productName: LTX Desktop
-copyright: Copyright © 2026 Lightricks
+appId: com.michaelricks.rix-desktop-studio-pro
+productName: RiX Desktop Studio Pro
+copyright: Copyright © 2026 Michael Ricks
 
 directories:
   output: release
@@ -47,12 +47,9 @@ win:
         - x64
   icon: resources/icon.ico
   artifactName: ${productName}-Setup.${ext}
-  azureSignOptions:
-    publisherName: Lightricks US Inc
-    endpoint: https://eus.codesigning.azure.net/
-    certificateProfileName: ltx-desktop-trusted
-    codeSigningAccountName: ltx-trusted
-    excludeEnvironmentCredential: true
+  # Unsigned for the tester phase — Windows SmartScreen will warn ("More info ->
+  # Run anyway"). Re-add signing (own cert / Azure Trusted Signing) before a wider
+  # release. The Lightricks Azure cert config was removed here.
 
 nsis:
   oneClick: false
@@ -131,5 +128,7 @@ deb:
 
 publish:
   provider: github
+  owner: MichaelRicks
+  repo: LTX-Desktop-Mike
   owner: Lightricks
   repo: ltx-desktop
