@@ -335,7 +335,7 @@ function Dock({ onClose }: { onClose: () => void }) {
         style={{ left: 340, width: 24, height: 110, background: C.blue, color: '#fff', borderRadius: '0 8px 8px 0', boxShadow: '3px 0 10px rgba(0,0,0,0.35)' }}
       >
         <ChevronLeft size={16} />
-        <span className="text-xs font-semibold tracking-wide" style={{ writingMode: 'vertical-rl', transform: 'rotate(180deg)' }}>CLOSE</span>
+        <span className="text-xs font-semibold tracking-wide" style={{ writingMode: 'vertical-rl', transform: 'rotate(180deg)' }}>Close</span>
       </button>
 
       {moveTarget && (
@@ -369,9 +369,9 @@ export function DownloadsBrowser() {
   const open = useDownloadsBrowserOpen()
   if (!open) {
     return (
-      <button onClick={() => setDownloadsBrowserOpen(true)} title="Open Studio Assets" className="fixed top-1/2 -translate-y-1/2 left-0 flex flex-col items-center justify-center gap-1.5" style={{ width: 24, height: 110, background: C.blue, color: '#fff', borderRadius: '0 8px 8px 0', boxShadow: '3px 0 10px rgba(0,0,0,0.35)' }}>
+      <button onClick={() => setDownloadsBrowserOpen(true)} title="Open Studio Assets" className="fixed top-1/2 -translate-y-1/2 left-0 flex flex-col items-center justify-center gap-1.5" style={{ width: 24, height: 160, background: C.blue, color: '#fff', borderRadius: '0 8px 8px 0', boxShadow: '3px 0 10px rgba(0,0,0,0.35)' }}>
         <ChevronLeft size={16} style={{ transform: 'rotate(180deg)' }} />
-        <span className="text-xs font-semibold tracking-wide" style={{ writingMode: 'vertical-rl', transform: 'rotate(180deg)' }}>ASSETS</span>
+        <span className="text-xs font-semibold tracking-wide" style={{ writingMode: 'vertical-rl', transform: 'rotate(180deg)' }}>Studio Assets</span>
       </button>
     )
   }

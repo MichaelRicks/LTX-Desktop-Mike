@@ -1622,7 +1622,7 @@ function Dock({ onClose }: { onClose: () => void }) {
         style={{ width: 24, height: 110, background: C.blue, color: '#fff', borderRadius: '8px 0 0 8px', boxShadow: '-3px 0 10px rgba(0,0,0,0.35)' }}
       >
         <ChevronRight size={16} />
-        <span className="text-xs font-semibold tracking-wide" style={{ writingMode: 'vertical-rl', transform: 'rotate(180deg)' }}>CLOSE</span>
+        <span className="text-xs font-semibold tracking-wide" style={{ writingMode: 'vertical-rl', transform: 'rotate(180deg)' }}>Close</span>
       </button>
 
       <div className="flex items-center justify-between px-4 py-3 shrink-0" style={{ borderBottom: `1px solid ${C.border}` }}>
@@ -1754,7 +1754,7 @@ export function PromptManagerPro() {
         style={{ width: 24, height: 160, background: C.blue, color: '#fff', borderRadius: '8px 0 0 8px', boxShadow: '-3px 0 10px rgba(0,0,0,0.35)' }}
       >
         <ChevronRight size={16} style={{ transform: 'rotate(180deg)' }} />
-        <span className="text-xs font-semibold tracking-wide" style={{ writingMode: 'vertical-rl', transform: 'rotate(180deg)' }}>PROMPT MANAGER</span>
+        <span className="text-xs font-semibold tracking-wide" style={{ writingMode: 'vertical-rl', transform: 'rotate(180deg)' }}>Prompt Manager</span>
       </button>
     )
   }
