@@ -84,6 +84,10 @@ backend/generated/
 # Build artifacts
 release/
 python-embed/
+# Generated at build time (sha256 of `uv export`); bundled into the app so the
+# first-run downloader can match the hosted python-embed archive. Regenerated
+# each build — must not be committed, or it would go stale vs. the lockfile.
+python-deps-hash.txt
 
 # Downloaded during CI for Windows NSIS installer
 resources/vc_redist.x64.exe

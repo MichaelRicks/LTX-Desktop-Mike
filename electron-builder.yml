@@ -60,7 +60,7 @@ nsis:
   installerHeaderIcon: resources/icon.ico
   createDesktopShortcut: true
   createStartMenuShortcut: true
-  shortcutName: LTX Desktop
+  shortcutName: RiX Desktop Studio Pro
 
 mac:
   hardenedRuntime: true
@@ -130,5 +130,3 @@ publish:
   provider: github
   owner: MichaelRicks
   repo: LTX-Desktop-Mike
-  owner: Lightricks
-  repo: ltx-desktop
