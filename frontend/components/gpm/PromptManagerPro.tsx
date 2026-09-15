@@ -419,6 +419,21 @@ function ShotPanel({
     e.preventDefault()
     const gpm = e.dataTransfer.getData(GPM_IMAGE_DND_TYPE)
     if (gpm) { const d = JSON.parse(gpm) as { name: string; dataUrl: string }; setSrcImage(d); return }
+    // A Studio Assets file (FILE_DND) or an image dragged from the Create gallery ('asset'):
+    // read it off disk into a data URL and use it as the shot's source frame.
+    const fileRaw = e.dataTransfer.getData(FILE_DND)
+    const p = fileRaw
+      ? (JSON.parse(fileRaw) as LibFile).path
+      : e.dataTransfer.getData('asset')
+        ? (JSON.parse(e.dataTransfer.getData('asset')) as { path: string }).path
+        : null
+    if (p) {
+      const api = window.electronAPI
+      if (!api) return
+      const name = p.split(/[\\/]/).pop() || 'image'
+      void api.gpmLibReadAsDataUrl({ path: p }).then((r) => { if (r.success) setSrcImage({ name, dataUrl: r.dataUrl }) })
+      return
+    }
     const file = e.dataTransfer.files?.[0]
     if (file && file.type.startsWith('image/')) readFile(file)
   }
@@ -992,6 +1007,7 @@ function PlatesPanel({ onUse, flash, activeId, setActiveId, sceneLens, setSceneL
   sceneAimRef: React.MutableRefObject<{ yaw: number; pitch: number }>
 }) {
   const [panos, setPanos] = useState<GpmPanorama[]>([])
+  const [dragActive, setDragActive] = useState(false)
   const openScene = (id: string) => { if (id !== activeId) sceneAimRef.current = { yaw: 0, pitch: 0 }; setActiveId(id) }
   const fileRef = useRef<HTMLInputElement | null>(null)
   const reload = () => { void loadPanoramas().then(setPanos) }
@@ -1000,21 +1016,42 @@ function PlatesPanel({ onUse, flash, activeId, setActiveId, sceneLens, setSceneL
   const readDataUrl = (file: File) => new Promise<string>((res, rej) => {
     const r = new FileReader(); r.onload = () => res(String(r.result)); r.onerror = () => rej(r.error); r.readAsDataURL(file)
   })
-  const addOne = async (name: string, dataUrl: string): Promise<boolean> => {
+  // Returns the new panorama's id (or null if the cap was hit), so a drop can open
+  // it in the 3D viewer immediately instead of leaving the user to hunt for it.
+  const addOne = async (name: string, dataUrl: string): Promise<string | null> => {
     const existing = await loadPanoramas()
-    if (existing.length >= MAX_PANORAMAS) { flash(`Max ${MAX_PANORAMAS} panoramas reached`); return false }
-    await putPanorama({ id: gpmId(), name, dataUrl, addedAt: Date.now() })
-    return true
+    if (existing.length >= MAX_PANORAMAS) { flash(`Max ${MAX_PANORAMAS} panoramas reached`); return null }
+    const id = gpmId()
+    await putPanorama({ id, name, dataUrl, addedAt: Date.now() })
+    return id
   }
   const addFiles = async (files: File[]) => {
     let n = 0
-    for (const f of files) { if (!f.type.startsWith('image/')) continue; if (await addOne(f.name, await readDataUrl(f))) n++; else break }
-    if (n) { reload(); flash(`Added ${n} panorama${n !== 1 ? 's' : ''}`) }
+    let lastId: string | null = null
+    for (const f of files) { if (!f.type.startsWith('image/')) continue; const id = await addOne(f.name, await readDataUrl(f)); if (id) { lastId = id; n++ } else break }
+    if (n) { reload(); flash(`Added ${n} panorama${n !== 1 ? 's' : ''}`); if (lastId) openScene(lastId) }
   }
   const onDrop = (e: React.DragEvent) => {
-    e.preventDefault()
+    e.preventDefault(); setDragActive(false)
     const gpm = e.dataTransfer.getData(GPM_IMAGE_DND_TYPE)
-    if (gpm) { const d = JSON.parse(gpm) as { name: string; dataUrl: string }; void addOne(d.name, d.dataUrl).then((ok) => { if (ok) { reload(); flash('Panorama saved') } }); return }
+    if (gpm) { const d = JSON.parse(gpm) as { name: string; dataUrl: string }; void addOne(d.name, d.dataUrl).then((id) => { if (id) { reload(); flash('Panorama saved'); openScene(id) } }); return }
+    // A Studio Assets file (FILE_DND) or an image dragged from the Create gallery ('asset'):
+    // read it off disk and save it as a panorama, same as the Images-tab drop.
+    const fileRaw = e.dataTransfer.getData(FILE_DND)
+    const p = fileRaw
+      ? (JSON.parse(fileRaw) as LibFile).path
+      : e.dataTransfer.getData('asset')
+        ? (JSON.parse(e.dataTransfer.getData('asset')) as { path: string }).path
+        : null
+    if (p) {
+      const api = window.electronAPI
+      if (!api) return
+      const name = p.split(/[\\/]/).pop() || 'panorama'
+      void api.gpmLibReadAsDataUrl({ path: p }).then((r) => {
+        if (r.success) void addOne(name, r.dataUrl).then((id) => { if (id) { reload(); flash('Panorama saved'); openScene(id) } })
+      })
+      return
+    }
     void addFiles(Array.from(e.dataTransfer.files ?? []))
   }
   const remove = (id: string) => { if (id === activeId) setActiveId(null); void deletePanorama(id).then(reload) }
@@ -1037,7 +1074,7 @@ function PlatesPanel({ onUse, flash, activeId, setActiveId, sceneLens, setSceneL
 
       {active && <SceneViewer key={active.id} pano={active} onClose={() => setActiveId(null)} onPlate={onPlate} lens={sceneLens} setLens={setSceneLens} aimRef={sceneAimRef} />}
 
-      <div onDragOver={(e) => e.preventDefault()} onDrop={onDrop}>
+      <div onDragOver={(e) => { e.preventDefault(); if (!dragActive) setDragActive(true) }} onDragLeave={() => setDragActive(false)} onDrop={onDrop}>
         <div className="flex items-center justify-between mb-2">
           <Label>Panoramas</Label>
           <span className="text-[10px] tabular-nums" style={{ color: C.faint }}>{panos.length}/{MAX_PANORAMAS}</span>
@@ -1046,10 +1083,14 @@ function PlatesPanel({ onUse, flash, activeId, setActiveId, sceneLens, setSceneL
           <Upload size={13} />Import Panorama
         </button>
         <div
-          className="rounded-md py-4 px-3 text-center text-[11px] mb-3"
-          style={{ border: `1px dashed ${C.borderLt}`, color: C.faint }}
+          className="rounded-md py-6 px-3 text-center text-xs font-medium mb-3 transition-colors"
+          style={{
+            border: `2px dashed ${dragActive ? C.blue : C.borderLt}`,
+            background: dragActive ? 'rgba(31,143,255,0.14)' : 'transparent',
+            color: dragActive ? C.blue : C.muted,
+          }}
         >
-          Drop an image here (or from the Images tab) to save as a panorama
+          {dragActive ? 'Release to save as a panorama' : 'Drop an image here — from the Create gallery, Studio Assets, or the Images tab — to save as a panorama'}
         </div>
 
         {panos.length === 0
