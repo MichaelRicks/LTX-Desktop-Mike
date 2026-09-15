@@ -667,6 +667,21 @@ function WorkflowPanel({
         const img: GpmImage = { id: gpmId(), name: f.name, folderId: null, dataUrl: r.dataUrl, addedAt: Date.now(), isVideo: f.isVideo }
         void putImage(img).then(() => { setLibrary((prev) => [img, ...prev]); bindImage(slotId, img) })
       })
+      return
+    }
+    // An image dragged straight from the Create gallery (work-area canvas): read it off
+    // disk, add it to the library, then bind it to the slot — same as the Downloads path.
+    const assetRaw = e.dataTransfer.getData('asset')
+    if (assetRaw) {
+      const a = JSON.parse(assetRaw) as { path: string; type?: string }
+      const api = window.electronAPI
+      if (!api) return
+      const name = a.path.split(/[\\/]/).pop() || 'image'
+      void api.gpmLibReadAsDataUrl({ path: a.path }).then((r) => {
+        if (!r.success) return
+        const img: GpmImage = { id: gpmId(), name, folderId: null, dataUrl: r.dataUrl, addedAt: Date.now(), isVideo: a.type === 'video' }
+        void putImage(img).then(() => { setLibrary((prev) => [img, ...prev]); bindImage(slotId, img) })
+      })
     }
   }
 
@@ -727,7 +742,7 @@ function WorkflowPanel({
             <div key={s.id} className="rounded-lg p-2 flex gap-2 items-center" style={{ background: C.elev, border: `1px solid ${C.border}` }}>
               <div
                 className="relative w-28 shrink-0"
-                onDragOver={(e) => { if (e.dataTransfer.types.includes(GPM_IMAGE_DND_TYPE) || e.dataTransfer.types.includes(FILE_DND)) e.preventDefault() }}
+                onDragOver={(e) => { if (e.dataTransfer.types.includes(GPM_IMAGE_DND_TYPE) || e.dataTransfer.types.includes(FILE_DND) || e.dataTransfer.types.includes('asset')) e.preventDefault() }}
                 onDrop={(e) => onSlotDrop(e, s.id)}
               >
                 <button
@@ -1310,9 +1325,16 @@ function ImagesPanel({ ctl, onCopy, onUse, flash }: { ctl: SectionCtl; onCopy: (
   }
   const onLibFileDrop = (e: React.DragEvent, folderId: string | null) => {
     const raw = e.dataTransfer.getData(FILE_DND)
-    if (!raw) return
-    e.preventDefault()
-    void addFromLibFile(JSON.parse(raw) as LibFile, folderId)
+    if (raw) { e.preventDefault(); void addFromLibFile(JSON.parse(raw) as LibFile, folderId); return }
+    // Also accept an image dragged straight from the Create gallery (work-area canvas),
+    // so it lands directly in an Images folder instead of via the Studio Assets round-trip.
+    const assetRaw = e.dataTransfer.getData('asset')
+    if (assetRaw) {
+      e.preventDefault()
+      const a = JSON.parse(assetRaw) as { path: string; type?: string }
+      const name = a.path.split(/[\\/]/).pop() || 'image'
+      void addFromLibFile({ folder: '', name, path: a.path, isVideo: a.type === 'video', isAudio: false, mtimeMs: 0 }, folderId)
+    }
   }
 
   const renderGrid = (items: GpmImage[]) => (
@@ -1362,7 +1384,7 @@ function ImagesPanel({ ctl, onCopy, onUse, flash }: { ctl: SectionCtl; onCopy: (
         return (
           <div
             key={f.id}
-            onDragOver={(e) => { if (e.dataTransfer.types.includes(FILE_DND)) e.preventDefault() }}
+            onDragOver={(e) => { if (e.dataTransfer.types.includes(FILE_DND) || e.dataTransfer.types.includes('asset')) e.preventDefault() }}
             onDrop={(e) => onLibFileDrop(e, f.id)}
           >
           <Section
@@ -1407,7 +1429,7 @@ function ImagesPanel({ ctl, onCopy, onUse, flash }: { ctl: SectionCtl; onCopy: (
       })}
       {unassigned.length > 0 && (
         <div
-          onDragOver={(e) => { if (e.dataTransfer.types.includes(FILE_DND)) e.preventDefault() }}
+          onDragOver={(e) => { if (e.dataTransfer.types.includes(FILE_DND) || e.dataTransfer.types.includes('asset')) e.preventDefault() }}
           onDrop={(e) => onLibFileDrop(e, null)}
         >
           <Section id="if-unassigned" ctl={ctl} title={`Unassigned (${unassigned.length})`}>
