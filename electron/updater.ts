@@ -49,8 +49,35 @@ function hasRestorableOffer(): boolean {
   return Boolean(state.version && getSkippedUpdateVersion() !== state.version)
 }
 
+// A beta whose only releases are pre-releases — and which carries no
+// electron-updater metadata (latest.yml) yet — has no update feed to read. A
+// failed check then is expected, not a fault: GitHub answers the releases lookup
+// with 404/406, or electron-updater reports it can't find a production release.
+// Detect that class so it's logged quietly and shown as "up to date", instead of
+// dumping a multi-KB HttpError (headers and all) to the log and UI on every check.
+function isBenignNoReleaseError(message: string): boolean {
+  const m = message.toLowerCase()
+  return m.includes('unable to find latest version')
+    || m.includes('ensure a production release exists')
+    || m.includes('cannot parse releases feed')
+    || m.includes('latest.yml')
+    || m.includes('httperror: 404')
+    || m.includes('httperror: 406')
+}
+
 // Network/feed errors must not drop a known offer or a finished download.
 function failUpdate(message: string): void {
+  // No update feed yet (beta pre-release / no metadata): treat as "nothing to
+  // update to" — quiet log, show up-to-date, don't surface an error. Only when
+  // there's no in-flight download or restorable offer to protect.
+  if (isBenignNoReleaseError(message)
+    && state.status !== 'downloading' && state.status !== 'downloaded'
+    && !hasRestorableOffer()) {
+    logger.info('[updater] No update feed published yet — treating as up to date')
+    endMacFlight()
+    setState({ status: 'not-available', message: undefined })
+    return
+  }
   logger.error(`[updater] ${message}`)
   if (process.platform === 'darwin') {
     // No modal / Try again. Keep a finished download; otherwise idle so Check retries.
