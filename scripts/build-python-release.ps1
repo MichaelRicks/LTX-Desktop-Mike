@@ -48,6 +48,27 @@ Set-Content -Path (Join-Path $root "python-deps-hash.txt") -Value $hash -NoNewli
 Copy-Item   (Join-Path $root "python-deps-hash.txt") (Join-Path $out "python-deps-hash.txt")
 Write-Host "  deps hash: $hash" -ForegroundColor Green
 
+# ── 1b. verify the embed actually matches the lockfile ──
+# The hash above is derived from the lockfile, NOT from what's installed — so a
+# stale embed (e.g. a leftover ltx_core 1.1.1 build while the lock is on 1.2.0)
+# would ship with a "correct" hash and crash the backend on first launch. Run the
+# embed's own python to compare every locked dependency (pinned versions AND git
+# commits) against what's really installed, and refuse to package on any drift.
+Write-Host "Verifying embed matches the lockfile..." -ForegroundColor Yellow
+$embedPy  = Join-Path $embed "python.exe"
+$verifier = Join-Path $PSScriptRoot "verify_python_embed.py"
+if (-not (Test-Path $embedPy)) { throw "embed python not found at '$embedPy'" }
+$reqFile = Join-Path ([System.IO.Path]::GetTempPath()) "rix-embed-verify-req.txt"
+Set-Content -Path $reqFile -Value ($export -join "`n") -Encoding utf8
+try {
+  & $embedPy $verifier $reqFile
+  if ($LASTEXITCODE -ne 0) {
+    throw "python-embed does not match the lockfile (drift listed above). Rebuild it with scripts\prepare-python.ps1, then re-run this script."
+  }
+} finally {
+  Remove-Item $reqFile -Force -ErrorAction SilentlyContinue
+}
+
 # ── 2. tar the embed dir (keep a top-level python-embed/ inside, as the extractor expects) ──
 Write-Host "Creating tarball (this can take a while for a ~5GB env)..." -ForegroundColor Yellow
 $tar = Join-Path $out "$prefix.tar.gz"
