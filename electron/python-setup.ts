@@ -133,7 +133,7 @@ export async function preDownloadPythonForUpdate(
   }
 
   const baseUrl = (isDev && process.env.LTX_PYTHON_URL?.replace(/^["']+|["']+$/g, ''))
-    || `https://github.com/Lightricks/ltx-desktop/releases/download/v${newVersion}`
+    || `https://github.com/MichaelRicks/LTX-Desktop-Mike/releases/download/v${newVersion}`
 
   // Fetch the new version's deps hash
   const newHash = await fetchRemoteDepsHash(baseUrl, 'python-next-hash-check.txt')
@@ -242,7 +242,7 @@ function getArchiveBase(): string {
     return process.env.LTX_PYTHON_URL.replace(/^["']+|["']+$/g, '')
   }
   const version = app.getVersion()
-  return `https://github.com/Lightricks/ltx-desktop/releases/download/v${version}`
+  return `https://github.com/MichaelRicks/LTX-Desktop-Mike/releases/download/v${version}`
 }
 
 function getFallbackArchiveUrl(): string | null {

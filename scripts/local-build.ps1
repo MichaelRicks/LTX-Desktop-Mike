@@ -78,6 +78,23 @@ if (-not (Test-Path $PythonEmbedDir)) {
     exit 1
 }
 
+# Write python-deps-hash.txt (bundled via electron-builder extraResources). The
+# first-run downloader compares this against the release's python-deps-hash.txt and
+# refuses a mismatched archive. Must be the SAME computation as build-python-release.ps1
+# so the bundled hash and the hosted archive's hash always agree.
+Write-Host "Writing python-deps-hash.txt..." -ForegroundColor Yellow
+Push-Location (Join-Path $ProjectDir "backend")
+$depsExport = & uv export --frozen --no-hashes --no-editable --no-emit-project
+Pop-Location
+if ($LASTEXITCODE -eq 0) {
+    $depsBytes = [System.Text.Encoding]::UTF8.GetBytes(($depsExport -join "`n"))
+    $depsHash = ([System.BitConverter]::ToString([System.Security.Cryptography.SHA256]::Create().ComputeHash($depsBytes)) -replace '-','').ToLower()
+    Set-Content -Path (Join-Path $ProjectDir "python-deps-hash.txt") -Value $depsHash -NoNewline -Encoding ascii
+    Write-Host "  deps hash: $depsHash" -ForegroundColor Green
+} else {
+    Write-Host "  WARNING: uv export failed; python-deps-hash.txt not updated" -ForegroundColor DarkYellow
+}
+
 # ============================================================
 # Step 2: Install pnpm dependencies
 # ============================================================
