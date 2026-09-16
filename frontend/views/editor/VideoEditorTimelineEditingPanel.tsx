@@ -27,7 +27,7 @@ import { GPM_IMAGE_DND_TYPE } from '../../components/gpm/gpm-image-file'
 import { FILE_DND } from '../../components/gpm/DownloadsBrowser'
 import { GapGenerationModal } from './GapGenerationModal'
 import { ClipContextMenu, type ClipContextMenuState } from './ClipContextMenu'
-import type { TimelineClip, Track, SubtitleClip, Asset, TextOverlayStyle } from '../../types/project-model'
+import type { TimelineClip, Track, SubtitleClip, Asset, TextOverlayStyle, TransitionType } from '../../types/project-model'
 import { ApiClient } from '../../lib/api-client'
 import { pathToFileUrl } from '../../lib/file-url'
 import {
@@ -430,6 +430,8 @@ export function VideoEditorTimelineEditingPanel(props: VideoEditorTimelineEditin
   const [hoveredCutPoint, setHoveredCutPoint] = useState<{
     leftClipId: string; rightClipId: string; time: number; trackIndex: number
   } | null>(null)
+  // Which seam a transition chip is currently being dragged over (for the drop highlight).
+  const [dragOverCut, setDragOverCut] = useState<{ leftClipId: string; rightClipId: string } | null>(null)
 
   const [videoTrackHeight, setVideoTrackHeight] = useState(56)
   const [audioTrackHeight, setAudioTrackHeight] = useState(56)
@@ -591,6 +593,24 @@ export function VideoEditorTimelineEditingPanel(props: VideoEditorTimelineEditin
       return clip
     }))
   }, [setClips])
+
+  // Apply a centered transition to the seam between two clips: the left clip's
+  // transitionOut and the right clip's transitionIn both become `type` (a
+  // dissolve becomes a cross-dissolve; a fade goes out-then-in through the seam;
+  // a wipe wipes out-then-in). Existing durations are preserved. Used by the
+  // drag-a-transition-onto-the-cut drop target.
+  const applyJunctionTransition = useCallback((leftClipId: string, rightClipId: string, type: TransitionType) => {
+    if (type === 'none') { removeCrossDissolve(leftClipId, rightClipId); return }
+    setClips(prev => prev.map(clip => {
+      if (clip.id === leftClipId) {
+        return { ...clip, transitionOut: { type, duration: clip.transitionOut?.duration || DEFAULT_DISSOLVE_DURATION } }
+      }
+      if (clip.id === rightClipId) {
+        return { ...clip, transitionIn: { type, duration: clip.transitionIn?.duration || DEFAULT_DISSOLVE_DURATION } }
+      }
+      return clip
+    }))
+  }, [setClips, removeCrossDissolve])
 
   const removeClip = useCallback((clipId: string) => {
     const clip = clips.find(candidate => candidate.id === clipId)
@@ -1086,7 +1106,7 @@ export function VideoEditorTimelineEditingPanel(props: VideoEditorTimelineEditin
   }, [trackDisplayRow, audioDividerDisplayRow, orderedTracks, videoTrackHeight, audioTrackHeight, subtitleTrackHeight])
 
   const cutPoints = useMemo(() => {
-    const points: { leftClip: TimelineClip; rightClip: TimelineClip; time: number; trackIndex: number; hasDissolve: boolean }[] = []
+    const points: { leftClip: TimelineClip; rightClip: TimelineClip; time: number; trackIndex: number; hasDissolve: boolean; hasTransition: boolean; transitionType: TransitionType }[] = []
     const byTrack: Map<number, TimelineClip[]> = new Map()
     for (const clip of clips) {
       if (!byTrack.has(clip.trackIndex)) byTrack.set(clip.trackIndex, [])
@@ -1099,8 +1119,15 @@ export function VideoEditorTimelineEditingPanel(props: VideoEditorTimelineEditin
         const right = sorted[i + 1]
         const leftEnd = left.startTime + left.duration
         if (Math.abs(leftEnd - right.startTime) < CUT_POINT_TOLERANCE) {
-          const hasDissolve = (left.transitionOut?.type === 'dissolve') || (right.transitionIn?.type === 'dissolve')
-          points.push({ leftClip: left, rightClip: right, time: leftEnd, trackIndex: trackIdx, hasDissolve })
+          const leftOut = left.transitionOut?.type
+          const rightIn = right.transitionIn?.type
+          const transitionType: TransitionType =
+            (leftOut && leftOut !== 'none') ? leftOut
+              : (rightIn && rightIn !== 'none') ? rightIn
+                : 'none'
+          const hasDissolve = transitionType === 'dissolve'
+          const hasTransition = transitionType !== 'none'
+          points.push({ leftClip: left, rightClip: right, time: leftEnd, trackIndex: trackIdx, hasDissolve, hasTransition, transitionType })
         }
       }
     }
@@ -2969,17 +2996,33 @@ export function VideoEditorTimelineEditingPanel(props: VideoEditorTimelineEditin
                     const leftPx = cp.time * pixelsPerSecond
                     const topPx = trackTopPx(cp.trackIndex, 4)
                     const isHovered = hoveredCutPoint?.leftClipId === cp.leftClip.id && hoveredCutPoint?.rightClipId === cp.rightClip.id
-                    const dissolveDur = cp.hasDissolve ? (cp.leftClip.transitionOut?.duration || DEFAULT_DISSOLVE_DURATION) : 0
+                    const isDragOver = dragOverCut?.leftClipId === cp.leftClip.id && dragOverCut?.rightClipId === cp.rightClip.id
+                    const dissolveDur = cp.hasTransition ? (cp.leftClip.transitionOut?.duration || DEFAULT_DISSOLVE_DURATION) : 0
                     const dissolveWidthPx = dissolveDur * pixelsPerSecond
-                    
+                    // Color-code + label the seam region by transition type.
+                    const tRGB =
+                      cp.transitionType === 'dissolve' ? '139,92,246'      // purple
+                        : cp.transitionType === 'fade-to-black' ? '148,163,184'  // slate
+                        : cp.transitionType === 'fade-to-white' ? '226,232,240'  // light
+                        : '59,130,246'                                     // blue (wipes)
+                    const tLabel =
+                      cp.transitionType === 'dissolve' ? 'Dissolve'
+                        : cp.transitionType === 'fade-to-black' ? 'Fade ●'
+                        : cp.transitionType === 'fade-to-white' ? 'Fade ○'
+                        : cp.transitionType === 'wipe-left' ? 'Wipe ◄'
+                        : cp.transitionType === 'wipe-right' ? 'Wipe ►'
+                        : cp.transitionType === 'wipe-up' ? 'Wipe ▲'
+                        : cp.transitionType === 'wipe-down' ? 'Wipe ▼'
+                        : ''
+
                     return (
                       <div
                         key={`cut-${cp.leftClip.id}-${cp.rightClip.id}`}
                         className="absolute z-20"
                         style={{
-                          left: `${cp.hasDissolve ? leftPx - dissolveWidthPx : leftPx - 10}px`,
+                          left: `${cp.hasTransition ? leftPx - dissolveWidthPx : leftPx - 12}px`,
                           top: `${topPx - 24}px`,
-                          width: `${cp.hasDissolve ? dissolveWidthPx * 2 : 20}px`,
+                          width: `${cp.hasTransition ? dissolveWidthPx * 2 : 24}px`,
                           height: `${48 + 24}px`, /* extend upward to include popup zone */
                         }}
                         onMouseEnter={() => setHoveredCutPoint({
@@ -2989,18 +3032,37 @@ export function VideoEditorTimelineEditingPanel(props: VideoEditorTimelineEditin
                           trackIndex: cp.trackIndex,
                         })}
                         onMouseLeave={() => setHoveredCutPoint(null)}
+                        onDragOver={(e) => {
+                          if (!e.dataTransfer.types.includes('transitiontype')) return
+                          e.preventDefault()
+                          e.stopPropagation()
+                          e.dataTransfer.dropEffect = 'copy'
+                          if (!isDragOver) setDragOverCut({ leftClipId: cp.leftClip.id, rightClipId: cp.rightClip.id })
+                        }}
+                        onDragLeave={() => {
+                          setDragOverCut(prev => (prev?.leftClipId === cp.leftClip.id && prev?.rightClipId === cp.rightClip.id) ? null : prev)
+                        }}
+                        onDrop={(e) => {
+                          const type = e.dataTransfer.getData('transitiontype') as TransitionType
+                          setDragOverCut(null)
+                          if (!type) return
+                          e.preventDefault()
+                          e.stopPropagation()
+                          applyJunctionTransition(cp.leftClip.id, cp.rightClip.id, type)
+                        }}
                       >
-                        {/* Visible indicator line */}
-                        <div 
-                          className={`absolute top-6 bottom-0 w-0.5 transition-colors ${
-                            isHovered ? 'bg-blue-400' : cp.hasDissolve ? 'bg-blue-500/60' : 'bg-transparent'
+                        {/* Visible indicator line — also the drop indicator: a faint
+                            tick on empty seams, brighter with a transition, glowing on drag-over. */}
+                        <div
+                          className={`absolute top-6 bottom-0 rounded-full transition-all ${isDragOver ? 'w-1.5 shadow-[0_0_8px_rgba(96,165,250,0.9)]' : 'w-0.5'} ${
+                            isDragOver || isHovered ? 'bg-blue-400' : cp.hasTransition ? 'bg-blue-500/60' : 'bg-zinc-500/25'
                           }`}
-                          style={{ left: `${cp.hasDissolve ? dissolveWidthPx : 10}px`, transform: 'translateX(-50%)' }}
+                          style={{ left: `${cp.hasTransition ? dissolveWidthPx : 12}px`, transform: 'translateX(-50%)' }}
                         />
                         
-                        {cp.hasDissolve ? (
+                        {cp.hasTransition ? (
                           <>
-                            {/* Dissolve region visual (gradient bar on the clip area) */}
+                            {/* Transition region visual (gradient bar straddling the seam) */}
                             <div
                               className="absolute rounded-sm pointer-events-none"
                               style={{
@@ -3008,13 +3070,13 @@ export function VideoEditorTimelineEditingPanel(props: VideoEditorTimelineEditin
                                 top: '24px',
                                 width: `${dissolveWidthPx * 2}px`,
                                 height: '48px',
-                                background: 'linear-gradient(to right, rgba(139,92,246,0.15), rgba(139,92,246,0.3), rgba(139,92,246,0.15))',
-                                borderTop: '2px solid rgba(139,92,246,0.5)',
-                                borderBottom: '2px solid rgba(139,92,246,0.5)',
+                                background: `linear-gradient(to right, rgba(${tRGB},0.15), rgba(${tRGB},0.3), rgba(${tRGB},0.15))`,
+                                borderTop: `2px solid rgba(${tRGB},0.5)`,
+                                borderBottom: `2px solid rgba(${tRGB},0.5)`,
                               }}
                             />
-                            
-                            {/* Dissolve duration label */}
+
+                            {/* Transition type + duration label */}
                             <div
                               className="absolute flex items-center justify-center pointer-events-none"
                               style={{
@@ -3024,8 +3086,8 @@ export function VideoEditorTimelineEditingPanel(props: VideoEditorTimelineEditin
                                 height: '48px',
                               }}
                             >
-                              <span className="text-[9px] text-blue-300 font-medium bg-blue-900/60 px-1.5 py-0.5 rounded">
-                                {dissolveDur.toFixed(1)}s
+                              <span className="text-[9px] text-white/90 font-medium bg-black/55 px-1.5 py-0.5 rounded whitespace-nowrap">
+                                {tLabel} · {dissolveDur.toFixed(1)}s
                               </span>
                             </div>
                             
@@ -3114,7 +3176,7 @@ export function VideoEditorTimelineEditingPanel(props: VideoEditorTimelineEditin
                           </>
                         ) : (
                           <>
-                            {/* No dissolve: show add button on hover (positioned inside the zone) */}
+                            {/* Empty seam: add-dissolve button on hover (or drop any transition here) */}
                             {isHovered && (
                               <div
                                 className="absolute left-1/2 -translate-x-1/2 top-0 whitespace-nowrap z-40"

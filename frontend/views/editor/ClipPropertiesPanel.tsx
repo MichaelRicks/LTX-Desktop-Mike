@@ -809,6 +809,38 @@ export function ClipPropertiesPanel(props: ClipPropertiesPanelProps) {
             </button>
             {showTransitions && (
               <div className="space-y-3 pl-5">
+                {/* Drag-to-seam palette: drop a centered transition onto a cut
+                    between two clips in the timeline. */}
+                <div>
+                  <label className="block text-[10px] text-zinc-500 mb-1 uppercase tracking-wider">Drag onto a cut</label>
+                  <div className="flex flex-wrap gap-1.5">
+                    {([
+                      { type: 'dissolve', label: 'Dissolve' },
+                      { type: 'fade-to-black', label: 'Fade Black' },
+                      { type: 'fade-to-white', label: 'Fade White' },
+                      { type: 'wipe-left', label: 'Wipe ◄' },
+                      { type: 'wipe-right', label: 'Wipe ►' },
+                      { type: 'wipe-up', label: 'Wipe ▲' },
+                      { type: 'wipe-down', label: 'Wipe ▼' },
+                    ] as { type: TransitionType; label: string }[]).map(item => (
+                      <div
+                        key={item.type}
+                        draggable
+                        onDragStart={(e) => {
+                          // NB: HTML5 DnD lowercases the type key, so use lowercase
+                          // everywhere (matches the timeline's drop handlers).
+                          e.dataTransfer.setData('transitiontype', item.type)
+                          e.dataTransfer.effectAllowed = 'copy'
+                        }}
+                        title={`${item.label} — drag onto a cut between two clips`}
+                        className="px-2 py-1 rounded bg-zinc-800 border border-zinc-700 text-[10px] text-zinc-300 cursor-grab active:cursor-grabbing hover:border-blue-500/60 hover:text-white transition-colors select-none"
+                      >
+                        {item.label}
+                      </div>
+                    ))}
+                  </div>
+                  <p className="text-[9px] text-zinc-600 mt-1">Drops a centered transition on the seam.</p>
+                </div>
                 {/* Transition In */}
                 <div>
                   <label className="block text-[10px] text-zinc-500 mb-1 uppercase tracking-wider">Transition In</label>
