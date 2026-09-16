@@ -10,8 +10,22 @@ import { buildVideoFilterGraph } from './video-filter'
 import { mixAudioToPcm } from './audio-mix'
 import { handle } from '../ipc/typed-handle'
 
+/** First existing system font, for ffmpeg drawtext (text overlays / subtitles).
+ *  drawtext needs a real font file on Windows builds that lack fontconfig. */
+function resolveExportFont(): string | undefined {
+  const candidates = process.platform === 'win32'
+    ? ['C:/Windows/Fonts/segoeui.ttf', 'C:/Windows/Fonts/arial.ttf', 'C:/Windows/Fonts/calibri.ttf', 'C:/Windows/Fonts/tahoma.ttf']
+    : process.platform === 'darwin'
+      ? ['/System/Library/Fonts/Supplemental/Arial.ttf', '/Library/Fonts/Arial.ttf', '/System/Library/Fonts/Helvetica.ttc']
+      : ['/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf', '/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf']
+  for (const f of candidates) {
+    try { if (fs.existsSync(f)) return f } catch { /* ignore */ }
+  }
+  return undefined
+}
+
 export function registerExportHandlers(): void {
-  handle('exportNative', async ({ clips, outputPath, codec, width, height, fps, quality, letterbox, subtitles }) => {
+  handle('exportNative', async ({ clips, outputPath, codec, width, height, fps, quality, letterbox, subtitles, textOverlays }) => {
     const ffmpegPath = findFfmpegPath()
     if (!ffmpegPath) return { success: false, error: 'FFmpeg not found' }
 
@@ -46,7 +60,8 @@ export function registerExportHandlers(): void {
     try {
       logger.info( `[Export] Step 1: Video-only export (${segments.length} segments)`)
       {
-        const { inputs, filterScript } = buildVideoFilterGraph(segments, { width, height, fps, letterbox, subtitles })
+        const fontFile = resolveExportFont()
+        const { inputs, filterScript } = buildVideoFilterGraph(segments, { width, height, fps, letterbox, subtitles, textOverlays, fontFile })
 
         const filterFile = path.join(tmpDir, `ltx-filter-v-${ts}.txt`)
         fs.writeFileSync(filterFile, filterScript, 'utf8')

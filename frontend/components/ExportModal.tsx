@@ -201,6 +201,36 @@ export function ExportModal({ projectName }: ExportModalProps) {
     })
   ), [subtitles, tracks])
 
+  // Text-overlay clips (type 'text' with a textStyle) are burned into the export
+  // by ffmpeg drawtext — the live preview draws them as DOM, so without this they
+  // showed in the editor but were missing from the rendered file.
+  const textOverlayData = useMemo(() => (
+    clips
+      .filter(clip => clip.type === 'text' && Boolean(clip.textStyle) && tracks[clip.trackIndex]?.enabled !== false)
+      .map(clip => {
+        const ts = clip.textStyle!
+        return {
+          text: ts.text,
+          startTime: clip.startTime,
+          endTime: clip.startTime + clip.duration,
+          style: {
+            fontSize: ts.fontSize,
+            color: ts.color,
+            backgroundColor: ts.backgroundColor,
+            positionX: ts.positionX,
+            positionY: ts.positionY,
+            strokeColor: ts.strokeColor,
+            strokeWidth: ts.strokeWidth,
+            shadowColor: ts.shadowColor,
+            shadowOffsetX: ts.shadowOffsetX,
+            shadowOffsetY: ts.shadowOffsetY,
+            opacity: ts.opacity,
+            padding: ts.padding,
+          },
+        }
+      })
+  ), [clips, tracks])
+
   const letterbox = useMemo(() => {
     const adjustmentClips = clips.filter(
       clip =>
@@ -342,6 +372,7 @@ export function ExportModal({ projectName }: ExportModalProps) {
         quality: settings.quality,
         letterbox: letterbox || undefined,
         subtitles: burnSubtitles && subtitleData.length > 0 ? subtitleData : undefined,
+        textOverlays: textOverlayData.length > 0 ? textOverlayData : undefined,
       })
 
       if (result && !result.success) {

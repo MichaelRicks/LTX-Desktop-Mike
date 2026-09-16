@@ -63,6 +63,26 @@ const exportSubtitle = z.object({
   }),
 })
 
+const exportTextOverlay = z.object({
+  text: z.string(),
+  startTime: z.number(),
+  endTime: z.number(),
+  style: z.object({
+    fontSize: z.number(),
+    color: z.string(),
+    backgroundColor: z.string(),
+    positionX: z.number(),
+    positionY: z.number(),
+    strokeColor: z.string(),
+    strokeWidth: z.number(),
+    shadowColor: z.string(),
+    shadowOffsetX: z.number(),
+    shadowOffsetY: z.number(),
+    opacity: z.number(),
+    padding: z.number(),
+  }),
+})
+
 const logsResponse = z.object({
   logPath: z.string(),
   lines: z.array(z.string()),
@@ -296,6 +316,7 @@ export const electronAPISchemas = {
       quality: z.number(),
       letterbox: z.object({ ratio: z.number(), color: z.string(), opacity: z.number() }).optional(),
       subtitles: z.array(exportSubtitle).optional(),
+      textOverlays: z.array(exportTextOverlay).optional(),
     }),
     output: emptyResult,
   },

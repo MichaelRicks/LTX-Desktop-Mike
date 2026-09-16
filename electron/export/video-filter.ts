@@ -5,6 +5,60 @@ export interface ExportSubtitle {
   style: { fontSize: number; fontFamily: string; fontWeight: string; color: string; backgroundColor: string; position: string; italic: boolean };
 }
 
+export interface ExportTextOverlay {
+  text: string; startTime: number; endTime: number;
+  style: {
+    fontSize: number; color: string; backgroundColor: string;
+    positionX: number; positionY: number;
+    strokeColor: string; strokeWidth: number;
+    shadowColor: string; shadowOffsetX: number; shadowOffsetY: number;
+    opacity: number; padding: number;
+  };
+}
+
+/** Escape a string for use inside an ffmpeg drawtext text='...' value. */
+function escapeDrawtext(text: string): string {
+  return text
+    .replace(/\\/g, '\\\\\\\\')
+    .replace(/'/g, "'\\\\\\''")
+    .replace(/:/g, '\\:')
+    .replace(/%/g, '%%')
+    .replace(/\n/g, '\\n')
+}
+
+/** Escape an absolute path for an ffmpeg option value (e.g. fontfile=). Forward
+ *  slashes work on Windows; the drive-letter colon must be escaped. */
+function escapeFontPath(p: string): string {
+  return p.replace(/\\/g, '/').replace(/:/g, '\\:')
+}
+
+/** Convert a CSS color (hex / rgb(a) / named / transparent) to an ffmpeg color
+ *  token like `0xRRGGBB@0.500`. `extraAlpha` multiplies the resolved alpha (used
+ *  for the overlay's global opacity). Returns null for transparent/none. */
+function cssColorToFfmpeg(css: string, extraAlpha = 1): string | null {
+  const c = (css || '').trim().toLowerCase()
+  if (!c || c === 'transparent' || c === 'none') return null
+  let r = 0, g = 0, b = 0, a = 1
+  let m: RegExpMatchArray | null
+  if ((m = c.match(/^#([0-9a-f]{3})$/))) {
+    r = parseInt(m[1][0] + m[1][0], 16); g = parseInt(m[1][1] + m[1][1], 16); b = parseInt(m[1][2] + m[1][2], 16)
+  } else if ((m = c.match(/^#([0-9a-f]{6})([0-9a-f]{2})?$/))) {
+    r = parseInt(m[1].slice(0, 2), 16); g = parseInt(m[1].slice(2, 4), 16); b = parseInt(m[1].slice(4, 6), 16)
+    if (m[2]) a = parseInt(m[2], 16) / 255
+  } else if ((m = c.match(/^rgba?\(([^)]+)\)$/))) {
+    const p = m[1].split(',').map(s => s.trim())
+    r = parseInt(p[0], 10) || 0; g = parseInt(p[1], 10) || 0; b = parseInt(p[2], 10) || 0
+    if (p[3] !== undefined) a = parseFloat(p[3])
+  } else {
+    // A named color (white, black, red, ...) — ffmpeg understands these directly.
+    const alpha = Math.max(0, Math.min(1, extraAlpha))
+    return alpha >= 0.999 ? c : `${c}@${alpha.toFixed(3)}`
+  }
+  const hex = (((r & 255) << 16) | ((g & 255) << 8) | (b & 255)).toString(16).padStart(6, '0')
+  const alpha = Math.max(0, Math.min(1, (isFinite(a) ? a : 1) * extraAlpha))
+  return `0x${hex}@${alpha.toFixed(3)}`
+}
+
 /**
  * Color correction + fade-to-black/white + wipe filters for one segment, as
  * an ffmpeg filter-chain suffix (leading comma, or '' if nothing applies).
@@ -166,9 +220,11 @@ export function buildVideoFilterGraph(
     width: number; height: number; fps: number;
     letterbox?: { ratio: number; color: string; opacity: number };
     subtitles?: ExportSubtitle[];
+    textOverlays?: ExportTextOverlay[];
+    fontFile?: string;
   },
 ): { inputs: string[]; filterScript: string } {
-  const { width, height, fps, letterbox, subtitles } = opts
+  const { width, height, fps, letterbox, subtitles, textOverlays, fontFile } = opts
   const inputs: string[] = []
   const filterParts: string[] = []
   let idx = 0
@@ -304,6 +360,66 @@ export function buildVideoFilterGraph(
         filterParts.push(`[${lastLabel}]drawbox=x=0:y=0:w=${barW}:h=ih:c=${colorStr}:t=fill,drawbox=x=iw-${barW}:y=0:w=${barW}:h=ih:c=${colorStr}:t=fill[${nextLabel}]`)
         lastLabel = nextLabel
       }
+    }
+  }
+
+  // Text-overlay burn-in (drawtext) — the type:'text' clips with a textStyle.
+  // The live preview renders these as DOM; export mirrors position/size/color so
+  // the baked video matches. fontFamily/weight/style, letter-spacing, auto-wrap
+  // (maxWidth) and shadow blur aren't representable in drawtext and are dropped;
+  // explicit newlines in the text are preserved.
+  if (textOverlays && textOverlays.length > 0) {
+    const hf = height / 1080 // scale style px (authored against 1080p) to export height
+    for (let ti = 0; ti < textOverlays.length; ti++) {
+      const ov = textOverlays[ti]
+      const s = ov.style
+      const nextLabel = `txt${ti}`
+      const gA = Math.max(0, Math.min(1, (s.opacity ?? 100) / 100)) // global overlay opacity
+      const fontSize = Math.max(1, Math.round(s.fontSize * hf))
+      const fontColor = cssColorToFfmpeg(s.color, gA) ?? `white@${gA.toFixed(3)}`
+
+      // Preview positions the box's CENTER at (positionX%, positionY%); mirror that.
+      const px = Math.max(0, Math.min(1, (s.positionX ?? 50) / 100))
+      const py = Math.max(0, Math.min(1, (s.positionY ?? 50) / 100))
+
+      const parts: string[] = []
+      if (fontFile) parts.push(`fontfile=${escapeFontPath(fontFile)}`)
+      parts.push(`text='${escapeDrawtext(ov.text)}'`)
+      parts.push(`fontsize=${fontSize}`)
+      parts.push(`fontcolor=${fontColor}`)
+      parts.push(`x=(w*${px.toFixed(4)})-(text_w/2)`)
+      parts.push(`y=(h*${py.toFixed(4)})-(text_h/2)`)
+
+      if ((s.strokeWidth ?? 0) > 0) {
+        const strokeColor = cssColorToFfmpeg(s.strokeColor, gA)
+        if (strokeColor) {
+          parts.push(`borderw=${Math.max(1, Math.round(s.strokeWidth * hf))}`)
+          parts.push(`bordercolor=${strokeColor}`)
+        }
+      }
+
+      const shx = Math.round((s.shadowOffsetX ?? 0) * hf)
+      const shy = Math.round((s.shadowOffsetY ?? 0) * hf)
+      if (shx !== 0 || shy !== 0) {
+        const shadowColor = cssColorToFfmpeg(s.shadowColor, gA)
+        if (shadowColor) {
+          parts.push(`shadowx=${shx}`)
+          parts.push(`shadowy=${shy}`)
+          parts.push(`shadowcolor=${shadowColor}`)
+        }
+      }
+
+      const boxColor = cssColorToFfmpeg(s.backgroundColor, gA)
+      if (boxColor) {
+        parts.push('box=1')
+        parts.push(`boxcolor=${boxColor}`)
+        parts.push(`boxborderw=${Math.max(0, Math.round((s.padding ?? 0) * hf))}`)
+      }
+
+      parts.push(`enable='between(t\\,${ov.startTime.toFixed(3)}\\,${ov.endTime.toFixed(3)})'`)
+
+      filterParts.push(`[${lastLabel}]drawtext=${parts.join(':')}[${nextLabel}]`)
+      lastLabel = nextLabel
     }
   }
 
