@@ -39,6 +39,15 @@ extraResources:
       - "!tests/**"
   - from: python-deps-hash.txt
     to: python-deps-hash.txt
+  # Bundle the app icon into the packaged app's resources dir so the RUNNING
+  # window/taskbar shows the RiX icon. electron/window.ts loads
+  # <resourcesPath>/icon.<ext> at runtime (win32 -> icon.ico, else icon.png);
+  # without this it isn't packaged and the open app falls back to the default
+  # Electron icon. (The exe/shortcut icon is handled separately by win.icon.)
+  - from: resources/icon.ico
+    to: icon.ico
+  - from: resources/icon.png
+    to: icon.png
 
 win:
   target:
