@@ -2625,32 +2625,107 @@ export function VideoEditorTimelineEditingPanel(props: VideoEditorTimelineEditin
                             }}
                           />
 
-                          {/* Volume rubber-band line: drag up/down to set clip gain (0–200%). */}
+                          {/* Volume line + automation keyframes. Flat = drag for gain,
+                              double-click to start keyframing. Keyframed = a polyline
+                              with draggable dots; double-click a dot removes it, the
+                              line adds one. Value 0..2 maps to the 18%..90% band. */}
                           {(() => {
-                            const vol = clip.volume ?? 1
-                            const topPct = 18 + (1 - vol / 2) * 72
-                            const usablePx = Math.max(1, (getTrackHeight(clip.trackIndex) - 8) * 0.72)
+                            const clipHeightPx = getTrackHeight(clip.trackIndex) - 8
+                            const kfs = clip.volumeKeyframes && clip.volumeKeyframes.length > 0
+                              ? [...clip.volumeKeyframes].sort((a, b) => a.t - b.t)
+                              : null
+                            const valueToTopPct = (v: number) => 18 + (1 - v / 2) * 72
+                            // (t, value) from a mouse event, resolved against the clip box.
+                            const posFromEvent = (ev: { clientX: number; clientY: number }, el: HTMLElement) => {
+                              const rect = (el.closest('[data-clip-id]') as HTMLElement | null)?.getBoundingClientRect()
+                              if (!rect) return null
+                              const t = Math.max(0, Math.min(clip.duration, (ev.clientX - rect.left) / pixelsPerSecond))
+                              const topPct = ((ev.clientY - rect.top) / rect.height) * 100
+                              const value = Math.max(0, Math.min(2, (1 - (topPct - 18) / 72) * 2))
+                              return { t, value }
+                            }
+                            const applyKfs = (next: { t: number; value: number }[]) =>
+                              setClips(prev => prev.map(c => c.id === clip.id ? { ...c, volumeKeyframes: next.length ? next : undefined } : c))
+
+                            if (!kfs) {
+                              const vol = clip.volume ?? 1
+                              const usablePx = Math.max(1, clipHeightPx * 0.72)
+                              return (
+                                <div
+                                  className="absolute left-5 right-1 h-2.5 -translate-y-1/2 cursor-ns-resize pointer-events-auto group/vol"
+                                  style={{ top: `${valueToTopPct(vol)}%` }}
+                                  title="Drag to set volume · double-click to add keyframes"
+                                  onMouseDown={(e) => {
+                                    e.stopPropagation(); e.preventDefault()
+                                    const startY = e.clientY
+                                    const startVol = clip.volume ?? 1
+                                    const onMove = (ev: MouseEvent) => {
+                                      const next = Math.max(0, Math.min(2, startVol - ((ev.clientY - startY) / usablePx) * 2))
+                                      actions.setClipAudioLevel(clip.id, +next.toFixed(2))
+                                    }
+                                    const onUp = () => { document.removeEventListener('mousemove', onMove); document.removeEventListener('mouseup', onUp); document.body.style.cursor = '' }
+                                    document.addEventListener('mousemove', onMove); document.addEventListener('mouseup', onUp); document.body.style.cursor = 'ns-resize'
+                                  }}
+                                  onDoubleClick={(e) => {
+                                    e.stopPropagation()
+                                    const p = posFromEvent(e, e.currentTarget)
+                                    if (!p) return
+                                    const seeded = [{ t: 0, value: vol }, { t: clip.duration, value: vol }, { t: +p.t.toFixed(3), value: +p.value.toFixed(3) }]
+                                      .sort((a, b) => a.t - b.t)
+                                    applyKfs(seeded)
+                                  }}
+                                >
+                                  <div className={`absolute inset-x-0 top-1/2 -translate-y-1/2 h-0.5 rounded-full transition-colors ${vol > 1 ? 'bg-amber-300/80' : 'bg-emerald-300/70'} group-hover/vol:bg-white`} />
+                                  <div className="absolute right-1.5 top-1/2 h-2.5 w-2.5 -translate-y-1/2 rounded-full bg-white/90 border border-emerald-700 shadow opacity-0 group-hover/vol:opacity-100 transition-opacity" />
+                                  <span className="absolute left-1 -top-3 text-[8px] text-white bg-black/60 px-1 rounded opacity-0 group-hover/vol:opacity-100 transition-opacity whitespace-nowrap tabular-nums">{Math.round(vol * 100)}%</span>
+                                </div>
+                              )
+                            }
+
+                            const pts = kfs.map(k => `${Math.min(clipWidthPx, k.t * pixelsPerSecond)},${valueToTopPct(k.value) / 100 * clipHeightPx}`).join(' ')
                             return (
-                              <div
-                                className="absolute left-5 right-1 h-2.5 -translate-y-1/2 cursor-ns-resize pointer-events-auto group/vol"
-                                style={{ top: `${topPct}%` }}
-                                title="Drag to set volume"
-                                onMouseDown={(e) => {
-                                  e.stopPropagation(); e.preventDefault()
-                                  const startY = e.clientY
-                                  const startVol = clip.volume ?? 1
-                                  const onMove = (ev: MouseEvent) => {
-                                    const next = Math.max(0, Math.min(2, startVol - ((ev.clientY - startY) / usablePx) * 2))
-                                    actions.setClipAudioLevel(clip.id, +next.toFixed(2))
-                                  }
-                                  const onUp = () => { document.removeEventListener('mousemove', onMove); document.removeEventListener('mouseup', onUp); document.body.style.cursor = '' }
-                                  document.addEventListener('mousemove', onMove); document.addEventListener('mouseup', onUp); document.body.style.cursor = 'ns-resize'
-                                }}
-                              >
-                                <div className={`absolute inset-x-0 top-1/2 -translate-y-1/2 h-0.5 rounded-full transition-colors ${vol > 1 ? 'bg-amber-300/80' : 'bg-emerald-300/70'} group-hover/vol:bg-white`} />
-                                <div className="absolute right-1.5 top-1/2 h-2.5 w-2.5 -translate-y-1/2 rounded-full bg-white/90 border border-emerald-700 shadow opacity-0 group-hover/vol:opacity-100 transition-opacity" />
-                                <span className="absolute left-1 -top-3 text-[8px] text-white bg-black/60 px-1 rounded opacity-0 group-hover/vol:opacity-100 transition-opacity whitespace-nowrap tabular-nums">{Math.round(vol * 100)}%</span>
-                              </div>
+                              <>
+                                <svg className="absolute inset-0" width={clipWidthPx} height={clipHeightPx} style={{ pointerEvents: 'none', overflow: 'visible' }}>
+                                  <polyline points={pts} fill="none" stroke="rgba(110,231,183,0.95)" strokeWidth={1.5} style={{ pointerEvents: 'none' }} />
+                                  <polyline
+                                    points={pts} fill="none" stroke="transparent" strokeWidth={14}
+                                    style={{ pointerEvents: 'stroke', cursor: 'copy' }}
+                                    onDoubleClick={(e) => {
+                                      e.stopPropagation()
+                                      const p = posFromEvent(e, e.currentTarget as unknown as HTMLElement)
+                                      if (!p) return
+                                      applyKfs([...kfs, { t: +p.t.toFixed(3), value: +p.value.toFixed(3) }].sort((a, b) => a.t - b.t))
+                                    }}
+                                  />
+                                </svg>
+                                {kfs.map((k, idx) => (
+                                  <div
+                                    key={idx}
+                                    className="absolute h-2.5 w-2.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-white border border-emerald-600 shadow cursor-move pointer-events-auto hover:scale-125 transition-transform z-30"
+                                    style={{ left: `${Math.min(clipWidthPx, k.t * pixelsPerSecond)}px`, top: `${valueToTopPct(k.value)}%` }}
+                                    title={`${Math.round(k.value * 100)}% · double-click to remove`}
+                                    onMouseDown={(e) => {
+                                      e.stopPropagation(); e.preventDefault()
+                                      const dotEl = e.currentTarget as HTMLElement
+                                      const base = kfs
+                                      const prevT = idx > 0 ? base[idx - 1].t : 0
+                                      const nextT = idx < base.length - 1 ? base[idx + 1].t : clip.duration
+                                      const onMove = (ev: MouseEvent) => {
+                                        const p = posFromEvent(ev, dotEl)
+                                        if (!p) return
+                                        const t = Math.max(prevT, Math.min(nextT, p.t))
+                                        applyKfs(base.map((kk, i) => i === idx ? { t: +t.toFixed(3), value: +p.value.toFixed(3) } : kk))
+                                      }
+                                      const onUp = () => { document.removeEventListener('mousemove', onMove); document.removeEventListener('mouseup', onUp); document.body.style.cursor = '' }
+                                      document.addEventListener('mousemove', onMove); document.addEventListener('mouseup', onUp); document.body.style.cursor = 'grabbing'
+                                    }}
+                                    onDoubleClick={(e) => {
+                                      e.stopPropagation()
+                                      applyKfs(kfs.filter((_, i) => i !== idx))
+                                    }}
+                                  />
+                                ))}
+                              </>
                             )
                           })()}
                         </div>

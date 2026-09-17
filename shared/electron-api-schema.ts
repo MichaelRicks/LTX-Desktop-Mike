@@ -45,6 +45,7 @@ const exportClip = z.object({
   volume: z.number(),
   audioFadeIn: z.number().optional(),
   audioFadeOut: z.number().optional(),
+  volumeKeyframes: z.array(z.object({ t: z.number(), value: z.number() })).optional(),
   colorCorrection: exportColorCorrection.optional(),
   transitionIn: exportClipTransition.optional(),
   transitionOut: exportClipTransition.optional(),

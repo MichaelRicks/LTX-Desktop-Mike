@@ -323,6 +323,10 @@ export const timelineClipSchema = z.object({
   volume: z.number().default(1),
   audioFadeIn: z.number().optional(),
   audioFadeOut: z.number().optional(),
+  // Volume automation: piecewise-linear gain envelope, t = seconds from clip
+  // start, value = 0..2. When present + non-empty, replaces the flat `volume`
+  // as the base gain (the fade envelope still multiplies on top).
+  volumeKeyframes: z.array(z.object({ t: z.number(), value: z.number() })).optional(),
   trackIndex: z.number(),
   asset: assetSchema.nullable(),
   importedName: z.string().optional(),

@@ -67,6 +67,30 @@ export const CUT_POINT_TOLERANCE = 0.05
 /** Default cross-dissolve duration in seconds */
 export const DEFAULT_DISSOLVE_DURATION = 0.5
 
+/** A single volume-automation keyframe: `t` seconds from clip start, `value` gain 0..2. */
+export interface VolumeKeyframe { t: number; value: number }
+
+/**
+ * Piecewise-linear volume envelope sampled at time `t` (seconds from clip start).
+ * Returns `flat` when there are no keyframes; clamps to the first/last keyframe
+ * value before/after the envelope. Sorts defensively (arrays are tiny).
+ */
+export function volumeAtTime(keyframes: VolumeKeyframe[] | undefined, t: number, flat: number): number {
+  if (!keyframes || keyframes.length === 0) return flat
+  const ks = keyframes.length > 1 ? [...keyframes].sort((a, b) => a.t - b.t) : keyframes
+  if (t <= ks[0].t) return ks[0].value
+  const last = ks[ks.length - 1]
+  if (t >= last.t) return last.value
+  for (let i = 0; i < ks.length - 1; i++) {
+    const a = ks[i], b = ks[i + 1]
+    if (t >= a.t && t <= b.t) {
+      const span = b.t - a.t
+      return span <= 0 ? b.value : a.value + (b.value - a.value) * ((t - a.t) / span)
+    }
+  }
+  return last.value
+}
+
 // ── Resizable layout constants ───────────────────────────────────────
 
 export const LAYOUT_STORAGE_KEY = 'ltx-video-editor-layout'

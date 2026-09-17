@@ -53,6 +53,23 @@ interface AudioSource {
   filePath: string; trimStart: number; trimEnd: number;
   timelineStart: number; speed: number; reversed: boolean; volume: number;
   audioFadeIn: number; audioFadeOut: number;
+  volumeKeyframes?: { t: number; value: number }[];
+}
+
+/** Sample a pre-sorted piecewise-linear volume envelope at time `t` (seconds
+ *  from clip start); clamps to the first/last keyframe outside the range. */
+function sampleVolumeEnvelope(ks: { t: number; value: number }[], t: number): number {
+  if (t <= ks[0].t) return ks[0].value
+  const last = ks[ks.length - 1]
+  if (t >= last.t) return last.value
+  for (let i = 0; i < ks.length - 1; i++) {
+    const a = ks[i], b = ks[i + 1]
+    if (t >= a.t && t <= b.t) {
+      const span = b.t - a.t
+      return span <= 0 ? b.value : a.value + (b.value - a.value) * ((t - a.t) / span)
+    }
+  }
+  return last.value
 }
 
 /**
@@ -69,7 +86,9 @@ export async function mixAudioToPcm(
   const audioSources: AudioSource[] = []
 
   for (const c of clips) {
-    if (c.muted || c.volume <= 0) continue
+    const hasKeyframes = !!(c.volumeKeyframes && c.volumeKeyframes.length > 0)
+    // A keyframed clip can be audible even if its flat volume is 0.
+    if (c.muted || (c.volume <= 0 && !hasKeyframes)) continue
     const fp = c.path
     if (!fp || !fs.existsSync(fp)) continue
 
@@ -84,6 +103,7 @@ export async function mixAudioToPcm(
         volume: c.volume,
         audioFadeIn: c.audioFadeIn ?? 0,
         audioFadeOut: c.audioFadeOut ?? 0,
+        volumeKeyframes: c.volumeKeyframes,
       })
     } else if (c.type === 'video') {
       if (!audioProbeCache.has(fp)) {
@@ -100,6 +120,7 @@ export async function mixAudioToPcm(
         volume: c.volume,
         audioFadeIn: c.audioFadeIn ?? 0,
         audioFadeOut: c.audioFadeOut ?? 0,
+        volumeKeyframes: c.volumeKeyframes,
       })
     }
   }
@@ -127,13 +148,23 @@ export async function mixAudioToPcm(
       const fadeOutFrames = Math.max(0, Math.round((src.audioFadeOut || 0) * SAMPLE_RATE))
       const hasFade = fadeInFrames > 0 || fadeOutFrames > 0
 
+      // Volume automation envelope (pre-sorted once); sampled per frame below.
+      const kfs = (src.volumeKeyframes && src.volumeKeyframes.length > 0)
+        ? [...src.volumeKeyframes].sort((a, b) => a.t - b.t)
+        : null
+      let baseGain = src.volume
+
       for (let s = 0; s < numPcmSamples; s++) {
         const destIdx = startSample + s
         if (destIdx < 0 || destIdx >= totalSamples) continue
+        const frame = (s / NUM_CHANNELS) | 0
+        // Recompute the automated base gain once per stereo frame (channel 0).
+        if (kfs && (s % NUM_CHANNELS) === 0) {
+          baseGain = sampleVolumeEnvelope(kfs, frame / SAMPLE_RATE)
+        }
         const value = pcm.readInt16LE(s * BYTES_PER_SAMPLE)
-        let gain = src.volume
+        let gain = kfs ? baseGain : src.volume
         if (hasFade) {
-          const frame = (s / NUM_CHANNELS) | 0
           if (fadeInFrames > 0 && frame < fadeInFrames) {
             gain *= frame / fadeInFrames
           }

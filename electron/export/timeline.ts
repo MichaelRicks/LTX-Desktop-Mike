@@ -11,6 +11,7 @@ export interface ExportClip {
   path: string; type: string; startTime: number; duration: number; trimStart: number;
   speed: number; reversed: boolean; flipH: boolean; flipV: boolean; opacity: number; trackIndex: number;
   muted: boolean; volume: number; audioFadeIn?: number; audioFadeOut?: number;
+  volumeKeyframes?: { t: number; value: number }[];
   colorCorrection?: ColorCorrection; transitionIn?: ClipTransition; transitionOut?: ClipTransition;
 }
 

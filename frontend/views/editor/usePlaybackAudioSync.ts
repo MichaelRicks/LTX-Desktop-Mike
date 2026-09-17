@@ -11,6 +11,7 @@ import {
   selectTracks,
 } from './editor-selectors'
 import { useEditorGetState, useEditorStore } from './editor-store'
+import { volumeAtTime } from './video-editor-utils'
 
 interface UsePlaybackAudioSyncParams {
   playbackTimeRef: React.MutableRefObject<number>
@@ -58,6 +59,11 @@ function fadeMultiplier(clip: TimelineClip, time: number): number {
   if (fadeIn > 0 && t < fadeIn) g *= Math.max(0, Math.min(1, t / fadeIn))
   if (fadeOut > 0 && t > clip.duration - fadeOut) g *= Math.max(0, Math.min(1, (clip.duration - t) / fadeOut))
   return g
+}
+
+/** Base gain from the volume-automation envelope (or the flat volume), before fades. */
+function baseVolume(clip: TimelineClip, time: number): number {
+  return volumeAtTime(clip.volumeKeyframes, time - clip.startTime, clip.volume)
 }
 
 function getClipStartTargetTime(clip: TimelineClip, mediaDuration: number): number {
@@ -209,7 +215,7 @@ export function usePlaybackAudioSync(params: UsePlaybackAudioSyncParams) {
           const track = currentTracks[clip.trackIndex]
           const isSoloMuted = anySoloed && !track?.solo
           el.muted = clip.muted || track?.muted || isSoloMuted || false
-          applyVolume(el, clip.volume * fadeMultiplier(clip, atTime))
+          applyVolume(el, baseVolume(clip, atTime) * fadeMultiplier(clip, atTime))
 
           if (!el.__audioPlaying || isNewElement) {
             const target = computeTarget(el, atTime)
@@ -350,7 +356,7 @@ export function usePlaybackAudioSync(params: UsePlaybackAudioSyncParams) {
       const track = tracks[clip.trackIndex]
       const isSoloMuted = anySoloed && !track?.solo
       el.muted = clip.muted || track?.muted || isSoloMuted || false
-      applyVolume(el, clip.volume * fadeMultiplier(clip, currentTime))
+      applyVolume(el, baseVolume(clip, currentTime) * fadeMultiplier(clip, currentTime))
 
       if (el.readyState < 2) continue
 
