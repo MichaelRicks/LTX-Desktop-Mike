@@ -22,7 +22,7 @@ import {
   type GpmPromptFolder, type GpmImageFolder, type GpmImage, gpmId,
   loadPromptFolders, savePromptFolders, loadImageFolders, saveImageFolders,
   loadImages, putImage, deleteImage, exportBackup, importBackup, parseBackup,
-  loadAllPromptThumbs, deletePromptThumb,
+  loadAllPromptThumbs, setPromptThumb, deletePromptThumb,
   type GpmWorkflow, loadWorkflows, saveWorkflows,
   type GpmPerformance, loadPerformances, savePerformances, loadWorkingPerf, saveWorkingPerf,
   type GpmPanorama, loadPanoramas, putPanorama, deletePanorama, MAX_PANORAMAS,
@@ -1147,6 +1147,61 @@ function BackupRow({ onAfterImport, flash }: { onAfterImport: () => void; flash:
 }
 
 /* ---- Prompts (folders + cards) ------------------------------------------- */
+
+// Downscale a (possibly large) image data URL into a compact JPEG thumbnail so
+// the per-prompt visual cue stays light in IndexedDB. Falls back to the original
+// data URL if the image can't be decoded.
+function downscaleToThumb(dataUrl: string, maxW = 360): Promise<string> {
+  return new Promise((resolve) => {
+    const img = new window.Image()
+    img.onload = () => {
+      try {
+        const scale = Math.min(1, maxW / (img.naturalWidth || maxW))
+        const w = Math.max(1, Math.round((img.naturalWidth || maxW) * scale))
+        const h = Math.max(1, Math.round((img.naturalHeight || maxW) * scale))
+        const canvas = document.createElement('canvas')
+        canvas.width = w; canvas.height = h
+        const ctx = canvas.getContext('2d')
+        if (!ctx) { resolve(dataUrl); return }
+        ctx.drawImage(img, 0, 0, w, h)
+        resolve(canvas.toDataURL('image/jpeg', 0.82))
+      } catch {
+        resolve(dataUrl)
+      }
+    }
+    img.onerror = () => resolve(dataUrl)
+    img.src = dataUrl
+  })
+}
+
+// Pull an image data URL out of a drop from any of the app's drag sources:
+// a Prompt Manager Pro image (carries its own data URL), a Studio Assets /
+// Downloads Browser file, a Create-gallery asset, or an OS file drop.
+async function dataUrlFromImageDrop(e: React.DragEvent): Promise<string | null> {
+  const gpm = e.dataTransfer.getData(GPM_IMAGE_DND_TYPE)
+  if (gpm) { const d = JSON.parse(gpm) as GpmDndImage; return d.dataUrl }
+  const fileRaw = e.dataTransfer.getData(FILE_DND)
+  const assetRaw = fileRaw ? '' : e.dataTransfer.getData('asset')
+  const path = fileRaw
+    ? (JSON.parse(fileRaw) as LibFile).path
+    : assetRaw
+      ? (JSON.parse(assetRaw) as { path: string; type?: string }).path
+      : null
+  if (path) {
+    const r = await window.electronAPI?.gpmLibReadAsDataUrl?.({ path })
+    return r?.success ? r.dataUrl : null
+  }
+  const file = e.dataTransfer.files?.[0]
+  if (file?.type.startsWith('image/')) {
+    return await new Promise<string>((res, rej) => {
+      const reader = new FileReader()
+      reader.onload = () => res(String(reader.result)); reader.onerror = () => rej(reader.error)
+      reader.readAsDataURL(file)
+    })
+  }
+  return null
+}
+
 function PromptsPanel({
   ctl, onCopy, onInject, flash,
 }: { ctl: SectionCtl; onCopy: (t: string) => void; onInject: (t: string) => void; flash: (m: string) => void }) {
@@ -1177,6 +1232,33 @@ function PromptsPanel({
     persist(folders.map((f) => (f.id === fid ? { ...f, prompts: f.prompts.filter((p) => p.id !== pid) } : f)))
     if (thumbs[pid]) { void deletePromptThumb(pid); setThumbs((t) => { const n = { ...t }; delete n[pid]; return n }) }
   }
+
+  // Drag an image onto a prompt card to attach it as a visual cue (thumbnail).
+  // Accepts every app drag source; the image is downscaled before it's stored.
+  const [dragThumbId, setDragThumbId] = useState<string | null>(null)
+  const onPromptImageDrop = async (e: React.DragEvent, pid: string) => {
+    e.preventDefault()
+    setDragThumbId(null)
+    try {
+      const dataUrl = await dataUrlFromImageDrop(e)
+      if (!dataUrl) return
+      const thumb = await downscaleToThumb(dataUrl)
+      await setPromptThumb(pid, thumb)
+      setThumbs((t) => ({ ...t, [pid]: thumb }))
+      flash('Visual cue attached')
+    } catch {
+      flash('Could not attach image')
+    }
+  }
+  const removeThumb = (pid: string) => {
+    void deletePromptThumb(pid)
+    setThumbs((t) => { const n = { ...t }; delete n[pid]; return n })
+  }
+  const dropTypes = (e: React.DragEvent) =>
+    e.dataTransfer.types.includes(GPM_IMAGE_DND_TYPE) ||
+    e.dataTransfer.types.includes(FILE_DND) ||
+    e.dataTransfer.types.includes('asset') ||
+    e.dataTransfer.types.includes('Files')
   // Drag-reorder folders, with a blue drop-line indicator like the Studio Assets panel.
   const onFolderDrop = (target: string, before: boolean) => {
     const dragged = dragFolder.current
@@ -1247,7 +1329,15 @@ function PromptsPanel({
             {cards.length === 0 && <p className="text-[11px]" style={{ color: C.faint }}>No prompts. Use + to add one.</p>}
             <div className="space-y-2">
               {cards.map((p) => (
-                <div key={p.id} className="rounded-lg p-2" style={{ background: C.elev, border: `1px solid ${C.border}` }}>
+                <div
+                  key={p.id}
+                  className="rounded-lg p-2"
+                  style={{ background: C.elev, border: `1px solid ${dragThumbId === p.id ? C.blue : C.border}` }}
+                  onDragOver={(e) => { if (dropTypes(e)) { e.preventDefault(); if (dragThumbId !== p.id) setDragThumbId(p.id) } }}
+                  onDragLeave={() => setDragThumbId((d) => (d === p.id ? null : d))}
+                  onDrop={(e) => { if (dropTypes(e)) void onPromptImageDrop(e, p.id) }}
+                  title="Drag an image here to attach a visual cue"
+                >
                   {editId === p.id ? (
                     <>
                       <textarea autoFocus value={draft} onChange={(e) => setDraft(e.target.value)} rows={4} className="w-full rounded px-2 py-1 text-[11px] outline-none resize-none" style={{ background: C.card, color: C.text, border: `1px solid ${C.border}` }} />
@@ -1259,11 +1349,19 @@ function PromptsPanel({
                   ) : (
                     <>
                       {thumbs[p.id] && (
-                        <img
-                          src={thumbs[p.id]} alt="" loading="lazy"
-                          className="w-full rounded mb-2 object-cover"
-                          style={{ maxHeight: 120, border: `1px solid ${C.border}` }}
-                        />
+                        <div className="relative mb-2 group/thumb">
+                          <img
+                            src={thumbs[p.id]} alt="" loading="lazy"
+                            className="w-full rounded object-cover"
+                            style={{ maxHeight: 120, border: `1px solid ${C.border}` }}
+                          />
+                          <button
+                            onClick={() => removeThumb(p.id)}
+                            className="absolute top-1 right-1 h-5 w-5 flex items-center justify-center rounded-full opacity-0 group-hover/thumb:opacity-100 transition-opacity"
+                            style={{ background: 'rgba(0,0,0,0.6)', color: '#fff' }}
+                            title="Remove visual cue"
+                          ><X size={11} /></button>
+                        </div>
                       )}
                       <div className="text-[11px] leading-snug mb-2" style={{ color: C.text, maxHeight: 66, overflow: 'hidden' }}>
                         {p.text || <span style={{ color: C.faint }}>(empty)</span>}

@@ -91,7 +91,7 @@ import {
 import { lastFrameFromDuration, retimeKeyframesForSettings, type DraggedFrame } from '../lib/keyframe-timeline'
 import { useVideoSaveMenu } from '../components/useVideoSaveMenu'
 import { useImageSaveMenu } from '../components/useImageSaveMenu'
-import { saveToStudioAssets } from '../lib/video-save-actions'
+import { saveToStudioAssets, saveVideoFile, saveImageFile } from '../lib/video-save-actions'
 
 // Sentinel binFilter value meaning "show every asset" (vs. a real binId, or
 // null for the default untagged-only view).
@@ -247,6 +247,18 @@ function AssetCard({
         >
           <Heart className="h-3.5 w-3.5 fill-current" />
         </button>
+      )}
+
+      {/* Render time (local generations only) — parked bottom-left when idle so it
+          reads at a glance without adding to the already-busy hover control row. */}
+      {asset.renderMs != null && !isHovered && (
+        <div
+          className="absolute bottom-2 left-2 flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-black/50 backdrop-blur-md text-white/90 text-[10px] font-mono tabular-nums z-10 pointer-events-none"
+          title="Render time"
+        >
+          <Clock className="h-2.5 w-2.5" />
+          {formatClock(asset.renderMs)}
+        </div>
       )}
       
       {/* Hover overlay. Held below full opacity so the controls read as a gentle
@@ -903,6 +915,24 @@ function PromptBar({
     e.preventDefault()
     setIsLastDragOver(false)
 
+    // Mirror handleDrop's full source handling so the last-frame chip accepts the
+    // same drags the first-frame chip does: Prompt Manager Pro images, Downloads
+    // Browser files, gallery assets, and OS file drops. (The last-frame handler
+    // used to only take gallery assets + OS files, so library drags silently no-op'd.)
+    const gpmData = e.dataTransfer.getData(GPM_IMAGE_DND_TYPE)
+    if (gpmData) {
+      const { name, dataUrl } = JSON.parse(gpmData) as GpmDndImage
+      void saveDataUrlToTempFile(dataUrl, name).then(onInputLastImageChange).catch(() => {})
+      return
+    }
+
+    const dlData = e.dataTransfer.getData(FILE_DND)
+    if (dlData) {
+      const f = JSON.parse(dlData) as LibFile
+      if (!f.isVideo) onInputLastImageChange(f.path)
+      return
+    }
+
     const assetData = e.dataTransfer.getData('asset')
     if (assetData) {
       const asset = JSON.parse(assetData) as Asset
@@ -915,9 +945,7 @@ function PromptBar({
     const file = e.dataTransfer.files?.[0]
     if (file && file.type.startsWith('image/')) {
       const filePath = window.electronAPI?.getPathForFile(file)
-      if (filePath) {
-        onInputLastImageChange(filePath)
-      }
+      onInputLastImageChange(filePath || URL.createObjectURL(file))
     }
   }
 
@@ -2758,6 +2786,14 @@ export function GenSpace() {
     if (imagePaths.length === 0 || !currentProjectId || isGenerating) return
     if (addingImagesRef.current) return
     addingImagesRef.current = true
+
+    // Wall-clock render time for this generation, mirroring the video path. A batch
+    // (variations) shares one stopwatch, so every image in the batch is tagged with the
+    // same total — the number the user watched tick on the Generating card.
+    const renderMs = generationStartRef.current != null
+      ? Date.now() - generationStartRef.current
+      : undefined
+
     const submission = generateSubmissionRef.current
     if (submission?.kind !== 'image') {
       logger.error('Image completed without a click-time submission; tagging from live picker state')
@@ -2801,6 +2837,7 @@ export function GenSpace() {
             height: copied.height,
             prompt: usedPrompt,
             resolution: usedSettings.imageResolution,
+            renderMs,
             generationParams: {
               mode: genMode,
               prompt: usedPrompt,
@@ -4067,12 +4104,25 @@ export function GenSpace() {
               <span className="text-sm text-zinc-500 font-medium">
                 {selectedIndex + 1} / {filteredAssets.length}
               </span>
-              <button
-                onClick={() => setSelectedAsset(null)}
-                className="p-2 rounded-md text-zinc-400 hover:text-white transition-colors"
-              >
-                <X className="h-6 w-6" />
-              </button>
+              <div className="flex items-center gap-1">
+                <button
+                  onClick={() => {
+                    if (selectedAsset.type === 'video') void saveVideoFile(selectedAsset.path, selectedAsset.prompt)
+                    else void saveImageFile(selectedAsset.path, selectedAsset.prompt)
+                  }}
+                  className="p-2 rounded-md text-zinc-400 hover:text-white transition-colors"
+                  title={selectedAsset.type === 'video' ? 'Save video…' : 'Save image…'}
+                >
+                  <Download className="h-6 w-6" />
+                </button>
+                <button
+                  onClick={() => setSelectedAsset(null)}
+                  className="p-2 rounded-md text-zinc-400 hover:text-white transition-colors"
+                  title="Close"
+                >
+                  <X className="h-6 w-6" />
+                </button>
+              </div>
             </div>
 
             {selectedAsset.type === 'video' ? (

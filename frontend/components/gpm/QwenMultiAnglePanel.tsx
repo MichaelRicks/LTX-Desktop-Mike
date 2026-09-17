@@ -222,9 +222,13 @@ export function QwenMultiAnglePanel({ state, setState, onUse, flash }: {
     if (ref) setExtraRefs((rs) => (rs.length >= MAX_EXTRA_REFS ? rs : [...rs, ref]))
   }
   const onExtraPick = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = e.target.files; e.target.value = ''
-    if (!files?.length) return
-    const refs = await Promise.all(Array.from(files).map(async (f) => ({ name: f.name, dataUrl: await readDataUrl(f) })))
+    // Snapshot the File objects BEFORE clearing the input: `e.target.files` is a
+    // live FileList, and setting value = '' empties it — so reading it after the
+    // reset (as this did) always saw zero files and silently added nothing.
+    const files = e.target.files ? Array.from(e.target.files) : []
+    e.target.value = ''
+    if (!files.length) return
+    const refs = await Promise.all(files.map(async (f) => ({ name: f.name, dataUrl: await readDataUrl(f) })))
     setExtraRefs((rs) => [...rs, ...refs].slice(0, MAX_EXTRA_REFS))
   }
   const removeExtra = (i: number) => setExtraRefs((rs) => rs.filter((_, idx) => idx !== i))

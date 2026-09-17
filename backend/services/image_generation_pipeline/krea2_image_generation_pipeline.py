@@ -24,6 +24,7 @@ from PIL.Image import Resampling
 from transformers import BitsAndBytesConfig as TransformersBitsAndBytesConfig
 from transformers.models.qwen3_vl.modeling_qwen3_vl import Qwen3VLModel
 
+from services.generation_interrupt import diffusers_step_callback
 from services.services_utils import (
     ImagePipelineOutputLike,
     PILImageType,
@@ -212,6 +213,10 @@ class Krea2ImageGenerationPipeline:
                 generator=generator,
                 output_type="pil",
                 return_dict=True,
+                # Poll the cooperative cancel Event between denoising steps so Stop
+                # actually aborts a Krea 2 run (this was missing, unlike the Z-Image
+                # path, so cancel spun forever and only exiting the app freed the GPU).
+                callback_on_step_end=diffusers_step_callback,
             )
         finally:
             # Leftover allocator cache would starve the next run.
