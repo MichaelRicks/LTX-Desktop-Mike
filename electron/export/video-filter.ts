@@ -16,6 +16,14 @@ export interface ExportTextOverlay {
   };
 }
 
+/** Build a drawtext `fontfile=` argument for a system font path. The path is
+ *  single-quoted and its drive-letter colon escaped — the only form that parses
+ *  inside a filter_complex_script on Windows (bare or backslash-only both fail
+ *  with "No option name near ...", verified against the bundled ffmpeg). */
+function fontFileArg(p: string): string {
+  return `fontfile='${p.replace(/\\/g, '/').replace(/:/g, '\\:')}'`
+}
+
 /** Escape a string for use inside an ffmpeg drawtext text='...' value. */
 function escapeDrawtext(text: string): string {
   return text
@@ -24,12 +32,6 @@ function escapeDrawtext(text: string): string {
     .replace(/:/g, '\\:')
     .replace(/%/g, '%%')
     .replace(/\n/g, '\\n')
-}
-
-/** Escape an absolute path for an ffmpeg option value (e.g. fontfile=). Forward
- *  slashes work on Windows; the drive-letter colon must be escaped. */
-function escapeFontPath(p: string): string {
-  return p.replace(/\\/g, '/').replace(/:/g, '\\:')
 }
 
 /** Convert a CSS color (hex / rgb(a) / named / transparent) to an ffmpeg color
@@ -383,7 +385,7 @@ export function buildVideoFilterGraph(
       const py = Math.max(0, Math.min(1, (s.positionY ?? 50) / 100))
 
       const parts: string[] = []
-      if (fontFile) parts.push(`fontfile=${escapeFontPath(fontFile)}`)
+      if (fontFile) parts.push(fontFileArg(fontFile))
       parts.push(`text='${escapeDrawtext(ov.text)}'`)
       parts.push(`fontsize=${fontSize}`)
       parts.push(`fontcolor=${fontColor}`)

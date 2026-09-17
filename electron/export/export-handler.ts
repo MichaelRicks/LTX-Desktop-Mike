@@ -10,11 +10,13 @@ import { buildVideoFilterGraph } from './video-filter'
 import { mixAudioToPcm } from './audio-mix'
 import { handle } from '../ipc/typed-handle'
 
-/** First existing system font, for ffmpeg drawtext (text overlays / subtitles).
- *  drawtext needs a real font file on Windows builds that lack fontconfig. */
+/** First existing system SANS font, so exported text overlays match the editor
+ *  preview's sans look instead of ffmpeg's default serif. Arial first (it's the
+ *  preview font stack's fallback). Returns undefined if none found — drawtext
+ *  then omits fontfile and falls back to ffmpeg's default (still renders). */
 function resolveExportFont(): string | undefined {
   const candidates = process.platform === 'win32'
-    ? ['C:/Windows/Fonts/segoeui.ttf', 'C:/Windows/Fonts/arial.ttf', 'C:/Windows/Fonts/calibri.ttf', 'C:/Windows/Fonts/tahoma.ttf']
+    ? ['C:/Windows/Fonts/arial.ttf', 'C:/Windows/Fonts/segoeui.ttf', 'C:/Windows/Fonts/calibri.ttf', 'C:/Windows/Fonts/tahoma.ttf']
     : process.platform === 'darwin'
       ? ['/System/Library/Fonts/Supplemental/Arial.ttf', '/Library/Fonts/Arial.ttf', '/System/Library/Fonts/Helvetica.ttc']
       : ['/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf', '/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf']
