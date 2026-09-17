@@ -327,6 +327,10 @@ export const timelineClipSchema = z.object({
   // start, value = 0..2. When present + non-empty, replaces the flat `volume`
   // as the base gain (the fade envelope still multiplies on top).
   volumeKeyframes: z.array(z.object({ t: z.number(), value: z.number() })).optional(),
+  // Text-overlay opacity fade in/out (seconds). Unset = the 0.5s default (a soft
+  // in/out is almost always wanted); set 0 explicitly for a hard cut.
+  textFadeIn: z.number().optional(),
+  textFadeOut: z.number().optional(),
   trackIndex: z.number(),
   asset: assetSchema.nullable(),
   importedName: z.string().optional(),

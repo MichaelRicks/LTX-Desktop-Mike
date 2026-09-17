@@ -577,6 +577,31 @@ export function ClipPropertiesPanel(props: ClipPropertiesPanelProps) {
                 </div>
               </div>
 
+              {/* Fade in / out (opacity envelope over the clip's life) */}
+              {(() => {
+                const maxFade = Math.max(0.1, selectedClip.duration / 2)
+                const fadeIn = Math.min(selectedClip.textFadeIn ?? 0.5, maxFade)
+                const fadeOut = Math.min(selectedClip.textFadeOut ?? 0.5, maxFade)
+                return (
+                  <div className="space-y-1.5 pt-1">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[10px] text-zinc-400">Fade In</span>
+                      <div className="flex items-center gap-2">
+                        <input type="range" min={0} max={maxFade} step={0.1} value={fadeIn} onChange={e => updateClip(selectedClip.id, { textFadeIn: parseFloat(e.target.value) })} className="w-20 accent-cyan-500" />
+                        <span className="text-[10px] text-zinc-300 w-8 text-right tabular-nums">{fadeIn.toFixed(1)}s</span>
+                      </div>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span className="text-[10px] text-zinc-400">Fade Out</span>
+                      <div className="flex items-center gap-2">
+                        <input type="range" min={0} max={maxFade} step={0.1} value={fadeOut} onChange={e => updateClip(selectedClip.id, { textFadeOut: parseFloat(e.target.value) })} className="w-20 accent-cyan-500" />
+                        <span className="text-[10px] text-zinc-300 w-8 text-right tabular-nums">{fadeOut.toFixed(1)}s</span>
+                      </div>
+                    </div>
+                  </div>
+                )
+              })()}
+
               {/* Stroke */}
               <div className="flex items-center justify-between">
                 <span className="text-[10px] text-zinc-400">Outline</span>

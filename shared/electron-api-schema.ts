@@ -70,6 +70,8 @@ const exportTextOverlay = z.object({
   text: z.string(),
   startTime: z.number(),
   endTime: z.number(),
+  fadeIn: z.number().optional(),
+  fadeOut: z.number().optional(),
   style: z.object({
     fontSize: z.number(),
     color: z.string(),

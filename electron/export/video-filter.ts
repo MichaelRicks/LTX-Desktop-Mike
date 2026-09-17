@@ -7,6 +7,7 @@ export interface ExportSubtitle {
 
 export interface ExportTextOverlay {
   text: string; startTime: number; endTime: number;
+  fadeIn?: number; fadeOut?: number;
   style: {
     fontSize: number; color: string; backgroundColor: string;
     positionX: number; positionY: number;
@@ -416,6 +417,20 @@ export function buildVideoFilterGraph(
         parts.push('box=1')
         parts.push(`boxcolor=${boxColor}`)
         parts.push(`boxborderw=${Math.max(0, Math.round((s.padding ?? 0) * hf))}`)
+      }
+
+      // Opacity fade in/out via a time-based alpha expression (defaults 0.5s,
+      // each capped at half the overlay). Multiplies the drawtext alpha, so it
+      // rides on top of the style's own opacity. Commas escaped like `enable`.
+      const ovDur = Math.max(0.0001, ov.endTime - ov.startTime)
+      const fin = Math.min(ov.fadeIn ?? 0.5, ovDur / 2)
+      const fout = Math.min(ov.fadeOut ?? 0.5, ovDur / 2)
+      const ramps: string[] = []
+      if (fin > 0.001) ramps.push(`(t-${ov.startTime.toFixed(3)})/${fin.toFixed(3)}`)
+      if (fout > 0.001) ramps.push(`(${ov.endTime.toFixed(3)}-t)/${fout.toFixed(3)}`)
+      if (ramps.length > 0) {
+        const inner = ramps.length === 2 ? `min(${ramps[0]}\\,${ramps[1]})` : ramps[0]
+        parts.push(`alpha='max(0\\,min(1\\,${inner}))'`)
       }
 
       parts.push(`enable='between(t\\,${ov.startTime.toFixed(3)}\\,${ov.endTime.toFixed(3)})'`)

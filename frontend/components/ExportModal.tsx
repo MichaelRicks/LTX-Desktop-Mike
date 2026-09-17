@@ -216,6 +216,8 @@ export function ExportModal({ projectName }: ExportModalProps) {
           text: ts.text,
           startTime: clip.startTime,
           endTime: clip.startTime + clip.duration,
+          fadeIn: clip.textFadeIn ?? 0.5,
+          fadeOut: clip.textFadeOut ?? 0.5,
           style: {
             fontSize: ts.fontSize,
             color: ts.color,

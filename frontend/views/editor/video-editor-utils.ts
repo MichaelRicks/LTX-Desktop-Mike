@@ -67,6 +67,28 @@ export const CUT_POINT_TOLERANCE = 0.05
 /** Default cross-dissolve duration in seconds */
 export const DEFAULT_DISSOLVE_DURATION = 0.5
 
+/** Default text-overlay opacity fade (seconds) when the clip hasn't set one. */
+export const DEFAULT_TEXT_FADE = 0.5
+
+/**
+ * Opacity multiplier (0..1) for a text overlay's fade in/out at absolute time
+ * `time`. Fades default to DEFAULT_TEXT_FADE when unset and are each capped at
+ * half the clip so a short overlay still reaches full opacity.
+ */
+export function textFadeMultiplier(
+  startTime: number, duration: number, time: number,
+  fadeIn: number | undefined, fadeOut: number | undefined,
+): number {
+  const half = duration / 2
+  const fin = Math.min(fadeIn ?? DEFAULT_TEXT_FADE, half)
+  const fout = Math.min(fadeOut ?? DEFAULT_TEXT_FADE, half)
+  const t = time - startTime
+  let g = 1
+  if (fin > 0 && t < fin) g = Math.max(0, Math.min(1, t / fin))
+  if (fout > 0 && t > duration - fout) g = Math.min(g, Math.max(0, (duration - t) / fout))
+  return g
+}
+
 /** A single volume-automation keyframe: `t` seconds from clip start, `value` gain 0..2. */
 export interface VolumeKeyframe { t: number; value: number }
 

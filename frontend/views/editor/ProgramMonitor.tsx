@@ -10,7 +10,7 @@ import { AudioWaveform } from '../../components/AudioWaveform'
 import { pathToFileUrl } from '../../lib/file-url'
 import { DEFAULT_SUBTITLE_STYLE } from '../../types/project-model'
 import type { Asset, TimelineClip, Track, SubtitleClip } from '../../types/project-model'
-import { getClipEffectStyles, getTransitionBgColor, formatTime, getShortcutLabel, tooltipLabel, getMaskedEffectOverlays } from './video-editor-utils'
+import { getClipEffectStyles, getTransitionBgColor, formatTime, getShortcutLabel, tooltipLabel, getMaskedEffectOverlays, textFadeMultiplier } from './video-editor-utils'
 import type { KeyboardLayout } from '../../lib/keyboard-shortcuts'
 import {
   selectActiveTimelineInPoint,
@@ -526,6 +526,9 @@ export const ProgramMonitor = React.forwardRef<ProgramMonitorHandle, ProgramMoni
     }
   })
   const frameSceneRef = React.useRef(frameScene)
+  // Live DOM handles for active text overlays, so playback can ride their
+  // fade-in/out opacity each frame without re-rendering React.
+  const textOverlayElsRef = React.useRef<Map<string, HTMLDivElement>>(new Map())
   const lastFrameRequestRef = React.useRef<{ state: FrameRenderState; mode: MonitorRenderMode } | null>(null)
   const playbackTimecodeRef = React.useRef<HTMLSpanElement | null>(null)
 
@@ -1076,6 +1079,27 @@ export const ProgramMonitor = React.forwardRef<ProgramMonitorHandle, ProgramMoni
     }
   }, [isPlaying, playbackTimeRef, renderFrame])
 
+  // While playing, ride each active text overlay's fade in/out opacity per frame.
+  // renderFrame short-circuits when the clip set is unchanged, so the fade can't
+  // ride React state — update the DOM opacity directly instead. Scrub/paused
+  // frames get the same value inline from the JSX above.
+  React.useEffect(() => {
+    if (!isPlaying) return
+    let id = 0
+    const tick = () => {
+      const t = playbackTimeRef.current
+      for (const tc of frameSceneRef.current.activeTextClips) {
+        const el = textOverlayElsRef.current.get(tc.id)
+        const ts = tc.textStyle
+        if (!el || !ts) continue
+        el.style.opacity = String((ts.opacity / 100) * textFadeMultiplier(tc.startTime, tc.duration, t, tc.textFadeIn, tc.textFadeOut))
+      }
+      id = requestAnimationFrame(tick)
+    }
+    id = requestAnimationFrame(tick)
+    return () => cancelAnimationFrame(id)
+  }, [isPlaying, playbackTimeRef])
+
   React.useEffect(() => {
     if (isPlaying) return
     renderFrame(currentTime, 'scrub')
@@ -1418,16 +1442,18 @@ export const ProgramMonitor = React.forwardRef<ProgramMonitorHandle, ProgramMoni
               {activeTextClips.map(tc => {
                 const ts = tc.textStyle!
                 const isSelected = selectedClipIds.has(tc.id)
+                const fadeOpacity = (ts.opacity / 100) * textFadeMultiplier(tc.startTime, tc.duration, currentTime, tc.textFadeIn, tc.textFadeOut)
                 return (
                   <div
                     key={`text-${tc.id}`}
+                    ref={(el) => { if (el) textOverlayElsRef.current.set(tc.id, el); else textOverlayElsRef.current.delete(tc.id) }}
                     className={`absolute z-[24] ${isSelected ? 'ring-2 ring-cyan-400/60 ring-offset-1 ring-offset-transparent' : ''}`}
                     style={{
                       left: `${ts.positionX}%`,
                       top: `${ts.positionY}%`,
                       transform: 'translate(-50%, -50%)',
                       maxWidth: ts.maxWidth > 0 ? `${ts.maxWidth}%` : undefined,
-                      opacity: ts.opacity / 100,
+                      opacity: fadeOpacity,
                       pointerEvents: 'auto',
                       cursor: 'move',
                     }}
