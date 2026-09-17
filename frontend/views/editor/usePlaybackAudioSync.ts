@@ -47,6 +47,19 @@ function clipOverlapsWindow(
   return clipEnd >= time - lookBehindSeconds && clipStart <= time + lookAheadSeconds
 }
 
+/** Linear fade in/out gain (0..1) for a clip at a given TIMELINE time — mirrors
+ *  the export's envelope so the preview sounds the same as the render. */
+function fadeMultiplier(clip: TimelineClip, time: number): number {
+  const fadeIn = clip.audioFadeIn ?? 0
+  const fadeOut = clip.audioFadeOut ?? 0
+  if (fadeIn <= 0 && fadeOut <= 0) return 1
+  const t = time - clip.startTime
+  let g = 1
+  if (fadeIn > 0 && t < fadeIn) g *= Math.max(0, Math.min(1, t / fadeIn))
+  if (fadeOut > 0 && t > clip.duration - fadeOut) g *= Math.max(0, Math.min(1, (clip.duration - t) / fadeOut))
+  return g
+}
+
 function getClipStartTargetTime(clip: TimelineClip, mediaDuration: number): number {
   return clip.reversed
     ? Math.max(0, mediaDuration - clip.trimEnd)
@@ -196,7 +209,7 @@ export function usePlaybackAudioSync(params: UsePlaybackAudioSyncParams) {
           const track = currentTracks[clip.trackIndex]
           const isSoloMuted = anySoloed && !track?.solo
           el.muted = clip.muted || track?.muted || isSoloMuted || false
-          applyVolume(el, clip.volume)
+          applyVolume(el, clip.volume * fadeMultiplier(clip, atTime))
 
           if (!el.__audioPlaying || isNewElement) {
             const target = computeTarget(el, atTime)
@@ -337,7 +350,7 @@ export function usePlaybackAudioSync(params: UsePlaybackAudioSyncParams) {
       const track = tracks[clip.trackIndex]
       const isSoloMuted = anySoloed && !track?.solo
       el.muted = clip.muted || track?.muted || isSoloMuted || false
-      applyVolume(el, clip.volume)
+      applyVolume(el, clip.volume * fadeMultiplier(clip, currentTime))
 
       if (el.readyState < 2) continue
 

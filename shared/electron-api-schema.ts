@@ -43,6 +43,8 @@ const exportClip = z.object({
   trackIndex: z.number(),
   muted: z.boolean(),
   volume: z.number(),
+  audioFadeIn: z.number().optional(),
+  audioFadeOut: z.number().optional(),
   colorCorrection: exportColorCorrection.optional(),
   transitionIn: exportClipTransition.optional(),
   transitionOut: exportClipTransition.optional(),

@@ -321,6 +321,8 @@ export const timelineClipSchema = z.object({
   reversed: z.boolean().default(false),
   muted: z.boolean().default(false),
   volume: z.number().default(1),
+  audioFadeIn: z.number().optional(),
+  audioFadeOut: z.number().optional(),
   trackIndex: z.number(),
   asset: assetSchema.nullable(),
   importedName: z.string().optional(),

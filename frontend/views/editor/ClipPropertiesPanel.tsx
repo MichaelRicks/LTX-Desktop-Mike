@@ -712,6 +712,40 @@ export function ClipPropertiesPanel(props: ClipPropertiesPanelProps) {
           </div>
         )}
 
+        {hasAudioControls && (() => {
+          const maxFade = Math.max(0.1, Math.min(5, selectedClip.duration / 2))
+          return (
+            <div>
+              <div className="flex items-center justify-between mb-1">
+                <label className="text-xs text-zinc-500">Fade In</label>
+                <span className="text-[10px] text-zinc-400 tabular-nums">{(selectedClip.audioFadeIn ?? 0).toFixed(1)}s</span>
+              </div>
+              <input
+                type="range"
+                min={0}
+                max={maxFade}
+                step={0.1}
+                value={Math.min(selectedClip.audioFadeIn ?? 0, maxFade)}
+                onChange={(e) => updateClip(selectedClip.id, { audioFadeIn: parseFloat(e.target.value) })}
+                className="w-full"
+              />
+              <div className="flex items-center justify-between mb-1 mt-2">
+                <label className="text-xs text-zinc-500">Fade Out</label>
+                <span className="text-[10px] text-zinc-400 tabular-nums">{(selectedClip.audioFadeOut ?? 0).toFixed(1)}s</span>
+              </div>
+              <input
+                type="range"
+                min={0}
+                max={maxFade}
+                step={0.1}
+                value={Math.min(selectedClip.audioFadeOut ?? 0, maxFade)}
+                onChange={(e) => updateClip(selectedClip.id, { audioFadeOut: parseFloat(e.target.value) })}
+                className="w-full"
+              />
+            </div>
+          )
+        })()}
+
         {hasAudioControls && (
           <div className="space-y-2">
             <label className="flex items-center gap-2 cursor-pointer">

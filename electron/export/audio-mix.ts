@@ -52,6 +52,7 @@ function extractPcmBuffer(
 interface AudioSource {
   filePath: string; trimStart: number; trimEnd: number;
   timelineStart: number; speed: number; reversed: boolean; volume: number;
+  audioFadeIn: number; audioFadeOut: number;
 }
 
 /**
@@ -81,6 +82,8 @@ export async function mixAudioToPcm(
         speed: c.speed,
         reversed: c.reversed,
         volume: c.volume,
+        audioFadeIn: c.audioFadeIn ?? 0,
+        audioFadeOut: c.audioFadeOut ?? 0,
       })
     } else if (c.type === 'video') {
       if (!audioProbeCache.has(fp)) {
@@ -95,6 +98,8 @@ export async function mixAudioToPcm(
         speed: c.speed,
         reversed: c.reversed,
         volume: c.volume,
+        audioFadeIn: c.audioFadeIn ?? 0,
+        audioFadeOut: c.audioFadeOut ?? 0,
       })
     }
   }
@@ -116,11 +121,27 @@ export async function mixAudioToPcm(
       const startSample = startFrame * NUM_CHANNELS
       const numPcmSamples = Math.floor(pcm.length / BYTES_PER_SAMPLE)
 
+      // Linear fade in/out envelope, in frames (a frame = NUM_CHANNELS samples).
+      const clipFrames = Math.floor(numPcmSamples / NUM_CHANNELS)
+      const fadeInFrames = Math.max(0, Math.round((src.audioFadeIn || 0) * SAMPLE_RATE))
+      const fadeOutFrames = Math.max(0, Math.round((src.audioFadeOut || 0) * SAMPLE_RATE))
+      const hasFade = fadeInFrames > 0 || fadeOutFrames > 0
+
       for (let s = 0; s < numPcmSamples; s++) {
         const destIdx = startSample + s
         if (destIdx < 0 || destIdx >= totalSamples) continue
         const value = pcm.readInt16LE(s * BYTES_PER_SAMPLE)
-        mixBuffer[destIdx] += value * src.volume
+        let gain = src.volume
+        if (hasFade) {
+          const frame = (s / NUM_CHANNELS) | 0
+          if (fadeInFrames > 0 && frame < fadeInFrames) {
+            gain *= frame / fadeInFrames
+          }
+          if (fadeOutFrames > 0 && frame >= clipFrames - fadeOutFrames) {
+            gain *= Math.max(0, (clipFrames - frame) / fadeOutFrames)
+          }
+        }
+        mixBuffer[destIdx] += value * gain
       }
       logger.info( `[Export] Audio ${i + 1}: mixed ${numPcmSamples} samples (${(numPcmSamples / SAMPLE_RATE / NUM_CHANNELS).toFixed(2)}s) at offset frame ${startFrame}`)
     } catch (err: any) {
