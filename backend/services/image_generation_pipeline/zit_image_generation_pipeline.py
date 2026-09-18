@@ -1,25 +1,47 @@
 """Z-Image-Turbo image generation pipeline wrapper."""
 
+# ZImagePipeline / ZImageTransformer2DModel are untyped in diffusers, so values
+# derived from them read as "unknown" under pyright's strict mode. Suppress the
+# unknown-type family for this file rather than scattering per-line ignores.
+# pyright: reportUnknownMemberType=false, reportUnknownVariableType=false
+# pyright: reportUnknownParameterType=false, reportUnknownArgumentType=false
+
 from __future__ import annotations
 
 import logging
 from collections.abc import Sequence
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, cast
 
 import torch
+from diffusers import BitsAndBytesConfig  # type: ignore[reportPrivateImportUsage]
+from diffusers import ZImageTransformer2DModel  # type: ignore[reportPrivateImportUsage]
 from diffusers.pipelines.auto_pipeline import ZImagePipeline  # type: ignore[reportUnknownVariableType]
 from PIL.Image import Image as PILImage
+from PIL.Image import Resampling
+from transformers import BitsAndBytesConfig as TransformersBitsAndBytesConfig
+from transformers.models.qwen3.modeling_qwen3 import Qwen3Model
 
 from services.generation_interrupt import diffusers_step_callback
 from services.services_utils import (
     ImagePipelineOutputLike,
     PILImageType,
     clamp_strength,
+    empty_device_cache,
     get_device_type,
+    sync_device,
 )
 
 logger = logging.getLogger(__name__)
+
+# Cached beside the model files themselves (never touches the originals) so
+# subsequent loads read the already-quantized weights instead of re-quantizing
+# the full bf16 originals. Cuts cold-load time roughly 8x and makes the load far
+# less likely to stall on the OS file cache evicting the large source shards
+# under RAM pressure (e.g. from a video model).
+_NF4_TRANSFORMER_CACHE_DIRNAME = "_nf4_transformer_cache"
+_NF4_TEXT_ENCODER_CACHE_DIRNAME = "_nf4_text_encoder_cache"
 
 
 @dataclass(slots=True)
@@ -35,14 +57,96 @@ class ZitImageGenerationPipeline:
     ) -> "ZitImageGenerationPipeline":
         return ZitImageGenerationPipeline(model_path=model_path, device=device)
 
+    @staticmethod
+    def _load_quantized_transformer(model_path: str) -> ZImageTransformer2DModel:
+        cache_dir = Path(model_path) / _NF4_TRANSFORMER_CACHE_DIRNAME
+        if (cache_dir / "config.json").exists():
+            try:
+                return ZImageTransformer2DModel.from_pretrained(  # type: ignore[reportUnknownMemberType]
+                    cache_dir, torch_dtype=torch.bfloat16
+                )
+            except Exception:
+                logger.warning(
+                    "Failed to load cached NF4 Z-Image transformer from %s; re-quantizing from source.",
+                    cache_dir,
+                    exc_info=True,
+                )
+
+        quantization_config = BitsAndBytesConfig(
+            load_in_4bit=True,
+            bnb_4bit_quant_type="nf4",
+            bnb_4bit_compute_dtype=torch.bfloat16,
+        )
+        transformer = ZImageTransformer2DModel.from_pretrained(  # type: ignore[reportUnknownMemberType]
+            model_path,
+            subfolder="transformer",
+            quantization_config=quantization_config,
+            torch_dtype=torch.bfloat16,
+        )
+        try:
+            transformer.save_pretrained(cache_dir)  # type: ignore[reportUnknownMemberType]
+        except OSError:
+            logger.warning("Failed to cache NF4 Z-Image transformer to %s", cache_dir, exc_info=True)
+        return transformer
+
+    @staticmethod
+    def _load_quantized_text_encoder(model_path: str) -> Qwen3Model:
+        cache_dir = Path(model_path) / _NF4_TEXT_ENCODER_CACHE_DIRNAME
+        if (cache_dir / "config.json").exists():
+            try:
+                return Qwen3Model.from_pretrained(cache_dir, torch_dtype=torch.bfloat16)  # type: ignore[reportUnknownMemberType]
+            except Exception:
+                logger.warning(
+                    "Failed to load cached NF4 Z-Image text encoder from %s; re-quantizing from source.",
+                    cache_dir,
+                    exc_info=True,
+                )
+
+        quantization_config = TransformersBitsAndBytesConfig(
+            load_in_4bit=True,
+            bnb_4bit_quant_type="nf4",
+            bnb_4bit_compute_dtype=torch.bfloat16,
+        )
+        text_encoder = Qwen3Model.from_pretrained(  # type: ignore[reportUnknownMemberType]
+            model_path,
+            subfolder="text_encoder",
+            quantization_config=quantization_config,
+            torch_dtype=torch.bfloat16,
+        )
+        try:
+            text_encoder.save_pretrained(cache_dir)  # type: ignore[reportUnknownMemberType]
+        except OSError:
+            logger.warning("Failed to cache NF4 Z-Image text encoder to %s", cache_dir, exc_info=True)
+        return text_encoder
+
     def __init__(self, model_path: str, device: str | None = None) -> None:
         self._device: str | None = None
         self._cpu_offload_active = False
         self._img2img: Any = None
-        self.pipeline = ZImagePipeline.from_pretrained(  # type: ignore[reportUnknownMemberType]
-            model_path,
-            torch_dtype=torch.bfloat16,
-        )
+
+        # NF4 quantization only benefits CUDA: it shrinks the ~24.6 GB bf16
+        # transformer to ~7 GB and the ~8 GB text encoder to ~3 GB. Loaded as
+        # raw bf16 the transformer alone fills a 24 GB card, so
+        # enable_model_cpu_offload()'s whole-module move overflowed into shared
+        # system RAM and thrashed forever (uninterruptible — cancel is only
+        # polled between denoise steps). Quantized, both components fit as whole
+        # modules with room for activations. bitsandbytes has no MPS backend, so
+        # other devices keep the plain bf16 components.
+        if get_device_type(device) == "cuda":
+            transformer = self._load_quantized_transformer(model_path)
+            text_encoder = self._load_quantized_text_encoder(model_path)
+            self.pipeline = ZImagePipeline.from_pretrained(  # type: ignore[reportUnknownMemberType]
+                model_path,
+                transformer=transformer,
+                text_encoder=text_encoder,
+                torch_dtype=torch.bfloat16,
+            )
+        else:
+            self.pipeline = ZImagePipeline.from_pretrained(  # type: ignore[reportUnknownMemberType]
+                model_path,
+                torch_dtype=torch.bfloat16,
+            )
+
         if device is not None:
             self.to(device)
 
@@ -85,6 +189,14 @@ class ZitImageGenerationPipeline:
 
         return _ZImageOutput(images=validated_images)
 
+    # Quantizing the transformer shrinks its *weights* (~24.6 GB -> ~7 GB), but
+    # activation memory still scales with pixel count regardless of quantization.
+    # Cap generation at ~1 MP (matching the Krea 2 path) so a large requested
+    # resolution can't push the denoise activations back into shared system RAM
+    # and re-introduce the thrash this quantization work fixes; the result is
+    # Lanczos-upscaled to the requested size.
+    _MAX_GENERATION_PIXELS = 1344 * 768
+
     @torch.inference_mode()
     def generate(
         self,
@@ -97,21 +209,41 @@ class ZitImageGenerationPipeline:
     ) -> ImagePipelineOutputLike:
         # ZImagePipeline ignores guidance_scale, so we drop it explicitly.
         _ = guidance_scale
+        requested_width, requested_height = width, height
+        if width * height > self._MAX_GENERATION_PIXELS:
+            scale = (self._MAX_GENERATION_PIXELS / (width * height)) ** 0.5
+            width = max(16, int(width * scale) // 16 * 16)
+            height = max(16, int(height * scale) // 16 * 16)
+
         self._log_run("generate", width=width, height=height)
-        generator = torch.Generator(device=self._resolve_generator_device()).manual_seed(seed)
+        device = self._resolve_generator_device()
+        generator = torch.Generator(device=device).manual_seed(seed)
         pipeline = cast(Any, self.pipeline)
-        output = pipeline(
-            prompt=prompt,
-            height=height,
-            width=width,
-            guidance_scale=0.0,
-            num_inference_steps=num_inference_steps,
-            generator=generator,
-            output_type="pil",
-            return_dict=True,
-            callback_on_step_end=diffusers_step_callback,
-        )
-        return self._normalize_output(output)
+        try:
+            output = pipeline(
+                prompt=prompt,
+                height=height,
+                width=width,
+                guidance_scale=0.0,
+                num_inference_steps=num_inference_steps,
+                generator=generator,
+                output_type="pil",
+                return_dict=True,
+                callback_on_step_end=diffusers_step_callback,
+            )
+        finally:
+            # Leftover allocator cache would starve the next run.
+            sync_device(device)
+            empty_device_cache(device)
+
+        result = self._normalize_output(output)
+        if (width, height) != (requested_width, requested_height):
+            result = _ZImageOutput(
+                images=[
+                    img.resize((requested_width, requested_height), Resampling.LANCZOS) for img in result.images
+                ]
+            )
+        return result
 
     def _ensure_img2img_pipeline(self) -> Any:
         if self._img2img is not None:
@@ -121,6 +253,7 @@ class ZitImageGenerationPipeline:
         except Exception as e:
             raise RuntimeError("DIFFUSERS_IMG2IMG_UNAVAILABLE") from e
         # Reuse the loaded components so no second copy of the weights lands in VRAM.
+        # With the CUDA path these are the quantized transformer/text encoder.
         pipeline_any = cast(Any, self.pipeline)
         self._img2img = ZImageImg2ImgPipeline(**pipeline_any.components)  # type: ignore[reportUnknownMemberType]
         return self._img2img
@@ -137,18 +270,23 @@ class ZitImageGenerationPipeline:
         img2img = self._ensure_img2img_pipeline()
         self._log_run("edit")
 
-        generator = torch.Generator(device=self._resolve_generator_device()).manual_seed(seed)
-        output = img2img(
-            prompt=prompt,
-            image=image,
-            strength=clamp_strength(strength),
-            num_inference_steps=num_inference_steps,
-            guidance_scale=0.0,  # Turbo is guidance-free; img2img defaults to 5.0.
-            generator=generator,
-            output_type="pil",
-            return_dict=True,
-            callback_on_step_end=diffusers_step_callback,
-        )
+        device = self._resolve_generator_device()
+        generator = torch.Generator(device=device).manual_seed(seed)
+        try:
+            output = img2img(
+                prompt=prompt,
+                image=image,
+                strength=clamp_strength(strength),
+                num_inference_steps=num_inference_steps,
+                guidance_scale=0.0,  # Turbo is guidance-free; img2img defaults to 5.0.
+                generator=generator,
+                output_type="pil",
+                return_dict=True,
+                callback_on_step_end=diffusers_step_callback,
+            )
+        finally:
+            sync_device(device)
+            empty_device_cache(device)
         return self._normalize_output(output)
 
     def to(self, device: str) -> None:

@@ -489,6 +489,9 @@ function formatSeconds(seconds: number): string {
 const DEFAULT_LORA_SCALE = 1.0
 const IMAGE_STEPS_GENERATE = 4
 const IMAGE_STEPS_EDIT = 8
+// FORK: Krea 2 Turbo (FLUX-family, ~4s/step in NF4) runs heavier than Z-Image.
+// 6 steps trades a little detail for ~25% faster renders; tune to taste.
+const IMAGE_STEPS_KREA2 = 6
 
 // Multi-select LoRA picker with a per-LoRA strength slider.
 function LoRAPicker({
@@ -3304,8 +3307,8 @@ export function GenSpace() {
         cameraMotion: 'none',
         imageResolution: settings.imageResolution,
         imageAspectRatio: settings.aspectRatio ?? '16:9',
-        // FORK: Krea 2 Turbo needs 8 steps; Z-Image is fine at 4. Editing uses IMAGE_STEPS_EDIT.
-        imageSteps: editSource ? IMAGE_STEPS_EDIT : (settings.imageModel === 'krea-2-turbo' ? 8 : IMAGE_STEPS_GENERATE),
+        // FORK: Krea 2 Turbo runs at IMAGE_STEPS_KREA2; Z-Image is fine at 4. Editing uses IMAGE_STEPS_EDIT.
+        imageSteps: editSource ? IMAGE_STEPS_EDIT : (settings.imageModel === 'krea-2-turbo' ? IMAGE_STEPS_KREA2 : IMAGE_STEPS_GENERATE),
         imageModel: settings.imageModel as 'z-image-turbo' | 'krea-2-turbo',
         variations: settings.variations,
         imageEditStrength: settings.imageEditStrength,
