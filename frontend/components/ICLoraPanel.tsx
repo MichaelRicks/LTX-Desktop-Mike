@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
 import {
   Upload, Loader2, Film, Sparkles, Image as ImageIcon,
-  RefreshCw, Download, AlertCircle, Trash2,
+  RefreshCw, Download, AlertCircle, Trash2, Square,
 } from 'lucide-react'
 import { ApiClient, type ApiRequestBodyOf, type ApiSuccessOf } from '../lib/api-client'
 import { logger } from '../lib/logger'
@@ -16,6 +16,9 @@ interface ICLoraPanelProps {
   fillHeight?: boolean
   isProcessing?: boolean
   processingStatus?: string
+  // Abort the in-flight IC-LoRA generation (process-wide cancel). When provided, a Stop
+  // button shows in the Output panel while processing. Omitted = no Stop button.
+  onCancel?: () => void
   // IC-LoRA mode: 'image' accepts a still image and skips canny/depth preprocessing
   // (the IC-LoRA builds the control video server-side). Default 'video' = today's behavior.
   inputKind?: 'image' | 'video'
@@ -67,6 +70,7 @@ export function ICLoraPanel({
   fillHeight = false,
   isProcessing = false,
   processingStatus = '',
+  onCancel,
   inputKind = 'video',
   selectedIcLoraId = null,
   allowsReferenceImage = false,
@@ -88,6 +92,14 @@ export function ICLoraPanel({
   const [inputTime, setInputTime] = useState(0)
   // Source pixel dimensions, read off the loaded media — drives the outpaint canvas editor.
   const [sourceDims, setSourceDims] = useState<{ w: number; h: number } | null>(null)
+
+  // Local "Stopping…" latch for the Output Stop button. Cancel is polled between denoise
+  // steps (which can be long for the 22B IC-LoRA path), so echo intent immediately, then
+  // clear it once the run actually ends (isProcessing → false).
+  const [stopRequested, setStopRequested] = useState(false)
+  useEffect(() => {
+    if (!isProcessing) setStopRequested(false)
+  }, [isProcessing])
 
   // Optional reference image for catalog IC-LoRAs that allow it (frame 0, strength 1.0).
   const [referenceImagePath, setReferenceImagePath] = useState<string | null>(null)
@@ -727,6 +739,21 @@ export function ICLoraPanel({
                 <div className="text-center p-4">
                   <Loader2 className="h-6 w-6 text-blue-400 animate-spin mx-auto mb-2" />
                   <p className="text-zinc-400 text-xs">{processingStatus || 'Generating...'}</p>
+                  {onCancel && (
+                    <button
+                      onClick={() => { setStopRequested(true); onCancel() }}
+                      disabled={stopRequested}
+                      className={`mt-3 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${
+                        stopRequested
+                          ? 'bg-zinc-700 text-zinc-500 cursor-not-allowed'
+                          : 'text-zinc-300 bg-zinc-700/60 hover:bg-red-600/80 hover:text-white'
+                      }`}
+                      title="Stop this generation"
+                    >
+                      <Square className="h-3 w-3 fill-current" />
+                      {stopRequested ? 'Stopping…' : 'Stop'}
+                    </button>
+                  )}
                 </div>
               ) : (
                 <div className="text-center p-4">

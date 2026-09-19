@@ -3910,6 +3910,7 @@ export function GenSpace() {
             fillHeight
             isProcessing={isIcLoraGenerating}
             processingStatus={icLoraStatus}
+            onCancel={cancel}
             inputKind={selectedIcLora?.input?.kind ?? 'video'}
             selectedIcLoraId={selectedIcLoraId}
             allowsReferenceImage={selectedIcLora?.allows_reference_image ?? false}
