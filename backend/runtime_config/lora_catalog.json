@@ -1511,7 +1511,9 @@
       ],
       "default_settings": {
         "skip_stage_2": true,
-        "resolution_factor": 1.5,
+        "use_lora_in_stage_2": true,
+        "resolution_factor": 2.0,
+        "lora_strength": 1.4,
         "audio_mode": "generated"
       },
       "prompt_template": {

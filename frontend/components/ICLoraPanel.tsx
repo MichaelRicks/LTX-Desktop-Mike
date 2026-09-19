@@ -7,6 +7,8 @@ import { ApiClient, type ApiRequestBodyOf, type ApiSuccessOf } from '../lib/api-
 import { logger } from '../lib/logger'
 import { pathToFileUrl } from '../lib/file-url'
 import { OutpaintCanvasEditor, type OutpaintPads } from './OutpaintCanvasEditor'
+import { saveDataUrlToTempFile, GPM_IMAGE_DND_TYPE, type GpmDndImage } from './gpm/gpm-image-file'
+import { FILE_DND, type LibFile } from './gpm/DownloadsBrowser'
 
 export type ICLoraConditioningType = 'canny' | 'depth' | 'custom'
 
@@ -153,8 +155,15 @@ export function ICLoraPanel({
     setSourceDims(null)
     setInternalCondType('canny')
     setInternalCondStrength(1.0)
-    onConditioningTypeChange?.('canny')
-    onConditioningStrengthChange?.(1.0)
+    // Only reset the PARENT's conditioning type/strength when no catalog IC-LoRA is selected.
+    // The panel remounts on every entry into IC-LoRA mode; when a catalog LoRA (e.g. Ingredients)
+    // is active it owns the selection + its default_settings, and notifying 'canny' here made the
+    // parent deselect it and wipe those settings — so it silently reverted to Canny Edges on
+    // re-entry. Canny/depth is meaningless for a catalog LoRA anyway.
+    if (!isCatalogIcLora) {
+      onConditioningTypeChange?.('canny')
+      onConditioningStrengthChange?.(1.0)
+    }
     setConditioningPreview(null)
     setExtractError(null)
     setReferenceImagePath(null)
@@ -334,6 +343,28 @@ export function ICLoraPanel({
     e.preventDefault()
     setIsDragOver(false)
 
+    const acceptInput = (path: string) => {
+      setInputVideoPath(path)
+      setConditioningPreview(null)
+      setExtractError(null)
+    }
+
+    // Prompt Manager Pro image (data URL) — only meaningful for an image input.
+    const gpmData = e.dataTransfer.getData(GPM_IMAGE_DND_TYPE)
+    if (gpmData && isImage) {
+      const { name, dataUrl } = JSON.parse(gpmData) as GpmDndImage
+      void saveDataUrlToTempFile(dataUrl, name).then(acceptInput).catch(() => {})
+      return
+    }
+
+    // Studio Assets / Downloads Browser file (already a real path on disk).
+    const dlData = e.dataTransfer.getData(FILE_DND)
+    if (dlData) {
+      const f = JSON.parse(dlData) as LibFile
+      if (isImage ? (!f.isVideo && !f.isAudio) : f.isVideo) acceptInput(f.path)
+      return
+    }
+
     const acceptedAssetType = isImage ? 'image' : 'video'
     const assetData = e.dataTransfer.getData('asset')
     if (assetData) {
@@ -379,6 +410,22 @@ export function ICLoraPanel({
   const handleDropReference = useCallback((e: React.DragEvent) => {
     e.preventDefault()
     setIsReferenceDragOver(false)
+
+    // Prompt Manager Pro image (data URL) — persist to a temp file for a real path.
+    const gpmData = e.dataTransfer.getData(GPM_IMAGE_DND_TYPE)
+    if (gpmData) {
+      const { name, dataUrl } = JSON.parse(gpmData) as GpmDndImage
+      void saveDataUrlToTempFile(dataUrl, name).then(setReferenceImagePath).catch(() => {})
+      return
+    }
+
+    // Studio Assets / Downloads Browser image (already a real path on disk).
+    const dlData = e.dataTransfer.getData(FILE_DND)
+    if (dlData) {
+      const f = JSON.parse(dlData) as LibFile
+      if (!f.isVideo && !f.isAudio) setReferenceImagePath(f.path)
+      return
+    }
 
     const assetData = e.dataTransfer.getData('asset')
     if (assetData) {

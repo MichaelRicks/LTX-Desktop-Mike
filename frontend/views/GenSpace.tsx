@@ -487,6 +487,12 @@ function formatSeconds(seconds: number): string {
 }
 
 const DEFAULT_LORA_SCALE = 1.0
+
+// The IC-LoRA the mode picker defaults to (vs the built-in Canny Edges), when it's downloaded.
+// Its optimal settings ride along via the catalog entry's default_settings (applied by
+// onSelectIcLora), so there's nothing to hardcode here beyond the id.
+const DEFAULT_IC_LORA_ID = 'ingredients'
+
 const IMAGE_STEPS_GENERATE = 4
 const IMAGE_STEPS_EDIT = 8
 // FORK: Krea 2 Turbo (FLUX-family, ~4s/step in NF4) runs heavier than Z-Image.
@@ -1888,6 +1894,34 @@ export function GenSpace() {
   )
   const selectedIcLora = icLoras.find(r => r.ic_lora.id === selectedIcLoraId)?.ic_lora ?? null
   const isCatalogIcLora = selectedIcLora !== null
+
+  // Default the IC-LoRA picker to Ingredients (vs the built-in Canny Edges) each time IC-LoRA
+  // mode is entered from the mode dropdown — saves a click. Wrinkles this handles:
+  //  - The catalog (`icLoras`) is only fetched once the mode is active, so we can't select
+  //    synchronously at switch time; the wrapper flags intent and the effect applies it once
+  //    the list loads.
+  //  - The ICLoraPanel remounts on every entry and its resetKey effect forces conditioning
+  //    back to Canny (clearing the selection + settings). Because this parent effect runs
+  //    after that child effect, re-selecting Ingredients here wins — and the flag is set on
+  //    EVERY dropdown entry so it re-asserts each time, not just the first.
+  //  - Only the *dropdown* sets the flag. The gallery's "IC-LoRA" button on a video enters
+  //    ic-lora mode (canny/depth on that clip) via a different path, so it's left alone.
+  const wantIcLoraDefaultRef = useRef(false)
+  const handleGenSpaceModeChange = useCallback((next: GenSpaceMode) => {
+    if (next === 'ic-lora' && mode !== 'ic-lora') wantIcLoraDefaultRef.current = true
+    setMode(next)
+  }, [mode])
+  useEffect(() => {
+    if (mode !== 'ic-lora') { wantIcLoraDefaultRef.current = false; return }
+    if (!wantIcLoraDefaultRef.current) return
+    const item = icLoras.find(r => r.ic_lora.id === DEFAULT_IC_LORA_ID)
+    const meta = icLoraItems.find(e => e.id === DEFAULT_IC_LORA_ID)
+    if (!item || !meta?.downloaded) return // wait for the catalog to load; skip if not downloaded
+    wantIcLoraDefaultRef.current = false
+    // Applies the catalog default_settings (Stage 2 off, LoRA-in-S2, res ×2, strength 1.4) via
+    // onSelectIcLora — no separate settings step needed here.
+    selectIcLora(item)
+  }, [mode, icLoras, icLoraItems, selectIcLora])
   const hasPositionCanvas = (selectedIcLora?.controls ?? []).some(c => c.kind === 'position_canvas')
   // Catalog IC-LoRAs may opt into promptless generation (e.g. outpainting fills from the scene).
   const promptOptional = isCatalogIcLora && (selectedIcLora?.allows_empty_prompt ?? false)
@@ -3989,7 +4023,7 @@ export function GenSpace() {
         {/* Prompt bar */}
         <PromptBar
           mode={mode}
-          onModeChange={setMode}
+          onModeChange={handleGenSpaceModeChange}
           canUseIcLora={!forceApiGenerations}
           allowUltrawideVideo={!shouldVideoGenerateWithLtxApi}
           canUseMultiKeyframe={canUseMultiKeyframe}
