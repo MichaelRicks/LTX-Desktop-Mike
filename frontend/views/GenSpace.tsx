@@ -3944,8 +3944,11 @@ export function GenSpace() {
         </div>
       )}
 
-      {/* Floating prompt panel — wider, responsive, centered */}
-      <div className="absolute bottom-5 left-1/2 w-[min(700px,calc(100%-2rem))] -translate-x-1/2">
+      {/* Floating prompt panel — wider, responsive, centered. z-20 keeps it above
+          the grid cards' render-time chips (z-10), which otherwise bleed through
+          the prompt box when it scrolls under them or the textarea is enlarged.
+          Stays below z-50 dropdowns/modals so those still layer on top. */}
+      <div className="absolute bottom-5 left-1/2 z-20 w-[min(700px,calc(100%-2rem))] -translate-x-1/2">
 
         <FreeApiKeyBubble
           forceApiGenerations={forceApiGenerations}
