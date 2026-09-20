@@ -7,6 +7,7 @@
 
 import { fileUrlToPath } from './file-url'
 import { getStudioAssetsTarget } from './studio-assets-target'
+import { deriveSubject } from './derive-subject'
 
 function baseNameNoExt(p: string): string {
   const base = p.split(/[\\/]/).pop() ?? 'video'
@@ -62,7 +63,7 @@ export async function saveVideoFile(pathOrUrl: string, suggestedName?: string): 
   try {
     const dest = await api.showSaveDialog({
       title: 'Save Video',
-      defaultPath: `${toStem(suggestedName, srcPath)}${ext}`,
+      defaultPath: `${deriveSubject(suggestedName, baseNameNoExt(srcPath))}${ext}`,
       filters: [
         { name: 'Video', extensions: [ext.slice(1)] },
         { name: 'All Files', extensions: ['*'] },
@@ -92,7 +93,7 @@ export async function saveImageFile(pathOrUrl: string, suggestedName?: string): 
   try {
     const dest = await api.showSaveDialog({
       title: 'Save Image',
-      defaultPath: `${toStem(suggestedName, srcPath)}${ext}`,
+      defaultPath: `${deriveSubject(suggestedName, baseNameNoExt(srcPath))}${ext}`,
       filters: [
         { name: 'Image', extensions: [ext.slice(1)] },
         { name: 'All Files', extensions: ['*'] },
@@ -112,7 +113,7 @@ export async function saveImageFile(pathOrUrl: string, suggestedName?: string): 
  * lands at the TOP of that folder. `pathOrUrl` may be a raw path or a file:// URL.
  * (The right-click "Save video/image" menu still uses the dialog for a chosen location.)
  */
-export async function saveToStudioAssets(pathOrUrl: string): Promise<void> {
+export async function saveToStudioAssets(pathOrUrl: string, prompt?: string): Promise<void> {
   const api = window.electronAPI
   if (!api?.gpmLibAddFiles) {
     flashToast('Save unavailable — please restart the app', true)
@@ -120,8 +121,12 @@ export async function saveToStudioAssets(pathOrUrl: string): Promise<void> {
   }
   const srcPath = fileUrlToPath(pathOrUrl)
   const folder = getStudioAssetsTarget()
+  // Content-aware auto-naming: derive a subject from the prompt so the file lands as
+  // "toy-robot-01.png" instead of a hash. The main process sequences it per folder.
+  const isVideo = /\.(mp4|webm|mkv|mov|avi)$/i.test(srcPath)
+  const baseName = deriveSubject(prompt, isVideo ? 'video' : 'image')
   try {
-    const res = await api.gpmLibAddFiles({ folder, srcPaths: [srcPath] })
+    const res = await api.gpmLibAddFiles({ folder, srcPaths: [srcPath], baseName })
     flashToast(
       res?.success ? `Saved to Studio Assets · ${folder}` : (res?.error || 'Could not save'),
       !res?.success,

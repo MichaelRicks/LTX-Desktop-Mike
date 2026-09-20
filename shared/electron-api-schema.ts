@@ -424,7 +424,10 @@ export const electronAPISchemas = {
   gpmLibCreateFolder: { input: z.object({ name: z.string() }), output: emptyResult },
   gpmLibRenameFolder: { input: z.object({ from: z.string(), to: z.string() }), output: emptyResult },
   gpmLibDeleteFolder: { input: z.object({ name: z.string() }), output: emptyResult },
-  gpmLibAddFiles: { input: z.object({ folder: z.string(), srcPaths: z.array(z.string()) }), output: ipcResult({ added: z.number() }) },
+  // baseName: optional content-derived subject for auto-naming (e.g. "toy-robot"). When set,
+  // each copied file lands as "<baseName>-NN.<ext>" sequenced per destination folder, instead
+  // of keeping the source's hashed basename. Omitted = keep the original name (imports/drag-drop).
+  gpmLibAddFiles: { input: z.object({ folder: z.string(), srcPaths: z.array(z.string()), baseName: z.string().optional() }), output: ipcResult({ added: z.number() }) },
   gpmLibMoveFile: { input: z.object({ fromFolder: z.string(), name: z.string(), toFolder: z.string() }), output: emptyResult },
   gpmLibDeleteFile: { input: z.object({ folder: z.string(), name: z.string() }), output: emptyResult },
   gpmLibReveal: { input: z.object({ folder: z.string().optional() }), output: emptyResult },

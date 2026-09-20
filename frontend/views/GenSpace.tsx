@@ -186,7 +186,8 @@ function AssetCard({
     e.stopPropagation()
     // Quick-save into the last-used Studio Assets folder (no native Save dialog).
     // Right-click the enlarged asset for the "Save…" menu to choose a location instead.
-    void saveToStudioAssets(asset.path)
+    // The prompt drives content-aware auto-naming (subject-NN.ext) in the library.
+    void saveToStudioAssets(asset.path, asset.prompt)
   }
 
   // "Lightweight" post-to-X: no API keys/OAuth — opens X's compose page with

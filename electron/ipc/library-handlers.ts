@@ -87,6 +87,35 @@ function uniqueTarget(target: string): string {
   return candidate
 }
 
+function escapeRegExp(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
+// Content-aware auto-naming: normalize a caller-supplied subject to safe filename chars.
+function sanitizeSubject(subject: string): string {
+  return subject
+    .toLowerCase()
+    .replace(/[^a-z0-9-]+/g, '-')
+    .replace(/-{2,}/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 48)
+    .replace(/-+$/g, '')
+}
+
+// Next "<subject>-NN.<ext>" for a folder — the sequence source of truth is the folder itself
+// (append-only: existing NN are never renumbered). Scanned per copy so a batch increments.
+function nextSequencedName(dir: string, subject: string, ext: string): string {
+  let max = 0
+  const re = new RegExp(`^${escapeRegExp(subject)}-(\\d+)${escapeRegExp(ext)}$`, 'i')
+  try {
+    for (const name of fs.readdirSync(dir)) {
+      const m = re.exec(name)
+      if (m) max = Math.max(max, parseInt(m[1], 10))
+    }
+  } catch { /* folder is new / unreadable — start the sequence at 01 */ }
+  return `${subject}-${String(max + 1).padStart(2, '0')}${ext}`
+}
+
 export function registerLibraryHandlers(): void {
   handle('gpmLibList', () => {
     const root = libRoot()
@@ -124,16 +153,20 @@ export function registerLibraryHandlers(): void {
     catch (e) { return { success: false as const, error: e instanceof Error ? e.message : 'delete failed' } }
   })
 
-  handle('gpmLibAddFiles', ({ folder, srcPaths }) => {
+  handle('gpmLibAddFiles', ({ folder, srcPaths, baseName }) => {
     try {
       const dest = folderPath(folder)
       fs.mkdirSync(dest, { recursive: true }) // robust: quick-save target may have been deleted
+      // Content-aware auto-naming: with a subject, land as "<subject>-NN.<ext>" (sequenced per
+      // folder); without one (imports / drag-drop), keep the source's original filename.
+      const subject = baseName ? sanitizeSubject(baseName) : ''
       let added = 0
       for (const src of srcPaths) {
         if (!fs.existsSync(src) || !fs.statSync(src).isFile()) continue
         const ext = path.extname(src).toLowerCase()
         if (!MEDIA_EXT.has(ext)) continue
-        fs.copyFileSync(src, uniqueTarget(path.join(dest, path.basename(src))))
+        const targetName = subject ? nextSequencedName(dest, subject, ext) : path.basename(src)
+        fs.copyFileSync(src, uniqueTarget(path.join(dest, targetName)))
         added++
       }
       return { success: true as const, added }
