@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState } from 'react'
-import { Orbit, Upload, X, ChevronLeft, ChevronRight, Send, Save, Shuffle, FolderOpen } from 'lucide-react'
+import { Orbit, Upload, X, ChevronLeft, ChevronRight, Send, Save, Shuffle } from 'lucide-react'
 import type { GpmImage } from './gpm-storage'
 import { gpmId } from './gpm-storage'
-import { GPM_IMAGE_DND_TYPE, type GpmDndImage } from './gpm-image-file'
+import { GPM_IMAGE_DND_TYPE, type GpmDndImage, saveDataUrlToTempFile } from './gpm-image-file'
 import { FILE_DND, type LibFile } from './DownloadsBrowser'
 import { ApiClient } from '@/lib/api-client'
+import { saveToStudioAssets } from '@/lib/video-save-actions'
 import {
   AZIMUTH_BUCKETS, ELEVATION_BUCKETS, DISTANCE_BUCKETS,
   snapAzimuth, snapElevation, snapPose, poseToPrompt,
@@ -14,8 +15,6 @@ import { useGpmColors } from './gpm-theme'
 // Matches the standalone app's own detent labels — easier to scan than raw
 // degrees, and these are the LoRA's real vocabulary words anyway.
 const ELEVATION_SHORT_LABELS = ['Low', 'Eye', 'Elevated', 'High']
-
-const SAVE_FOLDER_KEY = 'gpm_qwen_angle_save_folder'
 
 // Qwen-Image-Edit-2511 accepts ~3 input images total; the subject is one, so
 // cap extra references at 2. Also keeps the panel's in-memory state light.
@@ -153,7 +152,6 @@ export function QwenMultiAnglePanel({ state, setState, onUse, flash }: {
   const setHistIdx = makeFieldSetter(setState, 'histIdx')
   const [busy, setBusy] = useState(false)
   const [genProgress, setGenProgress] = useState<{ currentStep: number; totalSteps: number } | null>(null)
-  const [saveFolder, setSaveFolder] = useState<string | null>(() => localStorage.getItem(SAVE_FOLDER_KEY))
   const [saveStatus, setSaveStatus] = useState<string | null>(null)
 
   const fileRef = useRef<HTMLInputElement | null>(null)
@@ -373,29 +371,21 @@ export function QwenMultiAnglePanel({ state, setState, onUse, flash }: {
     flash('Sent to Create')
   }
 
-  const chooseFolder = async () => {
-    const dir = await window.electronAPI?.showOpenDirectoryDialog?.({ title: 'Choose a folder for saved angle images' })
-    if (!dir) return
-    setSaveFolder(dir)
-    localStorage.setItem(SAVE_FOLDER_KEY, dir)
-    setSaveStatus(`Save folder: ${dir}`)
-  }
   const saveResult = async () => {
     if (!current) return
-    let folder = saveFolder
-    if (!folder) {
-      folder = await window.electronAPI?.showOpenDirectoryDialog?.({ title: 'Choose a folder for saved angle images' }) ?? null
-      if (!folder) return
-      setSaveFolder(folder)
-      localStorage.setItem(SAVE_FOLDER_KEY, folder)
+    // Content-aware auto-naming, same path as the Create gallery's Download button: the file
+    // lands as <subject>-NN.png (sequenced) in the last-used Studio Assets folder. Subject =
+    // the extra prompt, else the source image's name (minus ext + any -NN), else a generic.
+    const sourceBase = source?.name ? source.name.replace(/\.[^.]+$/, '').replace(/-\d+$/, '') : ''
+    const subjectText = extraPrompt.trim() || sourceBase || 'angle'
+    try {
+      const tempPath = await saveDataUrlToTempFile(current.dataUrl, 'angle.png')
+      await saveToStudioAssets(tempPath, subjectText)
+      setSaveStatus('Saved to Studio Assets')
+    } catch {
+      setSaveStatus('Save failed')
+      flash('Save failed')
     }
-    const slug = current.prompt.replace(/^<sks>\s*/, '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 48)
-    const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)
-    const filePath = `${folder}/qwen_angle_${stamp}_${slug || 'image'}.png`
-    const base64 = current.dataUrl.split(',')[1] ?? current.dataUrl
-    const res = await window.electronAPI?.saveFile?.({ filePath, data: base64, encoding: 'base64' })
-    if (res?.success) { setSaveStatus(`Saved: ${res.path}`); flash('Saved') }
-    else { setSaveStatus(`Save failed: ${res?.error ?? 'unknown error'}`); flash('Save failed') }
   }
   const onResultDragStart = (e: React.DragEvent) => {
     if (!current) return
@@ -407,7 +397,7 @@ export function QwenMultiAnglePanel({ state, setState, onUse, flash }: {
     <div>
       <div className="flex items-center gap-2 mb-2">
         <Orbit size={16} style={{ color: C.blue }} />
-        <span className="text-sm font-semibold" style={{ color: C.text }}>Multi-Angle</span>
+        <span className="text-sm font-semibold" style={{ color: C.text }}>Photo Studio + Multi-Angle</span>
       </div>
       <p className="text-[11px] mb-3" style={{ color: C.muted }}>
         Camera-angle editing via Qwen-Image-Edit. The first generation each session loads the model
@@ -446,13 +436,13 @@ export function QwenMultiAnglePanel({ state, setState, onUse, flash }: {
             <div className="text-[10px] mb-1" style={{ color: C.muted }}>References — prop, location, wardrobe · {extraRefs.length}/{MAX_EXTRA_REFS}</div>
             <div className="flex flex-wrap gap-1.5">
               {extraRefs.map((r, i) => (
-                <div key={i} className="relative rounded overflow-hidden" style={{ width: 48, height: 48, border: `1px solid ${C.border}` }} title={r.name}>
+                <div key={i} className="relative rounded overflow-hidden" style={{ width: 160, height: 90, border: `1px solid ${C.border}` }} title={r.name}>
                   <img src={r.dataUrl} alt={r.name} style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
                   <button
                     onClick={() => removeExtra(i)}
-                    className="absolute top-0 right-0 h-4 w-4 flex items-center justify-center"
+                    className="absolute top-0 right-0 h-5 w-5 flex items-center justify-center"
                     style={{ background: 'rgba(0,0,0,0.6)', color: '#fff' }} title="Remove"
-                  ><X size={9} /></button>
+                  ><X size={12} /></button>
                 </div>
               ))}
               {extraRefs.length < MAX_EXTRA_REFS && (
@@ -460,9 +450,9 @@ export function QwenMultiAnglePanel({ state, setState, onUse, flash }: {
                   onDragOver={(e) => e.preventDefault()} onDrop={(e) => void onExtraDrop(e)}
                   onClick={() => extraFileRef.current?.click()}
                   className="flex items-center justify-center rounded cursor-pointer"
-                  style={{ width: 48, height: 48, border: `1px dashed ${C.borderLt}`, color: C.faint }}
+                  style={{ width: 160, height: 90, border: `1px dashed ${C.borderLt}`, color: C.faint }}
                   title="Add reference image (prop, location, wardrobe)"
-                ><Upload size={14} /></div>
+                ><Upload size={22} /></div>
               )}
             </div>
           </div>
@@ -667,12 +657,8 @@ export function QwenMultiAnglePanel({ state, setState, onUse, flash }: {
                 onClick={() => void saveResult()} disabled={!current}
                 className="flex-1 flex items-center justify-center gap-1 rounded px-2 py-1.5 text-[11px] disabled:opacity-40"
                 style={{ background: C.card, color: C.text, border: `1px solid ${C.border}` }}
+                title="Save to Studio Assets (auto-named)"
               ><Save size={12} />Save</button>
-              <button
-                onClick={() => void chooseFolder()}
-                className="flex items-center justify-center gap-1 rounded px-2 py-1.5 text-[11px]"
-                style={{ background: C.card, color: C.text, border: `1px solid ${C.border}` }} title="Choose save folder"
-              ><FolderOpen size={12} /></button>
             </div>
             {saveStatus && <p className="text-[10px] break-all" style={{ color: C.faint }}>{saveStatus}</p>}
           </>

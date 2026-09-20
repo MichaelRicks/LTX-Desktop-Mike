@@ -1666,7 +1666,7 @@ function Dock({ onClose }: { onClose: () => void }) {
   const TABS: Array<[GpmTab, string]> = [
     ['prompts', 'Prompts'], ['images', 'Images'], ['camera', 'Camera'],
     ['shot', 'Shot Setup'], ['plates', 'Plates'], ['workflow', 'Workflow'],
-    ['qwenAngle', 'Multi-Angle'],
+    ['qwenAngle', 'Photo Studio + Multi-Angle'],
   ]
   const ALL_TABS: Array<[GpmTab, string]> = [...TABS, ['performance', 'Performance Studio']]
 
@@ -1697,7 +1697,18 @@ function Dock({ onClose }: { onClose: () => void }) {
       {tab === 'qwenAngle' && <QwenMultiAnglePanel state={qwenAngleState} setState={setQwenAngleState} onUse={sendImageToGenSpace} flash={flash} />}
     </>
   )
-  const activePanel = renderPanel(gpmTab)
+  // Don't render the docked panel for the tab that's currently enlarged: that mounted TWO live
+  // copies of the same stateful panel (e.g. Multi-Angle) sharing one state — double progress
+  // polling, duplicate hidden file inputs, and inputs that fought each other (the extra-prompt
+  // box went dead until a generation forced things to settle). The enlarged workspace is the
+  // single owner; switch the docked strip to another tab to use it alongside.
+  const dockedDupsExpanded = expanded && expandedTab === gpmTab
+  const activePanel = dockedDupsExpanded ? (
+    <div className="flex flex-col items-center justify-center gap-2 py-12 text-center" style={{ color: C.faint }}>
+      <Maximize2 size={20} />
+      <p className="text-[11px] px-6">Open in the enlarged workspace. Pick another tab here to use it side by side.</p>
+    </div>
+  ) : renderPanel(gpmTab)
   const expandedLabel = ALL_TABS.find(([id]) => id === expandedTab)?.[1] ?? ''
 
   return (
