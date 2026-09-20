@@ -80,6 +80,8 @@ class QwenMultiAngleHandler(StateHandlerBase):
                 seed=seed,
                 extra_prompt=req.extra_prompt,
                 quality_mode=req.quality_mode,
+                use_skin=req.use_skin,
+                skin_weight=req.skin_weight,
                 on_step=_on_step,
             )
 

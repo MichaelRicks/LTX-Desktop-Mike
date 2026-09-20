@@ -47,6 +47,8 @@ export interface QwenAngleState {
   seed: number
   randomizeSeed: boolean
   qualityMode: 'fast' | 'balanced' | 'quality'
+  useSkin: boolean
+  skinWeight: number
   history: ResultEntry[]
   histIdx: number
 }
@@ -62,6 +64,8 @@ export const DEFAULT_QWEN_ANGLE_STATE: QwenAngleState = {
   seed: 42,
   randomizeSeed: false,
   qualityMode: 'fast',
+  useSkin: false,
+  skinWeight: 1.0,
   history: [],
   histIdx: -1,
 }
@@ -136,7 +140,7 @@ export function QwenMultiAnglePanel({ state, setState, onUse, flash }: {
   flash: (m: string) => void
 }) {
   const C = useGpmColors() // palette-aware; also redraws the canvas below on theme change
-  const { source, extraRefs, view, azDeg, elDeg, znIdx, extraPrompt, seed, randomizeSeed, qualityMode, history, histIdx } = state
+  const { source, extraRefs, view, azDeg, elDeg, znIdx, extraPrompt, seed, randomizeSeed, qualityMode, useSkin, skinWeight, history, histIdx } = state
   const setSource = makeFieldSetter(setState, 'source')
   const setExtraRefs = makeFieldSetter(setState, 'extraRefs')
   const setView = makeFieldSetter(setState, 'view')
@@ -147,6 +151,8 @@ export function QwenMultiAnglePanel({ state, setState, onUse, flash }: {
   const setSeed = makeFieldSetter(setState, 'seed')
   const setRandomizeSeed = makeFieldSetter(setState, 'randomizeSeed')
   const setQualityMode = makeFieldSetter(setState, 'qualityMode')
+  const setUseSkin = makeFieldSetter(setState, 'useSkin')
+  const setSkinWeight = makeFieldSetter(setState, 'skinWeight')
   const setHistory = makeFieldSetter(setState, 'history')
   const setHistIdx = makeFieldSetter(setState, 'histIdx')
   const [busy, setBusy] = useState(false)
@@ -340,6 +346,8 @@ export function QwenMultiAnglePanel({ state, setState, onUse, flash }: {
         seed,
         randomize_seed: randomizeSeed,
         quality_mode: qualityMode,
+        use_skin: useSkin,
+        skin_weight: skinWeight,
         extra_prompt: extraPrompt,
       })
       if (!result.ok) {
@@ -623,6 +631,29 @@ export function QwenMultiAnglePanel({ state, setState, onUse, flash }: {
               ? '8-step Lightning — keeps more skin texture'
               : '28-step base, no distillation — sharpest skin, slowest'}
         </div>
+      </div>
+
+      {/* skin-realism LoRA — stacks on any mode; weight scales its strength */}
+      <div className="mb-3">
+        <label className="flex items-center gap-2 cursor-pointer select-none">
+          <input
+            type="checkbox" checked={useSkin} onChange={(e) => setUseSkin(e.target.checked)}
+            className="h-3.5 w-3.5" style={{ accentColor: C.blue }}
+          />
+          <span className="text-[11px]" style={{ color: C.text }}>Skin realism</span>
+          <span className="text-[10px]" style={{ color: C.faint }}>pore-level detail on faces/skin</span>
+        </label>
+        {useSkin && (
+          <div className="flex items-center gap-2 mt-1.5 pl-5">
+            <span className="text-[10px]" style={{ color: C.muted }}>Strength</span>
+            <input
+              type="range" min={0.2} max={1.5} step={0.05} value={skinWeight}
+              onChange={(e) => setSkinWeight(parseFloat(e.target.value))}
+              className="flex-1" style={{ accentColor: C.blue }}
+            />
+            <span className="text-[10px] font-mono w-8 text-right" style={{ color: C.text }}>{skinWeight.toFixed(2)}</span>
+          </div>
+        )}
       </div>
 
       <button

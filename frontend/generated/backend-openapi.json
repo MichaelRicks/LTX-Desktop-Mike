@@ -3831,6 +3831,16 @@
             "title": "Seed",
             "type": "integer"
           },
+          "skin_weight": {
+            "default": 1.0,
+            "title": "Skin Weight",
+            "type": "number"
+          },
+          "use_skin": {
+            "default": false,
+            "title": "Use Skin",
+            "type": "boolean"
+          },
           "zoom": {
             "title": "Zoom",
             "type": "number"

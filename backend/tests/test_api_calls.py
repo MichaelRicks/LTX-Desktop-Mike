@@ -478,6 +478,16 @@ class TestQwenMultiAngle:
         assert r.status_code == 200
         assert "into the scene" not in r.json()["prompt"]
 
+    def test_skin_params_forwarded(self, client, test_state, make_test_image, fake_services):
+        payload = self._base_payload(make_test_image)
+        payload["use_skin"] = True
+        payload["skin_weight"] = 0.8
+        r = client.post("/api/qwen-multiangle/generate", json=payload)
+        assert r.status_code == 200
+        call = fake_services.qwen_multiangle_pipeline.generate_calls[-1]
+        assert call["use_skin"] is True
+        assert call["skin_weight"] == 0.8
+
     def test_randomize_seed_returns_int(self, client, test_state, make_test_image):
         payload = self._base_payload(make_test_image)
         payload["seed"] = 42

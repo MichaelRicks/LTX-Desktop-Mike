@@ -618,6 +618,10 @@ class QwenMultiAngleGenerateRequest(BaseModel):
     # = 8-step Lightning (retains more texture, ~2x fast), "quality" = 28-step
     # base, no distillation LoRA (sharpest skin, slowest). See the GGUF pipeline.
     quality_mode: Literal["fast", "balanced", "quality"] = "fast"
+    # Optional skin-realism LoRA stacked on top of the active mode; skin_weight
+    # scales it (recommended ~0.6-1.2) so it doesn't overpower the angles LoRA.
+    use_skin: bool = False
+    skin_weight: float = 1.0
     extra_prompt: str = ""
 
 

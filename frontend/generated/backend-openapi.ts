@@ -2057,6 +2057,16 @@ export interface components {
              * @default 42
              */
             seed: number;
+            /**
+             * Skin Weight
+             * @default 1
+             */
+            skin_weight: number;
+            /**
+             * Use Skin
+             * @default false
+             */
+            use_skin: boolean;
             /** Zoom */
             zoom: number;
         };

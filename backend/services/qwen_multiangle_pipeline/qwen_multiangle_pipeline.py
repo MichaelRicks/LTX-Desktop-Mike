@@ -40,5 +40,7 @@ class QwenMultiAnglePipeline(Protocol):
         seed: int,
         extra_prompt: str = "",
         quality_mode: str = "fast",
+        use_skin: bool = False,
+        skin_weight: float = 1.0,
         on_step: Callable[[int, int], None] | None = None,
     ) -> "PILImage": ...

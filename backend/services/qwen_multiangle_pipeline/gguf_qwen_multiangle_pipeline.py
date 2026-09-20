@@ -38,6 +38,14 @@ LIGHTNING_LORA = "lightx2v/Qwen-Image-Edit-2511-Lightning"
 LIGHTNING_4STEP_WEIGHT = "Qwen-Image-Edit-2511-Lightning-4steps-V1.0-bf16.safetensors"
 LIGHTNING_8STEP_WEIGHT = "Qwen-Image-Edit-2511-Lightning-8steps-V1.0-bf16.safetensors"
 
+# Optional skin-realism adapter (prithivMLmods, native 2511 — pore-level skin
+# texture). Header-verified same rank 16 / dim 3072 as the angles LoRA, so it
+# stacks cleanly; the only difference is a PEFT ".default." infix and a missing
+# "transformer." prefix in its keys, normalized at load time. Off by default,
+# weighted at generate time so it never overpowers the angles LoRA.
+SKIN_LORA_REPO = "prithivMLmods/Qwen-Image-Edit-2511-Hyper-Realistic-Portrait"
+SKIN_LORA_WEIGHT = "HRP_5.safetensors"
+
 # Three sampling recipes selectable per generation (quality_mode). Both Lightning
 # LoRAs are distillations at CFG 1.0; the 8-step ("balanced") keeps noticeably
 # more high-frequency skin/texture detail than the 4-step ("fast") while staying
@@ -98,6 +106,23 @@ class GGUFQwenMultiAnglePipeline:
         pipe.load_lora_weights(LIGHTNING_LORA, weight_name=LIGHTNING_4STEP_WEIGHT, adapter_name="lightning4")
         pipe.load_lora_weights(LIGHTNING_LORA, weight_name=LIGHTNING_8STEP_WEIGHT, adapter_name="lightning8")
 
+        # Skin-realism adapter: normalize its PEFT-style keys
+        # (transformer_blocks.N…lora_A.default.weight) to the diffusers
+        # convention the other adapters use (transformer.transformer_blocks.N…
+        # lora_A.weight) so load_lora_weights maps every key.
+        logger.info("Loading Qwen multi-angle skin-realism LoRA…")
+        from safetensors.torch import load_file  # type: ignore[reportUnknownVariableType]  # local: heavy import
+
+        skin_path = hf_hub_download(SKIN_LORA_REPO, SKIN_LORA_WEIGHT)
+        skin_raw: dict[str, object] = load_file(skin_path)  # type: ignore[reportUnknownMemberType]
+        skin_state: dict[str, object] = {}
+        for key, tensor in skin_raw.items():
+            norm = key.replace(".default.", ".")
+            if not norm.startswith("transformer."):
+                norm = f"transformer.{norm}"
+            skin_state[norm] = tensor
+        pipe.load_lora_weights(skin_state, adapter_name="skin")
+
         # Load-bearing, not an optimization: the GGUF transformer (~17GB) and
         # bf16 text encoder (~16GB) sum to more than 24GB VRAM. These hooks
         # are what keep the two from ever being GPU-resident simultaneously
@@ -120,6 +145,8 @@ class GGUFQwenMultiAnglePipeline:
         seed: int,
         extra_prompt: str = "",
         quality_mode: str = "fast",
+        use_skin: bool = False,
+        skin_weight: float = 1.0,
         on_step: "Callable[[int, int], None] | None" = None,
     ) -> "PILImage":
         import torch
@@ -129,14 +156,21 @@ class GGUFQwenMultiAnglePipeline:
         prompt = compose_prompt(pose, extra_prompt, extra_roles or [])
 
         if quality_mode == "quality":
-            self._pipe.set_adapters(["angles"], adapter_weights=[1.0])
+            adapters, weights = ["angles"], [1.0]
             steps, cfg = QUALITY_STEPS, QUALITY_CFG
         elif quality_mode == "balanced":
-            self._pipe.set_adapters(["angles", "lightning8"], adapter_weights=[1.0, 1.0])
+            adapters, weights = ["angles", "lightning8"], [1.0, 1.0]
             steps, cfg = BALANCED_STEPS, BALANCED_CFG
         else:  # "fast" (default)
-            self._pipe.set_adapters(["angles", "lightning4"], adapter_weights=[1.0, 1.0])
+            adapters, weights = ["angles", "lightning4"], [1.0, 1.0]
             steps, cfg = FAST_STEPS, FAST_CFG
+
+        # Skin-realism stacks on top of whatever mode is active (most useful on
+        # the softer Lightning modes). Weighted so it can't overpower angles.
+        if use_skin and skin_weight > 0:
+            adapters.append("skin")
+            weights.append(skin_weight)
+        self._pipe.set_adapters(adapters, adapter_weights=weights)
 
         generator = torch.Generator(device="cpu").manual_seed(seed)
 
@@ -153,20 +187,26 @@ class GGUFQwenMultiAnglePipeline:
         # — force PyTorch's native SDPA for this call regardless of what's
         # currently patched, then restore it so other pipelines in the same
         # process (LTX video) keep their SageAttention speedup.
+        # Plus pipeline (2511) accepts a list; subject first, then the extra
+        # references (prop/location) it composes from.
+        call_kwargs: dict[str, object] = {
+            "image": [image, *extra_images] if extra_images else image,
+            "prompt": prompt,
+            "true_cfg_scale": cfg,
+            "num_inference_steps": steps,
+            "generator": generator,
+            "callback_on_step_end": _on_step_end,
+        }
+        # A negative prompt only does anything when CFG is on (true_cfg_scale > 1);
+        # the Lightning modes run at cfg 1.0, where diffusers ignores it and warns.
+        # Only pass it when it will actually be used (Quality mode).
+        if cfg > 1:
+            call_kwargs["negative_prompt"] = " "
+
         patched_sdpa = F.scaled_dot_product_attention
         F.scaled_dot_product_attention = torch._C._nn.scaled_dot_product_attention  # type: ignore[assignment]
         try:
-            result = self._pipe(  # type: ignore[reportCallIssue]
-                # Plus pipeline (2511) accepts a list; subject first, then the
-                # extra references (prop/location) it composes from.
-                image=[image, *extra_images] if extra_images else image,
-                prompt=prompt,
-                negative_prompt=" ",
-                true_cfg_scale=cfg,
-                num_inference_steps=steps,
-                generator=generator,
-                callback_on_step_end=_on_step_end,
-            )
+            result = self._pipe(**call_kwargs)  # type: ignore[reportCallIssue]
             return result.images[0]  # type: ignore[reportUnknownMemberType]
         finally:
             F.scaled_dot_product_attention = patched_sdpa
