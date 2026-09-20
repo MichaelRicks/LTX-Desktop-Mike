@@ -604,12 +604,20 @@ class QwenMultiAngleGenerateRequest(BaseModel):
     # Qwen alongside the subject. image_data_url is the subject being re-angled;
     # these are extra context the model composes from. Empty = classic single-image.
     extra_image_data_urls: list[str] = Field(default_factory=list)
+    # Role of each extra ref, aligned index-for-index with extra_image_data_urls:
+    # "location" = a scene the subject is composited INTO, "prop" = an object the
+    # subject holds/uses. Empty (or length-mismatched) = classic compose, no
+    # explicit compositing instruction. Drives compose_prompt().
+    extra_image_roles: list[Literal["location", "prop"]] = []
     azimuth_deg: float
     elevation_deg: float
     zoom: float
     seed: int = 42
     randomize_seed: bool = False
-    use_lightning: bool = True
+    # Sampling recipe: "fast" = 4-step Lightning (~30s, softer skin), "balanced"
+    # = 8-step Lightning (retains more texture, ~2x fast), "quality" = 28-step
+    # base, no distillation LoRA (sharpest skin, slowest). See the GGUF pipeline.
+    quality_mode: Literal["fast", "balanced", "quality"] = "fast"
     extra_prompt: str = ""
 
 

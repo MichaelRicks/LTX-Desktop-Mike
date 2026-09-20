@@ -1666,7 +1666,7 @@ function Dock({ onClose }: { onClose: () => void }) {
   const TABS: Array<[GpmTab, string]> = [
     ['prompts', 'Prompts'], ['images', 'Images'], ['camera', 'Camera'],
     ['shot', 'Shot Setup'], ['plates', 'Plates'], ['workflow', 'Workflow'],
-    ['qwenAngle', 'Photo Studio + Multi-Angle'],
+    ['qwenAngle', 'Photo Edit + Multi-Angle'],
   ]
   const ALL_TABS: Array<[GpmTab, string]> = [...TABS, ['performance', 'Performance Studio']]
 

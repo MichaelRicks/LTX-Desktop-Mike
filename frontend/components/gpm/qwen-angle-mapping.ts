@@ -83,3 +83,37 @@ export function snapPose(azimuthDeg: number, elevationDeg: number, zoom: number)
 export function poseToPrompt(pose: SnappedPose): string {
   return `${TRIGGER} ${AZIMUTH_BUCKETS[pose.azimuthIndex].phrase} ${ELEVATION_BUCKETS[pose.elevationIndex].phrase} ${DISTANCE_BUCKETS[pose.distanceIndex].phrase}`
 }
+
+/* Mirror of backend compose_prompt() (angle_mapping.py) — MUST stay in lockstep
+   with it. The subject is image 1, so each extra ref is image i + 2 in the same
+   order the request sends them. A "location" ref composites the subject into that
+   scene; "prop" refs are added as objects present with the subject (placement left
+   to the freeform text). For live preview only — the backend is what's actually
+   sent. */
+export function composePrompt(
+  pose: SnappedPose,
+  extraPrompt: string,
+  extraRoles: ('location' | 'prop')[] = [],
+): string {
+  const locationImgs: number[] = []
+  const propImgs: number[] = []
+  extraRoles.forEach((role, i) => {
+    if (role === 'location') locationImgs.push(i + 2)
+    else if (role === 'prop') propImgs.push(i + 2)
+  })
+
+  const parts: string[] = []
+  if (locationImgs.length) {
+    parts.push(`Place the subject from image 1 into the scene shown in image ${locationImgs[0]}, keeping that location's architecture, lighting and background`)
+  }
+  if (propImgs.length) {
+    const which = propImgs.map((n) => `image ${n}`).join(' and ')
+    const noun = propImgs.length > 1 ? 'objects' : 'object'
+    const asProp = propImgs.length > 1 ? 'props' : 'a prop'
+    parts.push(`add the ${noun} from ${which} as ${asProp} with the subject`)
+  }
+
+  const base = parts.length ? `${parts.join('. ')}. ${poseToPrompt(pose)}` : poseToPrompt(pose)
+  const extra = extraPrompt.trim()
+  return extra ? `${base}, ${extra}` : base
+}

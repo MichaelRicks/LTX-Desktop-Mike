@@ -24,6 +24,7 @@ Conventions:
 from __future__ import annotations
 
 import math
+from collections.abc import Sequence
 from dataclasses import dataclass
 
 TRIGGER = "<sks>"
@@ -123,6 +124,44 @@ def snap_pose(azimuth_deg: float, elevation_deg: float, zoom: float) -> Pose:
         elevation_index=snap_elevation(elevation_deg),
         distance_index=snap_distance(zoom),
     )
+
+
+def compose_prompt(pose: Pose, extra_prompt: str = "", extra_roles: Sequence[str] = ()) -> str:
+    """The full generation prompt: optional compositing instruction, then the
+    pose trigger, then optional freeform style text.
+
+    `extra_roles` aligns with the extra reference images the pipeline receives,
+    in the same order (the subject is image 1, so extra ref i is image i + 2).
+    A "location" ref makes the model composite the subject INTO that scene; each
+    "prop" ref is added as an object present with the subject (placement left to
+    the user's freeform text, so it doesn't fight e.g. "slung over her shoulder").
+    Empty roles = the
+    classic pose-trigger-only behavior (no compositing clause), so callers that
+    pass nothing are unchanged.
+
+    The compositing clause leads and the `<sks>` pose trigger follows; if the
+    angles LoRA ever responds better with the trigger first, this is the single
+    place to reorder it (both the live generation and the displayed prompt come
+    through here).
+    """
+    location_imgs = [i + 2 for i, role in enumerate(extra_roles) if role == "location"]
+    prop_imgs = [i + 2 for i, role in enumerate(extra_roles) if role == "prop"]
+
+    parts: list[str] = []
+    if location_imgs:
+        parts.append(
+            f"Place the subject from image 1 into the scene shown in image {location_imgs[0]}, "
+            "keeping that location's architecture, lighting and background"
+        )
+    if prop_imgs:
+        which = " and ".join(f"image {n}" for n in prop_imgs)
+        noun = "objects" if len(prop_imgs) > 1 else "object"
+        as_prop = "props" if len(prop_imgs) > 1 else "a prop"
+        parts.append(f"add the {noun} from {which} as {as_prop} with the subject")
+
+    base = f"{'. '.join(parts)}. {pose.prompt}" if parts else pose.prompt
+    extra = extra_prompt.strip()
+    return f"{base}, {extra}" if extra else base
 
 
 def mapping_table() -> dict[str, object]:

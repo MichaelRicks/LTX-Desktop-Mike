@@ -8,7 +8,7 @@ import { ApiClient } from '@/lib/api-client'
 import { saveToStudioAssets } from '@/lib/video-save-actions'
 import {
   AZIMUTH_BUCKETS, ELEVATION_BUCKETS, DISTANCE_BUCKETS,
-  snapAzimuth, snapElevation, snapPose, poseToPrompt,
+  snapAzimuth, snapElevation, snapPose, composePrompt,
 } from './qwen-angle-mapping'
 import { useGpmColors } from './gpm-theme'
 
@@ -16,9 +16,8 @@ import { useGpmColors } from './gpm-theme'
 // degrees, and these are the LoRA's real vocabulary words anyway.
 const ELEVATION_SHORT_LABELS = ['Low', 'Eye', 'Elevated', 'High']
 
-// Qwen-Image-Edit-2511 accepts ~3 input images total; the subject is one, so
-// cap extra references at 2. Also keeps the panel's in-memory state light.
-const MAX_EXTRA_REFS = 2
+// Qwen-Image-Edit-2511 accepts ~3 input images total; the subject is one, and
+// the two role slots (Location + Prop) fill the remaining two.
 
 // Camera-dot / sight-line accent. Deliberately a fixed hue (not the palette
 // accent) so the marker stays distinct from C.blue, which now follows the theme.
@@ -39,7 +38,7 @@ export interface ResultEntry {
    (busy, save status) stay local — resetting those on remount is fine. */
 export interface QwenAngleState {
   source: { name: string; dataUrl: string } | null
-  extraRefs: { name: string; dataUrl: string }[]
+  extraRefs: { name: string; dataUrl: string; role: 'location' | 'prop' }[]
   view: 'dial' | '3d'
   azDeg: number
   elDeg: number
@@ -47,7 +46,7 @@ export interface QwenAngleState {
   extraPrompt: string
   seed: number
   randomizeSeed: boolean
-  useLightning: boolean
+  qualityMode: 'fast' | 'balanced' | 'quality'
   history: ResultEntry[]
   histIdx: number
 }
@@ -62,7 +61,7 @@ export const DEFAULT_QWEN_ANGLE_STATE: QwenAngleState = {
   extraPrompt: '',
   seed: 42,
   randomizeSeed: false,
-  useLightning: true,
+  qualityMode: 'fast',
   history: [],
   histIdx: -1,
 }
@@ -137,7 +136,7 @@ export function QwenMultiAnglePanel({ state, setState, onUse, flash }: {
   flash: (m: string) => void
 }) {
   const C = useGpmColors() // palette-aware; also redraws the canvas below on theme change
-  const { source, extraRefs, view, azDeg, elDeg, znIdx, extraPrompt, seed, randomizeSeed, useLightning, history, histIdx } = state
+  const { source, extraRefs, view, azDeg, elDeg, znIdx, extraPrompt, seed, randomizeSeed, qualityMode, history, histIdx } = state
   const setSource = makeFieldSetter(setState, 'source')
   const setExtraRefs = makeFieldSetter(setState, 'extraRefs')
   const setView = makeFieldSetter(setState, 'view')
@@ -147,7 +146,7 @@ export function QwenMultiAnglePanel({ state, setState, onUse, flash }: {
   const setExtraPrompt = makeFieldSetter(setState, 'extraPrompt')
   const setSeed = makeFieldSetter(setState, 'seed')
   const setRandomizeSeed = makeFieldSetter(setState, 'randomizeSeed')
-  const setUseLightning = makeFieldSetter(setState, 'useLightning')
+  const setQualityMode = makeFieldSetter(setState, 'qualityMode')
   const setHistory = makeFieldSetter(setState, 'history')
   const setHistIdx = makeFieldSetter(setState, 'histIdx')
   const [busy, setBusy] = useState(false)
@@ -164,7 +163,9 @@ export function QwenMultiAnglePanel({ state, setState, onUse, flash }: {
   const elIdx = snapElevation(elDeg)
   const pose = snapPose(azDeg, elDeg, DISTANCE_BUCKETS[znIdx].zoom)
   const isEcu = znIdx === 0 && /extreme close-up/i.test(extraPrompt)
-  const prompt = extraPrompt.trim() ? `${poseToPrompt(pose)}, ${extraPrompt.trim()}` : poseToPrompt(pose)
+  // Preview mirrors the backend's composed prompt (incl. the compositing clause
+  // from any Location/Prop refs) so what the user reads matches what's sent.
+  const prompt = composePrompt(pose, extraPrompt, extraRefs.map((r) => r.role))
 
   /* ---- source image: file picker + drag-drop (from disk or another GPM panel) ---- */
   const readDataUrl = (file: File) => new Promise<string>((res, rej) => {
@@ -214,22 +215,27 @@ export function QwenMultiAnglePanel({ state, setState, onUse, flash }: {
     if (file?.type.startsWith('image/')) return { name: file.name, dataUrl: await readDataUrl(file) }
     return null
   }
-  const onExtraDrop = async (e: React.DragEvent) => {
+  // Refs are role-keyed (one Location + one Prop slot); setting a role replaces
+  // any existing ref of that role. Order is irrelevant — the backend reads each
+  // ref's role, not its position (see compose_prompt).
+  const refFor = (role: 'location' | 'prop') => extraRefs.find((r) => r.role === role) ?? null
+  const setRef = (role: 'location' | 'prop', ref: { name: string; dataUrl: string } | null) =>
+    setExtraRefs((rs) => [...rs.filter((r) => r.role !== role), ...(ref ? [{ ...ref, role }] : [])])
+  const pickRoleRef = useRef<'location' | 'prop'>('location')
+  const onSlotDrop = (role: 'location' | 'prop') => async (e: React.DragEvent) => {
     e.preventDefault()
     const ref = await extractRefFromDrag(e)
-    if (ref) setExtraRefs((rs) => (rs.length >= MAX_EXTRA_REFS ? rs : [...rs, ref]))
+    if (ref) setRef(role, ref)
   }
   const onExtraPick = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    // Snapshot the File objects BEFORE clearing the input: `e.target.files` is a
-    // live FileList, and setting value = '' empties it — so reading it after the
-    // reset (as this did) always saw zero files and silently added nothing.
-    const files = e.target.files ? Array.from(e.target.files) : []
+    const file = e.target.files?.[0]
     e.target.value = ''
-    if (!files.length) return
-    const refs = await Promise.all(files.map(async (f) => ({ name: f.name, dataUrl: await readDataUrl(f) })))
-    setExtraRefs((rs) => [...rs, ...refs].slice(0, MAX_EXTRA_REFS))
+    if (file) setRef(pickRoleRef.current, { name: file.name, dataUrl: await readDataUrl(file) })
   }
-  const removeExtra = (i: number) => setExtraRefs((rs) => rs.filter((_, idx) => idx !== i))
+  const openSlotPicker = (role: 'location' | 'prop') => {
+    pickRoleRef.current = role
+    extraFileRef.current?.click()
+  }
 
   /* ---- 3D canvas draw ---- */
   useEffect(() => {
@@ -327,12 +333,13 @@ export function QwenMultiAnglePanel({ state, setState, onUse, flash }: {
       const result = await ApiClient.qwenMultiAngleGenerate({
         image_data_url: source.dataUrl,
         extra_image_data_urls: extraRefs.map((r) => r.dataUrl),
+        extra_image_roles: extraRefs.map((r) => r.role),
         azimuth_deg: azDeg,
         elevation_deg: elDeg,
         zoom: DISTANCE_BUCKETS[znIdx].zoom,
         seed,
         randomize_seed: randomizeSeed,
-        use_lightning: useLightning,
+        quality_mode: qualityMode,
         extra_prompt: extraPrompt,
       })
       if (!result.ok) {
@@ -397,7 +404,7 @@ export function QwenMultiAnglePanel({ state, setState, onUse, flash }: {
     <div>
       <div className="flex items-center gap-2 mb-2">
         <Orbit size={16} style={{ color: C.blue }} />
-        <span className="text-sm font-semibold" style={{ color: C.text }}>Photo Studio + Multi-Angle</span>
+        <span className="text-sm font-semibold" style={{ color: C.text }}>Photo Edit + Multi-Angle</span>
       </div>
       <p className="text-[11px] mb-3" style={{ color: C.muted }}>
         Camera-angle editing via Qwen-Image-Edit. The first generation each session loads the model
@@ -429,34 +436,48 @@ export function QwenMultiAnglePanel({ state, setState, onUse, flash }: {
           </div>
           <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={(e) => void onSourcePick(e)} />
 
-          {/* extra reference images — prop, location, wardrobe. Fed to Qwen
-             alongside the subject (above) so it composes from full-fidelity
-             separate refs instead of one crammed sheet. */}
+          {/* Labeled reference slots. Fed to Qwen alongside the subject: the
+             Location plate is the scene the subject is composited INTO, the Prop
+             is an object the subject holds/uses. Roles drive compose_prompt on
+             the backend so the model is told to composite, not left to guess. */}
           <div className="mt-2">
-            <div className="text-[10px] mb-1" style={{ color: C.muted }}>References — prop, location, wardrobe · {extraRefs.length}/{MAX_EXTRA_REFS}</div>
-            <div className="flex flex-wrap gap-1.5">
-              {extraRefs.map((r, i) => (
-                <div key={i} className="relative rounded overflow-hidden" style={{ width: 160, height: 90, border: `1px solid ${C.border}` }} title={r.name}>
-                  <img src={r.dataUrl} alt={r.name} style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
-                  <button
-                    onClick={() => removeExtra(i)}
-                    className="absolute top-0 right-0 h-5 w-5 flex items-center justify-center"
-                    style={{ background: 'rgba(0,0,0,0.6)', color: '#fff' }} title="Remove"
-                  ><X size={12} /></button>
-                </div>
-              ))}
-              {extraRefs.length < MAX_EXTRA_REFS && (
-                <div
-                  onDragOver={(e) => e.preventDefault()} onDrop={(e) => void onExtraDrop(e)}
-                  onClick={() => extraFileRef.current?.click()}
-                  className="flex items-center justify-center rounded cursor-pointer"
-                  style={{ width: 160, height: 90, border: `1px dashed ${C.borderLt}`, color: C.faint }}
-                  title="Add reference image (prop, location, wardrobe)"
-                ><Upload size={22} /></div>
-              )}
+            <div className="text-[10px] mb-1" style={{ color: C.muted }}>References — composited into the shot</div>
+            <div className="flex flex-wrap gap-2">
+              {([
+                { role: 'location', label: 'Location', hint: 'subject placed into this scene' },
+                { role: 'prop', label: 'Prop', hint: 'held / used by the subject' },
+              ] as const).map(({ role, label, hint }) => {
+                const r = refFor(role)
+                return (
+                  <div key={role} className="flex flex-col gap-0.5">
+                    <div className="text-[9px] font-medium" style={{ color: C.faint }}>{label}</div>
+                    {r ? (
+                      <div className="relative rounded overflow-hidden" style={{ width: 160, height: 90, border: `1px solid ${C.border}` }} title={`${label}: ${r.name}`}>
+                        <img src={r.dataUrl} alt={r.name} style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
+                        <button
+                          onClick={() => setRef(role, null)}
+                          className="absolute top-0 right-0 h-5 w-5 flex items-center justify-center"
+                          style={{ background: 'rgba(0,0,0,0.6)', color: '#fff' }} title="Remove"
+                        ><X size={12} /></button>
+                      </div>
+                    ) : (
+                      <div
+                        onDragOver={(e) => e.preventDefault()} onDrop={(e) => void onSlotDrop(role)(e)}
+                        onClick={() => openSlotPicker(role)}
+                        className="flex flex-col items-center justify-center rounded cursor-pointer gap-0.5"
+                        style={{ width: 160, height: 90, border: `1px dashed ${C.borderLt}`, color: C.faint }}
+                        title={`Add ${label} reference — ${hint}`}
+                      >
+                        <Upload size={20} />
+                        <span className="text-[9px]">{hint}</span>
+                      </div>
+                    )}
+                  </div>
+                )
+              })}
             </div>
           </div>
-          <input ref={extraFileRef} type="file" accept="image/*" multiple className="hidden" onChange={(e) => void onExtraPick(e)} />
+          <input ref={extraFileRef} type="file" accept="image/*" className="hidden" onChange={(e) => void onExtraPick(e)} />
 
           {/* extra prompt — sits under the preview image to fill the space
              left over now that the image is a short 16:9 box. */}
@@ -569,17 +590,40 @@ export function QwenMultiAnglePanel({ state, setState, onUse, flash }: {
         ><Shuffle size={12} /></button>
       </div>
 
-      {/* lightning / fast mode */}
-      <label className="flex items-center gap-2 mb-3 cursor-pointer select-none">
-        <input
-          type="checkbox" checked={useLightning} onChange={(e) => setUseLightning(e.target.checked)}
-          className="h-3.5 w-3.5" style={{ accentColor: C.blue }}
-        />
-        <span className="text-[11px]" style={{ color: C.text }}>Lightning (4-step, fast)</span>
-        <span className="text-[10px]" style={{ color: C.faint }}>
-          {useLightning ? '~30s' : '28 steps, slower, higher quality'}
-        </span>
-      </label>
+      {/* quality mode: fast (4-step) / balanced (8-step) / quality (28-step base) */}
+      <div className="mb-3">
+        <div className="flex rounded-md overflow-hidden" style={{ border: `1px solid ${C.border}` }}>
+          {([
+            { key: 'fast', label: 'Fast', hint: '~30s' },
+            { key: 'balanced', label: 'Balanced', hint: '~60s' },
+            { key: 'quality', label: 'Quality', hint: '~130s' },
+          ] as const).map((opt, i) => {
+            const active = qualityMode === opt.key
+            return (
+              <button
+                key={opt.key}
+                onClick={() => setQualityMode(opt.key)}
+                className="flex-1 px-2 py-1.5 text-[11px] font-medium leading-tight"
+                style={{
+                  background: active ? C.blue : C.card,
+                  color: active ? '#fff' : C.muted,
+                  borderLeft: i === 0 ? 'none' : `1px solid ${C.border}`,
+                }}
+              >
+                {opt.label}
+                <span className="block text-[9px]" style={{ color: active ? 'rgba(255,255,255,0.8)' : C.faint }}>{opt.hint}</span>
+              </button>
+            )
+          })}
+        </div>
+        <div className="text-[10px] mt-1" style={{ color: C.faint }}>
+          {qualityMode === 'fast'
+            ? '4-step Lightning — fastest, softest skin'
+            : qualityMode === 'balanced'
+              ? '8-step Lightning — keeps more skin texture'
+              : '28-step base, no distillation — sharpest skin, slowest'}
+        </div>
+      </div>
 
       <button
         onClick={() => void generate()} disabled={!source || busy}

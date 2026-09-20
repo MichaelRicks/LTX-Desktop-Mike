@@ -2030,12 +2030,23 @@ export interface components {
             /** Extra Image Data Urls */
             extra_image_data_urls?: string[];
             /**
+             * Extra Image Roles
+             * @default []
+             */
+            extra_image_roles: ("location" | "prop")[];
+            /**
              * Extra Prompt
              * @default
              */
             extra_prompt: string;
             /** Image Data Url */
             image_data_url: string;
+            /**
+             * Quality Mode
+             * @default fast
+             * @enum {string}
+             */
+            quality_mode: "fast" | "balanced" | "quality";
             /**
              * Randomize Seed
              * @default false
@@ -2046,11 +2057,6 @@ export interface components {
              * @default 42
              */
             seed: number;
-            /**
-             * Use Lightning
-             * @default true
-             */
-            use_lightning: boolean;
             /** Zoom */
             zoom: number;
         };

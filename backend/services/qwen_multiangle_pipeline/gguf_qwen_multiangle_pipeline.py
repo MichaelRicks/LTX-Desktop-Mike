@@ -20,12 +20,12 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
-from services.qwen_multiangle_pipeline.angle_mapping import snap_pose
+from services.qwen_multiangle_pipeline.angle_mapping import compose_prompt, snap_pose
 from services.qwen_multiangle_pipeline.qwen_multiangle_pipeline import QwenMultiAnglePipeline
 
 if TYPE_CHECKING:
     import torch
-    from collections.abc import Callable
+    from collections.abc import Callable, Sequence
     from PIL.Image import Image as PILImage
 
 logger = logging.getLogger(__name__)
@@ -35,12 +35,16 @@ GGUF_REPO = "unsloth/Qwen-Image-Edit-2511-GGUF"
 GGUF_QUANT = "Q6_K"
 ANGLES_LORA = "fal/Qwen-Image-Edit-2511-Multiple-Angles-LoRA"
 LIGHTNING_LORA = "lightx2v/Qwen-Image-Edit-2511-Lightning"
-LIGHTNING_WEIGHT_NAME = "Qwen-Image-Edit-2511-Lightning-4steps-V1.0-bf16.safetensors"
+LIGHTNING_4STEP_WEIGHT = "Qwen-Image-Edit-2511-Lightning-4steps-V1.0-bf16.safetensors"
+LIGHTNING_8STEP_WEIGHT = "Qwen-Image-Edit-2511-Lightning-8steps-V1.0-bf16.safetensors"
 
-LIGHTNING_STEPS = 4
-LIGHTNING_CFG = 1.0
-BASE_STEPS = 28
-BASE_CFG = 4.0
+# Three sampling recipes selectable per generation (quality_mode). Both Lightning
+# LoRAs are distillations at CFG 1.0; the 8-step ("balanced") keeps noticeably
+# more high-frequency skin/texture detail than the 4-step ("fast") while staying
+# ~2x faster than the un-distilled 28-step base ("quality").
+FAST_STEPS, FAST_CFG = 4, 1.0
+BALANCED_STEPS, BALANCED_CFG = 8, 1.0
+QUALITY_STEPS, QUALITY_CFG = 28, 4.0
 
 
 class GGUFQwenMultiAnglePipeline:
@@ -91,7 +95,8 @@ class GGUFQwenMultiAnglePipeline:
 
         logger.info("Loading Qwen multi-angle LoRAs…")
         pipe.load_lora_weights(ANGLES_LORA, adapter_name="angles")
-        pipe.load_lora_weights(LIGHTNING_LORA, weight_name=LIGHTNING_WEIGHT_NAME, adapter_name="lightning")
+        pipe.load_lora_weights(LIGHTNING_LORA, weight_name=LIGHTNING_4STEP_WEIGHT, adapter_name="lightning4")
+        pipe.load_lora_weights(LIGHTNING_LORA, weight_name=LIGHTNING_8STEP_WEIGHT, adapter_name="lightning8")
 
         # Load-bearing, not an optimization: the GGUF transformer (~17GB) and
         # bf16 text encoder (~16GB) sum to more than 24GB VRAM. These hooks
@@ -108,26 +113,30 @@ class GGUFQwenMultiAnglePipeline:
         *,
         image: "PILImage",
         extra_images: "list[PILImage] | None" = None,
+        extra_roles: "Sequence[str] | None" = None,
         azimuth_deg: float,
         elevation_deg: float,
         zoom: float,
         seed: int,
         extra_prompt: str = "",
-        use_lightning: bool = True,
+        quality_mode: str = "fast",
         on_step: "Callable[[int, int], None] | None" = None,
     ) -> "PILImage":
         import torch
         import torch.nn.functional as F
 
         pose = snap_pose(azimuth_deg, elevation_deg, zoom)
-        prompt = f"{pose.prompt}, {extra_prompt.strip()}" if extra_prompt.strip() else pose.prompt
+        prompt = compose_prompt(pose, extra_prompt, extra_roles or [])
 
-        if use_lightning:
-            self._pipe.set_adapters(["angles", "lightning"], adapter_weights=[1.0, 1.0])
-            steps, cfg = LIGHTNING_STEPS, LIGHTNING_CFG
-        else:
+        if quality_mode == "quality":
             self._pipe.set_adapters(["angles"], adapter_weights=[1.0])
-            steps, cfg = BASE_STEPS, BASE_CFG
+            steps, cfg = QUALITY_STEPS, QUALITY_CFG
+        elif quality_mode == "balanced":
+            self._pipe.set_adapters(["angles", "lightning8"], adapter_weights=[1.0, 1.0])
+            steps, cfg = BALANCED_STEPS, BALANCED_CFG
+        else:  # "fast" (default)
+            self._pipe.set_adapters(["angles", "lightning4"], adapter_weights=[1.0, 1.0])
+            steps, cfg = FAST_STEPS, FAST_CFG
 
         generator = torch.Generator(device="cpu").manual_seed(seed)
 

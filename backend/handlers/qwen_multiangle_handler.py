@@ -18,7 +18,7 @@ from handlers.base import StateHandlerBase
 from handlers.generation_handler import GenerationHandler
 from handlers.pipelines_handler import PipelinesHandler
 from runtime_config.runtime_config import RuntimeConfig
-from services.qwen_multiangle_pipeline.angle_mapping import snap_pose
+from services.qwen_multiangle_pipeline.angle_mapping import compose_prompt, snap_pose
 from state.app_state_types import AppState
 
 # The pipeline internally rescales condition images to ~1MP snapped to /32.
@@ -48,13 +48,16 @@ class QwenMultiAngleHandler(StateHandlerBase):
         source_image = _model_resize(source_image)
         extra_images = [_model_resize(_decode_data_url(u)) for u in req.extra_image_data_urls]
 
+        # Roles only apply when aligned index-for-index with the refs; a mismatch
+        # (or none supplied) falls back to classic compose with no compositing clause.
+        extra_roles = list(req.extra_image_roles) if len(req.extra_image_roles) == len(extra_images) else []
+
         seed = req.seed
         if req.randomize_seed:
             seed = int(time.time() * 1000) % 2147483647
 
         pose = snap_pose(req.azimuth_deg, req.elevation_deg, req.zoom)
-        extra = req.extra_prompt.strip()
-        prompt = f"{pose.prompt}, {extra}" if extra else pose.prompt
+        prompt = compose_prompt(pose, req.extra_prompt, extra_roles)
 
         generation_id = uuid.uuid4().hex[:8]
 
@@ -70,12 +73,13 @@ class QwenMultiAngleHandler(StateHandlerBase):
             result_image = pipeline_state.pipeline.generate(
                 image=source_image,
                 extra_images=extra_images,
+                extra_roles=extra_roles,
                 azimuth_deg=req.azimuth_deg,
                 elevation_deg=req.elevation_deg,
                 zoom=req.zoom,
                 seed=seed,
                 extra_prompt=req.extra_prompt,
-                use_lightning=req.use_lightning,
+                quality_mode=req.quality_mode,
                 on_step=_on_step,
             )
 

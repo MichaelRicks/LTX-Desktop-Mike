@@ -454,6 +454,30 @@ class TestQwenMultiAngle:
         assert r.status_code == 200
         assert r.json()["prompt"].endswith("dramatic lighting")
 
+    def test_compositing_instruction_from_roles(self, client, test_state, make_test_image, fake_services):
+        # Location + prop refs => the prompt should instruct compositing, with the
+        # subject as image 1, location as image 2, prop as image 3.
+        payload = self._base_payload(make_test_image)
+        payload["extra_image_data_urls"] = [self._data_url(make_test_image), self._data_url(make_test_image)]
+        payload["extra_image_roles"] = ["location", "prop"]
+        r = client.post("/api/qwen-multiangle/generate", json=payload)
+        assert r.status_code == 200
+        prompt = r.json()["prompt"]
+        assert "into the scene shown in image 2" in prompt
+        assert "image 3" in prompt
+        # roles must reach the pipeline aligned with the refs
+        call = fake_services.qwen_multiangle_pipeline.generate_calls[-1]
+        assert call["extra_roles"] == ["location", "prop"]
+
+    def test_mismatched_roles_ignored(self, client, test_state, make_test_image):
+        # A roles list that doesn't line up with the refs is dropped, not applied.
+        payload = self._base_payload(make_test_image)
+        payload["extra_image_data_urls"] = [self._data_url(make_test_image)]
+        payload["extra_image_roles"] = ["location", "prop"]
+        r = client.post("/api/qwen-multiangle/generate", json=payload)
+        assert r.status_code == 200
+        assert "into the scene" not in r.json()["prompt"]
+
     def test_randomize_seed_returns_int(self, client, test_state, make_test_image):
         payload = self._base_payload(make_test_image)
         payload["seed"] = 42
