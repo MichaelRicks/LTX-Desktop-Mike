@@ -113,17 +113,26 @@ function assemblePerformance({ familyIndex = 0, intensity = 0.5, asymmetry = 0.2
     { k: "FACS", v: `${wp.facs.join(" + ")} at ${iw} intensity` },
     { k: "Anatomical", v: anat },
     { k: "Performance", v: wp.perf },
-    { k: "Subtext", v: fam.subtext },
+    { k: "Inner life", v: fam.subtext },
   ];
   if (line) {
     layers.push({ k: "Dialogue", v: `"${line}"` });
+    layers.push({ k: "Timing", v: "The character is already speaking as the shot opens — the mouth is in motion and the first word lands within the opening frames, with speech carrying through the clip." });
     const dn = perfDeliveryNote(delivery);
     if (dn) layers.push({ k: "Delivery", v: dn });
     layers.push({ k: "Lip sync", v: "Be sure to get dialogue and lip sync perfectly aligned." });
   } else {
     layers.push({ k: "No dialogue", v: "No dialogue. The character does not speak; lips remain still and at rest." });
   }
-  return { label, layers, text: layers.map((l) => `${l.k}: ${l.v}`).join("\n") };
+  const body = layers.map((l) => `${l.k}: ${l.v}`).join("\n");
+  // Video models weight the opening sentence most and largely ignore abstract
+  // timing directives, so when there is dialogue we lead the prompt with the
+  // speaking action itself (positive, present-tense — no "pause"/"silence"
+  // tokens) to pull the first word toward frame one rather than mid-clip.
+  const text = line
+    ? `The character is speaking from the first frame, mouth already in motion as the shot opens.\n${body}`
+    : body;
+  return { label, layers, text };
 }
 
 // ---- Shot engine (faithful subset) ------------------------------------------
