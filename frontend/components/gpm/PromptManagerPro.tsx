@@ -1349,11 +1349,11 @@ function PromptsPanel({
                   ) : (
                     <>
                       {thumbs[p.id] && (
-                        <div className="relative mb-2 group/thumb">
+                        <div className="relative mb-2 group/thumb" style={{ width: '100%', maxWidth: 420 }}>
                           <img
                             src={thumbs[p.id]} alt="" loading="lazy"
-                            className="w-full rounded object-cover"
-                            style={{ maxHeight: 120, border: `1px solid ${C.border}` }}
+                            className="rounded object-cover"
+                            style={{ width: '100%', aspectRatio: '16 / 9', display: 'block', background: '#000', border: `1px solid ${C.border}` }}
                           />
                           <button
                             onClick={() => removeThumb(p.id)}
@@ -1587,12 +1587,22 @@ function Dock({ onClose }: { onClose: () => void }) {
   const flash = (m: string) => { setToast(m); setTimeout(() => setToast(null), 1600) }
 
   // Collapsible state shared across tabs + collapse-all.
+  //   sectionsOpen: per-section explicit overrides (from clicking a header).
+  //   allOverride:  null until the user hits collapse/expand-all, then forces
+  //                 every section to that state.
+  // Fresh open (no override): image/prompt FOLDERS (ids "if-*"/"pf-*") start
+  // COLLAPSED so a big library doesn't fill the panel, while functional panel
+  // sections (Controls, Presets, …) still open expanded. Expand-all opens
+  // everything including folders.
   const [sectionsOpen, setSectionsOpen] = useState<Record<string, boolean>>({})
-  const [allOpen, setAllOpen] = useState(true)
-  const toggleAll = () => { setAllOpen((a) => !a); setSectionsOpen({}) }
+  const [allOverride, setAllOverride] = useState<boolean | null>(null)
+  const isFolderSection = (id: string) => id.startsWith('if-') || id.startsWith('pf-')
+  const defaultOpen = (id: string) => allOverride ?? (isFolderSection(id) ? false : true)
+  const allOpen = allOverride ?? true // drives the collapse/expand-all icon
+  const toggleAll = () => { setAllOverride((v) => !(v ?? true)); setSectionsOpen({}) }
   const ctl: SectionCtl = {
-    isOpen: (id) => sectionsOpen[id] ?? allOpen,
-    toggle: (id) => setSectionsOpen((s) => ({ ...s, [id]: !(s[id] ?? allOpen) })),
+    isOpen: (id) => sectionsOpen[id] ?? defaultOpen(id),
+    toggle: (id) => setSectionsOpen((s) => ({ ...s, [id]: !(s[id] ?? defaultOpen(id)) })),
   }
 
   const [perf, setPerf] = useState<PerfState>({
