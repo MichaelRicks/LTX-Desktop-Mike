@@ -2,6 +2,7 @@ import path from 'path'
 import fs from 'fs'
 import os from 'os'
 import { getAllowedRoots } from '../config'
+import { getMainWindow } from '../window'
 import { logger } from '../logger'
 import { validatePath } from '../path-validation'
 import { findFfmpegPath, runFfmpeg, stopExportProcess } from './ffmpeg-utils'
@@ -50,6 +51,19 @@ export function registerExportHandlers(): void {
       }
     }
 
+    // Total program duration drives the progress percentage: ffmpeg reports the
+    // encoded position (`time=`), which we divide by this to get a fraction.
+    const totalDur = computeFinalVideoDuration(segments)
+    const emitProgress = (percent: number, stage: string) => {
+      getMainWindow()?.webContents.send('export-progress', {
+        percent: Math.max(0, Math.min(100, Math.round(percent))),
+        stage,
+      })
+    }
+    // The video encode (step 1) is by far the longest, so it owns most of the
+    // bar; audio + mux share the tail. (An h264 mux is a stream copy and flies.)
+    const VIDEO_SHARE = 85
+
     const tmpDir = os.tmpdir()
     const ts = Date.now()
     const tmpVideo = path.join(tmpDir, `ltx-export-video-${ts}.mkv`)
@@ -68,14 +82,19 @@ export function registerExportHandlers(): void {
         const filterFile = path.join(tmpDir, `ltx-filter-v-${ts}.txt`)
         fs.writeFileSync(filterFile, filterScript, 'utf8')
 
+        emitProgress(0, 'Encoding video')
         const r = await runFfmpeg(ffmpegPath, [
           '-y', ...inputs, '-filter_complex_script', filterFile,
           '-map', '[outv]', '-an', '-c:v', 'libx264', '-preset', 'fast', '-crf', '16', '-pix_fmt', 'yuv420p', tmpVideo
-        ])
+        ], (t) => {
+          const frac = totalDur > 0 ? t / totalDur : 0
+          emitProgress(frac * VIDEO_SHARE, 'Encoding video')
+        })
         try { fs.unlinkSync(filterFile) } catch {}
         if (!r.success) { cleanup(); return { success: false, error: r.error } }
       }
 
+      emitProgress(VIDEO_SHARE, 'Mixing audio')
       logger.info( '[Export] Step 2: Audio mixdown (PCM buffer approach)')
       // A dissolve overlaps two clips, shrinking the program's real duration
       // below the naive sum of clip lengths (see buildDissolveTimeRemap) -
@@ -105,6 +124,7 @@ export function registerExportHandlers(): void {
         if (!r.success) { cleanup(); return { success: false, error: r.error } }
       }
 
+      emitProgress(90, 'Finalizing')
       logger.info( '[Export] Step 3: Combining video + audio')
       let videoCodecArgs: string[]
       let audioCodecArgs: string[]
@@ -128,10 +148,16 @@ export function registerExportHandlers(): void {
         '-map', '0:v', '-map', '1:a',
         ...(canCopyVideo ? ['-c:v', 'copy'] : videoCodecArgs),
         ...audioCodecArgs, '-shortest', outputPath
-      ])
+      ], (t) => {
+        // Re-encoding codecs (ProRes/VP9) spend real time here; map it to the
+        // last 10%. h264 stream-copies and finishes near-instantly.
+        const frac = totalDur > 0 ? t / totalDur : 0
+        emitProgress(90 + frac * 10, 'Finalizing')
+      })
 
       cleanup()
       if (!r.success) return { success: false, error: r.error }
+      emitProgress(100, 'Done')
       logger.info( `[Export] Done: ${outputPath}`)
       return { success: true }
     } catch (err) {

@@ -1,4 +1,4 @@
-import { electronAPISchemas, type BackendHealthStatus, type UpdateStatePayload } from '../shared/electron-api-schema'
+import { electronAPISchemas, type BackendHealthStatus, type UpdateStatePayload, type ExportProgress } from '../shared/electron-api-schema'
 
 const { contextBridge, ipcRenderer, webUtils } = require('electron')
 
@@ -21,6 +21,14 @@ api.onBackendHealthStatus = (cb: (data: BackendHealthStatus) => void) => {
   ipcRenderer.on('backend-health-status', listener)
   return () => {
     ipcRenderer.removeListener('backend-health-status', listener)
+  }
+}
+
+api.onExportProgress = (cb: (data: ExportProgress) => void) => {
+  const listener = (_: unknown, data: ExportProgress) => cb(data)
+  ipcRenderer.on('export-progress', listener)
+  return () => {
+    ipcRenderer.removeListener('export-progress', listener)
   }
 }
 

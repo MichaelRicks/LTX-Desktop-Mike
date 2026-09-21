@@ -347,6 +347,7 @@ export function ExportModal({ projectName }: ExportModalProps) {
     setExportFrameInfo('Preparing...')
     abortRef.current = false
 
+    let unsubscribe: (() => void) | undefined
     try {
       const codecInfo = CODEC_INFO[settings.codec]
       
@@ -366,6 +367,13 @@ export function ExportModal({ projectName }: ExportModalProps) {
 
       // Build clip data for ffmpeg native export (video/image + audio clips)
       setExportFrameInfo('Starting ffmpeg...')
+
+      // Live progress pushed from the main process as ffmpeg encodes.
+      unsubscribe = window.electronAPI?.onExportProgress?.(({ percent, stage }) => {
+        if (abortRef.current) return
+        setExportProgress(percent)
+        if (stage) setExportFrameInfo(stage)
+      })
 
       const result = await window.electronAPI?.exportNative({
         clips: exportClips,
@@ -391,6 +399,8 @@ export function ExportModal({ projectName }: ExportModalProps) {
     } catch (err) {
       setExportError(String(err))
       setExportStatus('error')
+    } finally {
+      unsubscribe?.()
     }
   }, [burnSubtitles, exportClips, letterbox, projectName, settings, subtitleData, timeline])
 

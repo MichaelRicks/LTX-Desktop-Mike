@@ -477,10 +477,19 @@ type InvokeAPI = {
     : (input: z.infer<Schemas[K]['input']>) => Promise<z.infer<Schemas[K]['output']>>
 }
 
+/** Live video-export progress pushed from the main process while ffmpeg runs. */
+export interface ExportProgress {
+  /** 0–100, overall across the export's ffmpeg stages. */
+  percent: number
+  /** Human-readable current stage, e.g. "Encoding video", "Finalizing". */
+  stage: string
+}
+
 export type ElectronAPI = InvokeAPI & {
   onPythonSetupProgress: (cb: (data: unknown) => void) => void
   removePythonSetupProgress: () => void
   onBackendHealthStatus: (cb: (data: BackendHealthStatus) => void) => (() => void)
+  onExportProgress: (cb: (data: ExportProgress) => void) => (() => void)
   onMenuAction: (cb: (action: string) => void) => (() => void)
   /** Fires (debounced) when the Studio Assets library folder changes on disk. */
   onGpmLibChanged: (cb: () => void) => (() => void)

@@ -53,8 +53,14 @@ export function fileHasAudio(ffmpegPath: string, filePath: string): boolean {
 }
 
 
-/** Run an ffmpeg command and return a promise. Logs stderr and sets activeExportProcess. */
-export function runFfmpeg(ffmpegPath: string, args: string[]): Promise<{ success: boolean; error?: string }> {
+/** Run an ffmpeg command and return a promise. Logs stderr and sets activeExportProcess.
+ *  `onProgress`, if given, is called with the encoded output position in seconds
+ *  (parsed from ffmpeg's `time=` field) so callers can drive a progress bar. */
+export function runFfmpeg(
+  ffmpegPath: string,
+  args: string[],
+  onProgress?: (outTimeSec: number) => void,
+): Promise<{ success: boolean; error?: string }> {
   return new Promise((resolve) => {
     logger.info( `[ffmpeg] spawn: ${args.join(' ').slice(0, 400)}`)
     const proc = spawn(ffmpegPath, args, { stdio: ['pipe', 'pipe', 'pipe'] })
@@ -63,10 +69,19 @@ export function runFfmpeg(ffmpegPath: string, args: string[]): Promise<{ success
     proc.stderr?.on('data', (chunk: Buffer) => {
       const text = chunk.toString()
       stderrLog += text
-      const lines = text.trim().split('\n')
+      // ffmpeg rewrites its progress line in place with carriage returns, so
+      // split on both \r and \n to see each update, not one giant line.
+      const lines = text.split(/[\r\n]+/)
       for (const line of lines) {
         if (line.includes('frame=') || line.includes('Error') || line.includes('error')) {
           logger.info( `[ffmpeg] ${line.trim().slice(0, 200)}`)
+        }
+        if (onProgress) {
+          const m = line.match(/time=\s*(\d+):(\d+):(\d+(?:\.\d+)?)/)
+          if (m) {
+            const sec = Number(m[1]) * 3600 + Number(m[2]) * 60 + parseFloat(m[3])
+            if (Number.isFinite(sec)) onProgress(sec)
+          }
         }
       }
     })
