@@ -31,7 +31,7 @@ import { saveDataUrlToTempFile, GPM_IMAGE_DND_TYPE, type GpmDndImage } from './g
 import { FILE_DND, type LibFile } from './DownloadsBrowser'
 import { usePromptManagerProOpen, setPromptManagerProOpen } from './prompt-manager-pro-store'
 import { MediaThumb } from './MediaThumb'
-import { QwenMultiAnglePanel, DEFAULT_QWEN_ANGLE_STATE, type QwenAngleState } from './QwenMultiAnglePanel'
+import { QwenMultiAnglePanel, DEFAULT_QWEN_ANGLE_STATE, type QwenAngleState, type InjectTarget } from './QwenMultiAnglePanel'
 import { C } from './gpm-theme'
 
 // Camera reference thumbnails, bundled by Vite. Map filename -> resolved URL.
@@ -1579,6 +1579,9 @@ function Dock({ onClose }: { onClose: () => void }) {
   const { setGenSpacePromptInjection, setCurrentTab, setGenSpaceInputImagePath, clearGenSpacePrompt } = useProjects()
 
   const [gpmTab, setGpmTab] = useState<GpmTab>('performance')
+  // Where every panel's "Inject" button sends its text: the main LTX Create
+  // prompt box, or the Photo Edit + Multi-Angle panel's extra-prompt field.
+  const [injectTarget, setInjectTarget] = useState<InjectTarget>('main')
   const [search, setSearch] = useState('')
   const [toast, setToast] = useState<string | null>(null)
   const flash = (m: string) => { setToast(m); setTimeout(() => setToast(null), 1600) }
@@ -1648,6 +1651,18 @@ function Dock({ onClose }: { onClose: () => void }) {
   const copyText = (txt: string) => { void navigator.clipboard?.writeText(txt); flash('Copied to clipboard') }
   const injectIntoPrompt = (txt: string) => {
     if (!txt.trim()) return
+    if (injectTarget === 'qwen') {
+      // Append to the Multi-Angle extra-prompt (comma-joined, matching how its
+      // own controls build up that field) and surface the panel so the user
+      // sees where it landed. Stays inside the Prompt Manager — no tab switch.
+      setQwenAngleState((s) => ({
+        ...s,
+        extraPrompt: s.extraPrompt.trim() ? `${s.extraPrompt.trim()}, ${txt.trim()}` : txt.trim(),
+      }))
+      if (expanded) setExpandedTab('qwenAngle'); else setGpmTab('qwenAngle')
+      flash('Injected into Multi-Angle')
+      return
+    }
     setCurrentTab('gen-space')
     setGenSpacePromptInjection(txt)
     flash('Injected into prompt')
@@ -1685,6 +1700,18 @@ function Dock({ onClose }: { onClose: () => void }) {
     return () => window.removeEventListener('keydown', onKey)
   }, [expanded])
 
+  // Point injection at the Multi-Angle box while its enlarged workspace is
+  // showing, and back at the LTX prompt when it shrinks — so the user never has
+  // to remember to flip it, and can't accidentally inject Multi-Angle text into
+  // Create. Manual toggling within a state is respected: this only reacts to the
+  // enlarge/shrink transitions (deps), not to injectTarget itself. Switching the
+  // *enlarged* view to another tab leaves it on 'qwen' so injecting a saved
+  // prompt from there still lands in the Multi-Angle box.
+  useEffect(() => {
+    if (expanded && expandedTab === 'qwenAngle') setInjectTarget('qwen')
+    else if (!expanded) setInjectTarget('main')
+  }, [expanded, expandedTab])
+
   const renderPanel = (tab: GpmTab) => (
     <>
       {tab === 'performance' && <PerformancePanel perf={perf} setPerf={setPerf} ctl={ctl} onCopy={copyText} onInject={injectIntoPrompt} flash={flash} />}
@@ -1694,7 +1721,7 @@ function Dock({ onClose }: { onClose: () => void }) {
       {tab === 'prompts' && <PromptsPanel ctl={ctl} onCopy={copyText} onInject={injectIntoPrompt} flash={flash} />}
       {tab === 'images' && <ImagesPanel ctl={ctl} onCopy={copyText} onUse={sendImageToGenSpace} flash={flash} />}
       {tab === 'plates' && <PlatesPanel onUse={sendImageToGenSpace} flash={flash} activeId={platesActiveId} setActiveId={setPlatesActiveId} sceneLens={sceneLens} setSceneLens={setSceneLens} sceneAimRef={sceneAimRef} />}
-      {tab === 'qwenAngle' && <QwenMultiAnglePanel state={qwenAngleState} setState={setQwenAngleState} onUse={sendImageToGenSpace} flash={flash} />}
+      {tab === 'qwenAngle' && <QwenMultiAnglePanel state={qwenAngleState} setState={setQwenAngleState} onUse={sendImageToGenSpace} flash={flash} injectTarget={injectTarget} setInjectTarget={setInjectTarget} />}
     </>
   )
   // Don't render the docked panel for the tab that's currently enlarged: that mounted TWO live

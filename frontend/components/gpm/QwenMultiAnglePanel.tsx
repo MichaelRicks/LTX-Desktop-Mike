@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { Orbit, Upload, X, ChevronLeft, ChevronRight, Send, Save, Shuffle } from 'lucide-react'
+import { Orbit, Upload, X, ChevronLeft, ChevronRight, Send, Save, Shuffle, Clock } from 'lucide-react'
 import type { GpmImage } from './gpm-storage'
 import { gpmId } from './gpm-storage'
 import { GPM_IMAGE_DND_TYPE, type GpmDndImage, saveDataUrlToTempFile } from './gpm-image-file'
@@ -23,12 +23,26 @@ const ELEVATION_SHORT_LABELS = ['Low', 'Eye', 'Elevated', 'High']
 // accent) so the marker stays distinct from C.blue, which now follows the theme.
 const ACCENT2 = '#ff5c93'
 
+// Render-time chip formatter — mirrors the Create canvas ("M:SS").
+function formatClock(ms: number): string {
+  const totalSec = Math.max(0, Math.round(ms / 1000))
+  const m = Math.floor(totalSec / 60)
+  const s = totalSec % 60
+  return `${m}:${s.toString().padStart(2, '0')}`
+}
+
+/** Where Prompt Manager "Inject" buttons route their text. */
+export type InjectTarget = 'main' | 'qwen'
+
 export interface ResultEntry {
   id: string
   dataUrl: string
   prompt: string
   seed: number
   isMock: boolean
+  /** Wall-clock generation time in ms, shown as a chip on the result (older
+   *  saved entries predate this field, so it is optional). */
+  renderMs?: number
 }
 
 /* State that must survive the panel unmounting/remounting when the dock
@@ -133,11 +147,13 @@ function drawPolyline(
   }
 }
 
-export function QwenMultiAnglePanel({ state, setState, onUse, flash }: {
+export function QwenMultiAnglePanel({ state, setState, onUse, flash, injectTarget, setInjectTarget }: {
   state: QwenAngleState
   setState: React.Dispatch<React.SetStateAction<QwenAngleState>>
   onUse: (img: GpmImage) => void
   flash: (m: string) => void
+  injectTarget: InjectTarget
+  setInjectTarget: (t: InjectTarget) => void
 }) {
   const C = useGpmColors() // palette-aware; also redraws the canvas below on theme change
   const { source, extraRefs, view, azDeg, elDeg, znIdx, extraPrompt, seed, randomizeSeed, qualityMode, useSkin, skinWeight, history, histIdx } = state
@@ -324,6 +340,7 @@ export function QwenMultiAnglePanel({ state, setState, onUse, flash }: {
     if (!source || busy) return
     setBusy(true)
     setGenProgress(null)
+    const startedAt = performance.now()
     // Poll the app's existing generic generation-progress endpoint (used by
     // video/image gen too) for live step counts while the request is
     // in-flight — the backend's on_step callback updates the same
@@ -360,6 +377,7 @@ export function QwenMultiAnglePanel({ state, setState, onUse, flash }: {
         prompt: result.data.prompt,
         seed: result.data.seed,
         isMock: false,
+        renderMs: Math.round(performance.now() - startedAt),
       }
       // One atomic update, not setHistory(...) nesting a setHistIdx(...) call
       // inside its updater — both fields live on the same lifted `state` now
@@ -501,6 +519,27 @@ export function QwenMultiAnglePanel({ state, setState, onUse, flash }: {
                 <X size={10} />
               </button>
             )}
+          </div>
+
+          {/* Inject destination — parked next to the box it fills so it's easy
+             to find. Governs where Prompt Manager "Inject" buttons send text:
+             this extra-prompt box, or the main LTX Create prompt. Auto-flips to
+             Multi-Angle when this panel is enlarged and back to LTX Prompt when
+             it shrinks (see PromptManagerPro), so it rarely needs touching. */}
+          <div className="flex items-center gap-2 mt-2">
+            <span className="text-[10px] font-medium shrink-0" style={{ color: C.muted }}>Inject to</span>
+            <div className="flex rounded-md overflow-hidden flex-1" style={{ border: `1px solid ${C.border}` }}>
+              {([['main', 'LTX Prompt'], ['qwen', 'Multi-Angle']] as const).map(([key, lbl]) => {
+                const active = injectTarget === key
+                return (
+                  <button
+                    key={key} onClick={() => setInjectTarget(key)}
+                    className="flex-1 text-[11px] py-1 font-medium transition-colors"
+                    style={{ background: active ? C.blue : C.card, color: active ? '#fff' : C.muted }}
+                  >{lbl}</button>
+                )
+              })}
+            </div>
           </div>
         </div>
 
@@ -700,6 +739,17 @@ export function QwenMultiAnglePanel({ state, setState, onUse, flash }: {
           {current?.isMock && (
             <div className="absolute top-2 left-2 px-1.5 py-0.5 rounded text-[9px]" style={{ background: 'rgba(0,0,0,0.65)', color: C.amber }}>
               Preview &middot; backend not wired yet
+            </div>
+          )}
+          {/* Render-time chip — parked bottom-left, matching the Create canvas. */}
+          {current?.renderMs != null && (
+            <div
+              className="absolute bottom-2 left-2 flex items-center gap-1 px-1.5 py-0.5 rounded-md text-[10px] font-mono tabular-nums pointer-events-none backdrop-blur-md"
+              style={{ background: 'rgba(0,0,0,0.5)', color: 'rgba(255,255,255,0.9)' }}
+              title="Render time"
+            >
+              <Clock size={10} />
+              {formatClock(current.renderMs)}
             </div>
           )}
           {history.length > 1 && (
