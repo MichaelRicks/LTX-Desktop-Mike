@@ -1203,8 +1203,8 @@ async function dataUrlFromImageDrop(e: React.DragEvent): Promise<string | null> 
 }
 
 function PromptsPanel({
-  ctl, onCopy, onInject, flash,
-}: { ctl: SectionCtl; onCopy: (t: string) => void; onInject: (t: string) => void; flash: (m: string) => void }) {
+  ctl, onCopy, onInject, flash, wide = false,
+}: { ctl: SectionCtl; onCopy: (t: string) => void; onInject: (t: string) => void; flash: (m: string) => void; wide?: boolean }) {
   const [folders, setFolders] = useState<GpmPromptFolder[]>([])
   const [search, setSearch] = useState('')
   const [newFolder, setNewFolder] = useState('')
@@ -1327,7 +1327,7 @@ function PromptsPanel({
               </div>
             )}
             {cards.length === 0 && <p className="text-[11px]" style={{ color: C.faint }}>No prompts. Use + to add one.</p>}
-            <div className="space-y-2">
+            <div className={wide ? 'grid grid-cols-2 gap-2 items-start' : 'space-y-2'}>
               {cards.map((p) => (
                 <div
                   key={p.id}
@@ -1349,7 +1349,7 @@ function PromptsPanel({
                   ) : (
                     <>
                       {thumbs[p.id] && (
-                        <div className="relative mb-2 group/thumb" style={{ width: '100%', maxWidth: 420 }}>
+                        <div className="relative mb-2 group/thumb" style={{ width: '100%' }}>
                           <img
                             src={thumbs[p.id]} alt="" loading="lazy"
                             className="rounded object-cover"
@@ -1722,13 +1722,15 @@ function Dock({ onClose }: { onClose: () => void }) {
     else if (!expanded) setInjectTarget('main')
   }, [expanded, expandedTab])
 
-  const renderPanel = (tab: GpmTab) => (
+  // `wide` is true only for the enlarged workspace, where the panel is roomy
+  // enough for a 2-column prompt grid (the docked strip stays single-column).
+  const renderPanel = (tab: GpmTab, wide = false) => (
     <>
       {tab === 'performance' && <PerformancePanel perf={perf} setPerf={setPerf} ctl={ctl} onCopy={copyText} onInject={injectIntoPrompt} flash={flash} />}
       {tab === 'shot' && <ShotPanel shot={shot} setShot={setShot} ctl={ctl} onCopy={copyText} onInject={injectIntoPrompt} onUseImage={sendImageToGenSpace} flash={flash} srcImage={shotSrcImage} setSrcImage={setShotSrcImage} />}
       {tab === 'camera' && <CameraPanel search={search} setSearch={setSearch} camCat={camCat} setCamCat={setCamCat} onInject={injectIntoPrompt} flash={flash} />}
       {tab === 'workflow' && <WorkflowPanel wf={wf} setWf={setWf} perfText={perfText} ctl={ctl} onCopy={copyText} onInject={injectIntoPrompt} onUseImage={sendImageToGenSpace} flash={flash} />}
-      {tab === 'prompts' && <PromptsPanel ctl={ctl} onCopy={copyText} onInject={injectIntoPrompt} flash={flash} />}
+      {tab === 'prompts' && <PromptsPanel ctl={ctl} onCopy={copyText} onInject={injectIntoPrompt} flash={flash} wide={wide} />}
       {tab === 'images' && <ImagesPanel ctl={ctl} onCopy={copyText} onUse={sendImageToGenSpace} flash={flash} />}
       {tab === 'plates' && <PlatesPanel onUse={sendImageToGenSpace} flash={flash} activeId={platesActiveId} setActiveId={setPlatesActiveId} sceneLens={sceneLens} setSceneLens={setSceneLens} sceneAimRef={sceneAimRef} />}
       {tab === 'qwenAngle' && <QwenMultiAnglePanel state={qwenAngleState} setState={setQwenAngleState} onUse={sendImageToGenSpace} flash={flash} injectTarget={injectTarget} setInjectTarget={setInjectTarget} />}
@@ -1865,7 +1867,7 @@ function Dock({ onClose }: { onClose: () => void }) {
             })}
           </div>
           <div className="overflow-y-auto p-5">
-            {renderPanel(expandedTab)}
+            {renderPanel(expandedTab, true)}
           </div>
         </div>
       )}
