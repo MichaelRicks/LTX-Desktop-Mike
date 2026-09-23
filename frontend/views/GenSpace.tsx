@@ -4,7 +4,8 @@ import {
   Trash2, Download, Image, Video, X,
   Heart, Film, Volume2, VolumeX, Sparkles, Sparkle,
   Clock, Monitor, ChevronUp, Scissors, Music, Undo2, Redo2, Loader2,
-  ChevronLeft, ChevronRight, Copy, Check, Tag, Eraser, Square, MoveHorizontal, Wand2, Rows3, RefreshCw, Clapperboard
+  ChevronLeft, ChevronRight, Copy, Check, Tag, Eraser, Square, MoveHorizontal, Wand2, Rows3, RefreshCw, Clapperboard,
+  CheckSquare
 } from 'lucide-react'
 import { useProjects } from '../contexts/ProjectContext'
 import type { GenSpaceRetakeSource } from '../contexts/ProjectContext'
@@ -133,6 +134,9 @@ function AssetCard({
   bins,
   onTag,
   onRequestNewTag,
+  selectMode = false,
+  selected = false,
+  onToggleSelect,
 }: {
   asset: Asset
   onDelete: () => void
@@ -149,6 +153,9 @@ function AssetCard({
   bins: Record<string, string>
   onTag: (binId: string | null) => void
   onRequestNewTag: () => void
+  selectMode?: boolean
+  selected?: boolean
+  onToggleSelect?: () => void
 }) {
   const hoverVideoRef = useRef<HTMLVideoElement>(null)
   const [isHovered, setIsHovered] = useState(false)
@@ -201,16 +208,31 @@ function AssetCard({
 
   return (
     <div
-      className="relative group cursor-pointer rounded-xl overflow-hidden bg-zinc-900"
-      onMouseEnter={() => setIsHovered(true)}
+      data-asset-id={asset.id}
+      className={`relative group cursor-pointer rounded-xl overflow-hidden bg-zinc-900 ${
+        selectMode && selected ? 'ring-2 ring-accent ring-offset-2 ring-offset-zinc-950' : ''
+      }`}
+      onMouseEnter={() => { if (!selectMode) setIsHovered(true) }}
       onMouseLeave={() => {
         setIsHovered(false)
         setCurrentTime(0)
       }}
-      onClick={onPlay}
-      draggable={asset.type === 'image'}
-      onDragStart={(e) => asset.type === 'image' && onDragStart(e, asset)}
+      onClick={selectMode ? () => onToggleSelect?.() : onPlay}
+      draggable={asset.type === 'image' && !selectMode}
+      onDragStart={(e) => asset.type === 'image' && !selectMode && onDragStart(e, asset)}
     >
+      {/* Selection checkbox overlay (multi-select mode) */}
+      {selectMode && (
+        <div className="absolute inset-0 z-30 flex items-start justify-start p-2 pointer-events-none">
+          <div className={`flex h-6 w-6 items-center justify-center rounded-md border-2 transition-colors ${
+            selected ? 'bg-accent border-accent text-white' : 'bg-black/50 border-white/70 text-transparent'
+          }`}>
+            <Check className="h-4 w-4" strokeWidth={3} />
+          </div>
+        </div>
+      )}
+      {/* In select mode, a full-card shield swallows hover controls so clicks only toggle selection. */}
+      {selectMode && <div className="absolute inset-0 z-20" />}
       {asset.type === 'video' ? (
         <div className="relative w-full aspect-video bg-zinc-900">
           {asset.bigThumbnailPath && (
@@ -1725,11 +1747,23 @@ export function GenSpace() {
   // Electron's renderer doesn't implement window.prompt(), so new tag/folder
   // names go through this small modal instead. '__bar__' = creating from the
   // chip bar (no asset assignment); an assetId = creating + assigning to it.
-  const [creatingTagFor, setCreatingTagFor] = useState<'__bar__' | string | null>(null)
+  // '__bar__' = new tag from the chip bar (no assignment); '__selection__' =
+  // new tag applied to the current multi-selection; an assetId = assign to it.
+  const [creatingTagFor, setCreatingTagFor] = useState<'__bar__' | '__selection__' | string | null>(null)
   const [newTagName, setNewTagName] = useState('')
   const [gallerySize, setGallerySize] = useState<GallerySize>('medium')
   const [showSizeMenu, setShowSizeMenu] = useState(false)
   const sizeMenuRef = useRef<HTMLDivElement>(null)
+  // Multi-select: bulk-tag/delete many assets at once. Drag a marquee over the
+  // grid, or click cards, to build a selection, then tag/delete them together.
+  const [selectMode, setSelectMode] = useState(false)
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set())
+  const [marquee, setMarquee] = useState<{ left: number; top: number; width: number; height: number } | null>(null)
+  const gridScrollRef = useRef<HTMLDivElement>(null)
+  const marqueeStartRef = useRef<{ x: number; y: number } | null>(null)
+  const marqueeBaseRef = useRef<Set<string>>(new Set())
+  const marqueeDraggedRef = useRef(false)
+  const suppressCardClickRef = useRef(false)
   const persistedVideoKeyRef = useRef<string | null>(null)
   const retakeSubmissionRef = useRef<{
     prompt: string
@@ -3640,6 +3674,128 @@ export function GenSpace() {
   const favoriteCount = useMemo(() => assets.filter(a => a.favorite).length, [assets])
   const isLibraryMode = mode === 'video' || mode === 'image'
 
+  // ── Multi-select helpers ──────────────────────────────────────────────
+  const clearSelection = useCallback(() => setSelectedIds(new Set()), [])
+
+  const toggleSelect = useCallback((id: string) => {
+    setSelectedIds(prev => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }, [])
+
+  const selectAllVisible = useCallback(() => {
+    setSelectedIds(new Set(filteredAssets.map(a => a.id)))
+  }, [filteredAssets])
+
+  const exitSelectMode = useCallback(() => {
+    setSelectMode(false)
+    setSelectedIds(new Set())
+    setMarquee(null)
+    marqueeStartRef.current = null
+  }, [])
+
+  // Assign an existing tag (or clear) across every selected asset at once.
+  const applyTagToSelection = useCallback((binId: string | null) => {
+    if (!currentProjectId) return
+    for (const id of selectedIds) {
+      updateAsset(currentProjectId, id, { binId: binId ?? undefined })
+    }
+  }, [currentProjectId, selectedIds, updateAsset])
+
+  const deleteSelection = useCallback(() => {
+    if (selectedIds.size === 0) return
+    if (!window.confirm(`Delete ${selectedIds.size} selected item${selectedIds.size === 1 ? '' : 's'}? This can't be undone.`)) return
+    for (const id of selectedIds) handleDelete(id)
+    setSelectedIds(new Set())
+  }, [selectedIds, handleDelete])
+
+  // Create a new tag from the modal, then route it to whatever asked for it:
+  // the chip bar (create only), a single asset, or the whole multi-selection.
+  const commitNewTag = useCallback(() => {
+    const name = newTagName.trim()
+    const target = creatingTagFor
+    if (!name || !currentProjectId || target === null) return
+    const binId = createBin(currentProjectId, name)
+    if (target === '__selection__') {
+      for (const id of selectedIds) updateAsset(currentProjectId, id, { binId })
+    } else if (target !== '__bar__') {
+      updateAsset(currentProjectId, target, { binId })
+    }
+    setCreatingTagFor(null)
+    setNewTagName('')
+  }, [newTagName, creatingTagFor, currentProjectId, createBin, selectedIds, updateAsset])
+
+  // Marquee (rubber-band) drag-select over the grid. Coordinates are kept in the
+  // scroll container's content space (viewport offset + scroll) so the overlay
+  // and hit-testing stay correct while the grid scrolls.
+  const MARQUEE_THRESHOLD = 5
+  const computeMarqueeHits = useCallback((box: { left: number; top: number; right: number; bottom: number }) => {
+    const container = gridScrollRef.current
+    if (!container) return [] as string[]
+    const crect = container.getBoundingClientRect()
+    const hits: string[] = []
+    container.querySelectorAll<HTMLElement>('[data-asset-id]').forEach(el => {
+      const r = el.getBoundingClientRect()
+      const left = r.left - crect.left + container.scrollLeft
+      const top = r.top - crect.top + container.scrollTop
+      const right = left + r.width
+      const bottom = top + r.height
+      const intersects = left < box.right && right > box.left && top < box.bottom && bottom > box.top
+      if (intersects) {
+        const id = el.getAttribute('data-asset-id')
+        if (id) hits.push(id)
+      }
+    })
+    return hits
+  }, [])
+
+  const handleMarqueePointerDown = useCallback((e: React.PointerEvent) => {
+    if (!selectMode || e.button !== 0) return
+    const container = gridScrollRef.current
+    if (!container) return
+    const crect = container.getBoundingClientRect()
+    marqueeStartRef.current = {
+      x: e.clientX - crect.left + container.scrollLeft,
+      y: e.clientY - crect.top + container.scrollTop,
+    }
+    // Additive when holding shift/ctrl: keep the existing selection as the base.
+    marqueeBaseRef.current = (e.shiftKey || e.ctrlKey || e.metaKey) ? new Set(selectedIds) : new Set()
+    marqueeDraggedRef.current = false
+  }, [selectMode, selectedIds])
+
+  const handleMarqueePointerMove = useCallback((e: React.PointerEvent) => {
+    const start = marqueeStartRef.current
+    const container = gridScrollRef.current
+    if (!start || !container) return
+    const crect = container.getBoundingClientRect()
+    const x = e.clientX - crect.left + container.scrollLeft
+    const y = e.clientY - crect.top + container.scrollTop
+    if (!marqueeDraggedRef.current) {
+      if (Math.abs(x - start.x) < MARQUEE_THRESHOLD && Math.abs(y - start.y) < MARQUEE_THRESHOLD) return
+      marqueeDraggedRef.current = true
+      container.setPointerCapture?.(e.pointerId)
+    }
+    const box = {
+      left: Math.min(start.x, x),
+      top: Math.min(start.y, y),
+      right: Math.max(start.x, x),
+      bottom: Math.max(start.y, y),
+    }
+    setMarquee({ left: box.left, top: box.top, width: box.right - box.left, height: box.bottom - box.top })
+    const hits = computeMarqueeHits(box)
+    setSelectedIds(new Set([...marqueeBaseRef.current, ...hits]))
+  }, [computeMarqueeHits])
+
+  const handleMarqueePointerUp = useCallback(() => {
+    if (marqueeDraggedRef.current) suppressCardClickRef.current = true
+    marqueeStartRef.current = null
+    marqueeDraggedRef.current = false
+    setMarquee(null)
+  }, [])
+
   // Memoized so typing in the prompt box (which re-renders GenSpace) doesn't
   // rebuild every thumbnail. Recomputes only when the assets or a card handler
   // actually change — all deps are stable (useCallback/useMemo/stable setters).
@@ -3661,11 +3817,18 @@ export function GenSpace() {
       bins={bins}
       onTag={(binId) => currentProjectId && updateAsset(currentProjectId, asset.id, { binId: binId ?? undefined })}
       onRequestNewTag={() => setCreatingTagFor(asset.id)}
+      selectMode={selectMode}
+      selected={selectedIds.has(asset.id)}
+      onToggleSelect={() => {
+        if (suppressCardClickRef.current) { suppressCardClickRef.current = false; return }
+        toggleSelect(asset.id)
+      }}
     />
   )), [
     filteredAssets, bins, handleDelete, handleDragStart, handleCreateVideo, handleRegenerate,
     handleRetake, handleExtend, handleIcLora, forceApiGenerations, currentProjectId,
     toggleFavorite, updateAsset, setSelectedAsset, setCreatingTagFor,
+    selectMode, selectedIds, toggleSelect,
   ])
 
   // Navigation for the asset preview modal
@@ -3839,6 +4002,74 @@ export function GenSpace() {
             </div>
             <div className="flex items-center gap-2">
             <button
+              onClick={() => { if (selectMode) exitSelectMode(); else setSelectMode(true) }}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${
+                selectMode
+                  ? 'bg-accent/20 text-accent border border-accent/40'
+                  : 'text-zinc-400 hover:text-white hover:bg-zinc-800'
+              }`}
+              title="Select multiple items to tag or delete them together"
+            >
+              <CheckSquare className="h-4 w-4" />
+              {selectMode ? 'Done' : 'Select'}
+            </button>
+
+            {/* Multi-select actions — inline by the Select button so they're never missed */}
+            {selectMode && (
+              <>
+                <span className="text-sm font-medium text-white tabular-nums px-1">
+                  {selectedIds.size} selected
+                </span>
+                <button
+                  onClick={selectAllVisible}
+                  className="px-2.5 py-1.5 rounded-md text-xs font-medium text-zinc-300 hover:text-white hover:bg-zinc-800 transition-colors"
+                >
+                  Select all
+                </button>
+                <button
+                  onClick={clearSelection}
+                  disabled={selectedIds.size === 0}
+                  className="px-2.5 py-1.5 rounded-md text-xs font-medium text-zinc-300 hover:text-white hover:bg-zinc-800 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                  Clear
+                </button>
+                <div className={selectedIds.size === 0 ? 'opacity-40 pointer-events-none' : ''}>
+                  <SettingsDropdown
+                    title="Tag selected"
+                    value=""
+                    placement="below"
+                    onChange={(value) => {
+                      if (value === '__new__') setCreatingTagFor('__selection__')
+                      else if (value === '__none__') applyTagToSelection(null)
+                      else applyTagToSelection(value)
+                    }}
+                    trigger={
+                      <span className="flex items-center gap-1.5 rounded-md text-xs font-semibold text-white">
+                        <Tag className="h-3.5 w-3.5" />
+                        Tag
+                        <ChevronUp className="h-3 w-3 rotate-180" />
+                      </span>
+                    }
+                    triggerClassName="bg-accent hover:bg-accent-dark"
+                    options={[
+                      { value: '__none__', label: 'Remove from folder' },
+                      ...Object.entries(bins).map(([binId, name]) => ({ value: binId, label: name })),
+                      { value: '__new__', label: '+ New Tag…' },
+                    ]}
+                  />
+                </div>
+                <button
+                  onClick={deleteSelection}
+                  disabled={selectedIds.size === 0}
+                  className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs font-semibold bg-red-600 hover:bg-red-500 text-white transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                  Delete
+                </button>
+                <div className="w-px h-5 bg-zinc-700 mx-0.5" />
+              </>
+            )}
+            <button
               onClick={() => setShowFavorites(!showFavorites)}
               className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${
                 showFavorites
@@ -3901,7 +4132,20 @@ export function GenSpace() {
           </div>
 
           {/* Assets grid — fills remaining space, scrollable */}
-          <div className="overflow-y-auto overflow-x-hidden [scrollbar-gutter:stable] flex-1">
+          <div
+            ref={gridScrollRef}
+            className={`relative overflow-y-auto overflow-x-hidden [scrollbar-gutter:stable] flex-1 ${selectMode ? 'select-none' : ''}`}
+            onPointerDown={selectMode ? handleMarqueePointerDown : undefined}
+            onPointerMove={selectMode ? handleMarqueePointerMove : undefined}
+            onPointerUp={selectMode ? handleMarqueePointerUp : undefined}
+          >
+            {/* Marquee (rubber-band) rectangle while drag-selecting */}
+            {marquee && (
+              <div
+                className="absolute z-40 rounded-sm border border-accent bg-accent/15 pointer-events-none"
+                style={{ left: marquee.left, top: marquee.top, width: marquee.width, height: marquee.height }}
+              />
+            )}
             <div className={`grid ${gallerySizeClasses[gallerySize]} gap-4`}>
               {isGenerating && (
                 <div className="relative rounded-xl overflow-hidden bg-zinc-800 aspect-video">
@@ -4311,12 +4555,7 @@ export function GenSpace() {
               onKeyDown={(e) => {
                 if (e.key === 'Enter') {
                   e.preventDefault()
-                  const name = newTagName.trim()
-                  if (!name || !currentProjectId) return
-                  const binId = createBin(currentProjectId, name)
-                  if (creatingTagFor !== '__bar__') updateAsset(currentProjectId, creatingTagFor, { binId })
-                  setCreatingTagFor(null)
-                  setNewTagName('')
+                  commitNewTag()
                 } else if (e.key === 'Escape') {
                   setCreatingTagFor(null)
                   setNewTagName('')
@@ -4333,14 +4572,7 @@ export function GenSpace() {
                 Cancel
               </button>
               <button
-                onClick={() => {
-                  const name = newTagName.trim()
-                  if (!name || !currentProjectId) return
-                  const binId = createBin(currentProjectId, name)
-                  if (creatingTagFor !== '__bar__') updateAsset(currentProjectId, creatingTagFor, { binId })
-                  setCreatingTagFor(null)
-                  setNewTagName('')
-                }}
+                onClick={commitNewTag}
                 disabled={!newTagName.trim()}
                 className="rounded-md px-3 py-1.5 text-xs font-medium bg-blue-600 text-white disabled:opacity-40"
               >
