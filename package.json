@@ -1,7 +1,7 @@
 {
   "name": "rix-desktop-studio-pro",
   "productName": "RiX Desktop Studio Pro",
-  "version": "1.2.7",
+  "version": "1.3.0",
   "description": "RiX Desktop Studio Pro — AI video studio built on LTX-2",
   "type": "module",
   "main": "dist-electron/main.js",
