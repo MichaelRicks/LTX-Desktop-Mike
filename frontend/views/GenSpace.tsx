@@ -761,6 +761,7 @@ function PromptBar({
   const [isDragOver, setIsDragOver] = useState(false)
   const [isLastDragOver, setIsLastDragOver] = useState(false)
   const [isAudioDragOver, setIsAudioDragOver] = useState(false)
+  const [promptBoxHeight, setPromptBoxHeight] = useState(70)
   const isRetake = mode === 'retake'
   const isExtend = mode === 'extend'
   const isIcLora = mode === 'ic-lora'
@@ -976,6 +977,32 @@ function PromptBar({
     }
   }
 
+  // Custom vertical resize: grab the handle above the prompt box and drag UP to
+  // grow it (native textarea resize grows downward from the bottom-right grip,
+  // which felt backwards). Dragging up = taller, dragging down = shorter.
+  const MIN_PROMPT_HEIGHT = 70
+  const MAX_PROMPT_HEIGHT = Math.round(window.innerHeight * 0.6)
+  const handleResizeStart = useCallback((e: React.PointerEvent) => {
+    e.preventDefault()
+    const startY = e.clientY
+    const startHeight = promptBoxHeight
+    const onMove = (ev: PointerEvent) => {
+      // Dragging up (clientY decreases) increases height.
+      const next = startHeight + (startY - ev.clientY)
+      setPromptBoxHeight(Math.max(MIN_PROMPT_HEIGHT, Math.min(MAX_PROMPT_HEIGHT, next)))
+    }
+    const onUp = () => {
+      document.removeEventListener('pointermove', onMove)
+      document.removeEventListener('pointerup', onUp)
+      document.body.style.cursor = ''
+      document.body.style.userSelect = ''
+    }
+    document.addEventListener('pointermove', onMove)
+    document.addEventListener('pointerup', onUp)
+    document.body.style.cursor = 'ns-resize'
+    document.body.style.userSelect = 'none'
+  }, [promptBoxHeight, MAX_PROMPT_HEIGHT])
+
   const showStop = Boolean(isGenerating && onStop)
   const stopDisabled = Boolean(isCancelling)
   const generateDisabled = isGenerating || !canGenerate || isEnhancingPrompt
@@ -1107,14 +1134,22 @@ function PromptBar({
           </div>
         )}
 
-        {/* Prompt input - fills remaining width; drag the corner to resize height */}
+        {/* Prompt input - fills remaining width; drag the handle above it to resize height */}
         <div className="flex-1 min-w-0 py-1">
+          {/* Resize handle: thick, easy-to-grab bar; drag UP to grow the box. */}
+          <div
+            onPointerDown={handleResizeStart}
+            title="Drag up to enlarge the prompt box"
+            className="group flex h-3.5 w-full cursor-ns-resize items-center justify-center touch-none"
+          >
+            <div className="h-0 w-0 border-l-[8px] border-r-[8px] border-b-[10px] border-l-transparent border-r-transparent border-b-accent/70 group-hover:border-b-accent transition-colors" />
+          </div>
           <textarea
             value={prompt}
             onChange={(e) => onPromptChange(e.target.value)}
             onKeyDown={handleKeyDown}
             spellCheck
-            rows={3}
+            style={{ height: `${promptBoxHeight}px` }}
             onDragOver={(e) => {
               if (e.dataTransfer.types.includes(GPM_IMAGE_DND_TYPE) || e.dataTransfer.types.includes(FILE_DND) || e.dataTransfer.types.includes('asset')) e.preventDefault()
             }}
@@ -1135,7 +1170,7 @@ function PromptBar({
                     : "A close-up of a woman talking on the phone...")
                 : "The woman sips from a cup of coffee..."
             }
-            className="w-full bg-transparent text-white text-sm placeholder:text-zinc-500 focus:outline-none px-2 py-2 resize-y overflow-y-auto h-[70px] min-h-[70px] max-h-[60vh] leading-5"
+            className="prompt-scroll w-full bg-transparent text-white text-sm placeholder:text-zinc-500 focus:outline-none px-2 py-2 resize-none overflow-y-auto leading-5"
           />
         </div>
 
@@ -1172,7 +1207,7 @@ function PromptBar({
           onClick={onClearPrompt}
           disabled={!prompt}
           title="Clear the prompt box"
-          className="ml-8 flex items-center gap-1 px-2.5 py-1.5 rounded-md text-[11px] font-semibold bg-[#1f8fff] hover:bg-[#3d9fff] text-white transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+          className="ml-8 flex items-center gap-1 px-2.5 py-1.5 rounded-md text-[11px] font-semibold bg-red-600 hover:bg-red-500 text-white transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
         >
           <Eraser className="h-3.5 w-3.5" />
           Clear

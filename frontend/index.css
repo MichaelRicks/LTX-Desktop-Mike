@@ -76,6 +76,23 @@ body {
   background: #555;
 }
 
+/* Prompt box scrollbar — thicker + accent-colored to match the color scheme */
+.prompt-scroll::-webkit-scrollbar {
+  width: 12px;
+  cursor: default;
+}
+.prompt-scroll::-webkit-scrollbar-track {
+  cursor: default;
+}
+.prompt-scroll::-webkit-scrollbar-thumb {
+  background: rgb(var(--accent) / 0.6);
+  border-radius: 6px;
+  cursor: default;
+}
+.prompt-scroll::-webkit-scrollbar-thumb:hover {
+  background: rgb(var(--accent));
+}
+
 /* Drag and drop styling */
 .dropzone-active {
   border-color: rgb(var(--accent)) !important;
