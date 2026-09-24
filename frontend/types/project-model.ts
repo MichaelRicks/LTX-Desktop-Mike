@@ -69,6 +69,8 @@ export const generationParamsSchema = z.object({
   // which version produced the asset. Captured at generation time from the backend spec's
   // display name; absent on assets written before this existed.
   modelLabel: z.string().optional(),
+  // Seed the backend actually used (local + FAL image gens). Absent on older assets / LTX API.
+  seed: z.number().optional(),
   duration: z.number().nullable(),
   resolution: z.string(),
   fps: z.number(),

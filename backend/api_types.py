@@ -163,6 +163,8 @@ class SuggestGapPromptResponse(BaseModel):
 class GenerateVideoCompleteResponse(BaseModel):
     status: Literal["complete"]
     video_path: str
+    # Seed actually used (None for API providers that don't expose it).
+    seed: int | None = None
 
 
 class GenerateVideoCancelledResponse(BaseModel):
@@ -175,6 +177,8 @@ GenerateVideoResponse: TypeAlias = GenerateVideoCompleteResponse | GenerateVideo
 class GenerateImageCompleteResponse(BaseModel):
     status: Literal["complete"]
     image_paths: list[str]
+    # Base seed; image i in the batch used seed + i.
+    seed: int | None = None
 
 
 class GenerateImageCancelledResponse(BaseModel):

@@ -104,7 +104,7 @@ class ImageGenerationHandler(StateHandlerBase):
                     num_images=num_images,
                 )
                 self._generation.complete_generation(output_paths)
-                return GenerateImageCompleteResponse(status="complete", image_paths=output_paths)
+                return GenerateImageCompleteResponse(status="complete", image_paths=output_paths, seed=seed)
             except Exception as e:
                 self._generation.fail_generation(str(e))
                 if is_cancel_exception(e):
@@ -154,7 +154,7 @@ class ImageGenerationHandler(StateHandlerBase):
                 num_images=num_images,
             )
             self._generation.complete_generation(output_paths)
-            return GenerateImageCompleteResponse(status="complete", image_paths=output_paths)
+            return GenerateImageCompleteResponse(status="complete", image_paths=output_paths, seed=seed)
         except Exception as e:
             self._generation.fail_generation(str(e))
             if is_cancel_exception(e):
@@ -347,7 +347,7 @@ class ImageGenerationHandler(StateHandlerBase):
 
             self._generation.update_progress("complete", 100, None, None)
             self._generation.complete_generation([str(p) for p in output_paths])
-            return GenerateImageCompleteResponse(status="complete", image_paths=[str(p) for p in output_paths])
+            return GenerateImageCompleteResponse(status="complete", image_paths=[str(p) for p in output_paths], seed=seed)
         except HTTPError as e:
             self._generation.fail_generation(e.detail)
             for path in output_paths:

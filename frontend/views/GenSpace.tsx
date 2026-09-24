@@ -1004,6 +1004,7 @@ function PromptBar({
   // which felt backwards). Dragging up = taller, dragging down = shorter.
   const MIN_PROMPT_HEIGHT = 70
   const MAX_PROMPT_HEIGHT = Math.round(window.innerHeight * 0.6)
+  const [copiedPromptBox, setCopiedPromptBox] = useState(false)
   const handleResizeStart = useCallback((e: React.PointerEvent) => {
     e.preventDefault()
     const startY = e.clientY
@@ -1159,12 +1160,28 @@ function PromptBar({
         {/* Prompt input - fills remaining width; drag the handle above it to resize height */}
         <div className="flex-1 min-w-0 py-1">
           {/* Resize handle: thick, easy-to-grab bar; drag UP to grow the box. */}
-          <div
-            onPointerDown={handleResizeStart}
-            title="Drag up to enlarge the prompt box"
-            className="group flex h-3.5 w-full cursor-ns-resize items-center justify-center touch-none"
-          >
-            <div className="h-0 w-0 border-l-[8px] border-r-[8px] border-b-[10px] border-l-transparent border-r-transparent border-b-accent/70 group-hover:border-b-accent transition-colors" />
+          <div className="relative">
+            <div
+              onPointerDown={handleResizeStart}
+              title="Drag up to enlarge the prompt box"
+              className="group flex h-3.5 w-full cursor-ns-resize items-center justify-center touch-none"
+            >
+              <div className="h-0 w-0 border-l-[8px] border-r-[8px] border-b-[10px] border-l-transparent border-r-transparent border-b-accent/70 group-hover:border-b-accent transition-colors" />
+            </div>
+            {prompt.trim() && (
+              <button
+                type="button"
+                onClick={() => {
+                  navigator.clipboard.writeText(prompt)
+                  setCopiedPromptBox(true)
+                  setTimeout(() => setCopiedPromptBox(false), 2000)
+                }}
+                className="absolute right-0 top-0 p-0.5 rounded text-zinc-500 hover:text-zinc-200 hover:bg-zinc-700 transition-colors"
+                title="Copy prompt"
+              >
+                {copiedPromptBox ? <Check className="h-3.5 w-3.5 text-green-400" /> : <Copy className="h-3.5 w-3.5" />}
+              </button>
+            )}
           </div>
           <textarea
             value={prompt}
@@ -1851,6 +1868,7 @@ export function GenSpace() {
     statusMessage,
     videoPath,
     imagePaths,
+    seed: generatedSeed,
     error,
     reset,
     resumeIfRunning,
@@ -2528,6 +2546,7 @@ export function GenSpace() {
             modelLabel: (submission?.kind === 'video' ? submission.modelLabel : undefined)
               ?? resolvePipelineDisplayName(videoModelSpecs, usedSettings.model)
               ?? undefined,
+            seed: generatedSeed ?? undefined,
             duration: usedSettings.duration,
             resolution: usedSettings.videoResolution,
             fps: usedSettings.fps,
@@ -2564,7 +2583,7 @@ export function GenSpace() {
         logger.error(`Failed to persist generated video asset: ${err}`)
       }
     })()
-  }, [videoPath, currentProjectId, isGenerating, settings, inputImage, inputLastImage, inputAudio, keyframes, lastPrompt, addAsset, reset, appSettings.modelsDir, videoModelSpecs, setMode])
+  }, [videoPath, generatedSeed, currentProjectId, isGenerating, settings, inputImage, inputLastImage, inputAudio, keyframes, lastPrompt, addAsset, reset, appSettings.modelsDir, videoModelSpecs, setMode])
 
   // "Continue as new shot": once the seeded continuation finishes, drop the
   // duplicate lead frame (a copy of the source's last frame the i2v conditioning
@@ -2921,10 +2940,12 @@ export function GenSpace() {
         }
     const editContext = lastImageEditRef.current
     const genMode = editContext ? 'image-edit' : 'text-to-image'
+    // Edits always run on Z-Image (see use-generation), whatever the picker says.
+    const imageModelLabel = !editContext && usedSettings.imageModel === 'krea-2-turbo' ? 'Krea 2 Turbo' : 'Z-Image Turbo'
 
     ;(async () => {
       try {
-        for (const imgPath of imagePaths) {
+        for (const [batchIndex, imgPath] of imagePaths.entries()) {
           if (importedImagePathsRef.current.has(imgPath)) continue
 
           const copied = await addVisualAssetToProject(imgPath, currentProjectId, 'image')
@@ -2949,6 +2970,9 @@ export function GenSpace() {
               mode: genMode,
               prompt: usedPrompt,
               model: 'fast',
+              modelLabel: imageModelLabel,
+              // Batch image i was generated with base seed + i.
+              seed: generatedSeed != null ? generatedSeed + batchIndex : undefined,
               duration: 5,
               resolution: usedSettings.imageResolution,
               fps: 24,
@@ -2977,7 +3001,7 @@ export function GenSpace() {
         addingImagesRef.current = false
       }
     })()
-  }, [imagePaths, currentProjectId, isGenerating, addAsset, lastPrompt, settings, reset])
+  }, [imagePaths, generatedSeed, currentProjectId, isGenerating, addAsset, lastPrompt, settings, reset])
   
   // Single writer for the recovery marker so the per-mode branches below can't drift. Captures
   // whatever generation id is active RIGHT NOW, before this generation starts, as baselineId —
@@ -4525,8 +4549,10 @@ export function GenSpace() {
               </div>
               <p className="text-zinc-500 text-sm mt-1">
                 {[
+                  selectedAsset.generationParams?.modelLabel,
                   selectedAsset.resolution,
                   selectedAsset.duration ? `${formatSeconds(selectedAsset.duration)}s` : 'Image',
+                  selectedAsset.generationParams?.seed != null ? `Seed ${selectedAsset.generationParams.seed}` : null,
                   selectedAsset.renderMs != null ? `${formatClock(selectedAsset.renderMs)} render` : null,
                 ].filter(Boolean).join(' • ')}
               </p>

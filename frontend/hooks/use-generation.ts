@@ -68,6 +68,8 @@ interface GenerationState {
   videoPath: string | null
   imagePath: string | null
   imagePaths: string[]
+  /** Seed the backend actually used (images: base seed, image i = seed + i). */
+  seed: number | null
   error: GenerationError | null
 }
 
@@ -160,6 +162,7 @@ export function useGeneration(): UseGenerationReturn {
     videoPath: null,
     imagePath: null,
     imagePaths: [],
+    seed: null,
     error: null,
   })
 
@@ -186,7 +189,7 @@ export function useGeneration(): UseGenerationReturn {
         const ips = Array.isArray(data.result) ? data.result : []
         setState({
           isGenerating: false, isCancelling: false, canCancel: false, progress: 100, statusMessage: 'Complete!',
-          videoPath: vp, imagePath: ips[0] ?? null, imagePaths: ips, error: null,
+          videoPath: vp, imagePath: ips[0] ?? null, imagePaths: ips, seed: null, error: null,
         })
         return 'complete'
       }
@@ -241,6 +244,7 @@ export function useGeneration(): UseGenerationReturn {
       videoPath: null,
       imagePath: null,
       imagePaths: [],
+      seed: null,
       error: null,
     })
 
@@ -348,6 +352,7 @@ export function useGeneration(): UseGenerationReturn {
             progress: 100,
             statusMessage: 'Complete!',
             videoPath: payload.video_path,
+            seed: payload.seed ?? null,
             imagePath: null,
             imagePaths: [],
             error: null,
@@ -445,6 +450,7 @@ export function useGeneration(): UseGenerationReturn {
       videoPath: null,
       imagePath: null,
       imagePaths: [],
+      seed: null,
       error: null,
     })
 
@@ -533,6 +539,7 @@ export function useGeneration(): UseGenerationReturn {
             videoPath: null,
             imagePath: rawPaths[0],
             imagePaths: rawPaths,
+            seed: payload.seed ?? null,
             error: null,
           })
         } else if (payload.status === 'cancelled') {
@@ -575,6 +582,7 @@ export function useGeneration(): UseGenerationReturn {
       videoPath: null,
       imagePath: null,
       imagePaths: [],
+      seed: null,
       error: null,
     })
   }, [])

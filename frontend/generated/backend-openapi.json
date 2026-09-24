@@ -985,6 +985,17 @@
             "title": "Image Paths",
             "type": "array"
           },
+          "seed": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Seed"
+          },
           "status": {
             "const": "complete",
             "title": "Status",
@@ -1079,6 +1090,17 @@
       },
       "GenerateVideoCompleteResponse": {
         "properties": {
+          "seed": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Seed"
+          },
           "status": {
             "const": "complete",
             "title": "Status",
