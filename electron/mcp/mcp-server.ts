@@ -9,6 +9,7 @@ import { logger } from '../logger'
 import { listLibrary, ensureLibFolder } from '../ipc/library-handlers'
 import { exportTimelineNative, type ExportNativeInput } from '../export/export-handler'
 import { callEditor, registerEditorBridge } from './editor-bridge'
+import { handle } from '../ipc/typed-handle'
 import { analyzeAudio, probeMedia, sampleFrames, type Frame } from './media-tools'
 
 /**
@@ -18,8 +19,11 @@ import { analyzeAudio, probeMedia, sampleFrames, type Frame } from './media-tool
  * Transport: MCP Streamable HTTP, stateless, JSON responses only, at
  * http://127.0.0.1:<port>/mcp. Guarded by a bearer token stored in
  * <userData>/rix-mcp.json, loopback-only binding, a Host check (DNS rebinding)
- * and refusal of browser-originated requests. Only started in dev builds or
- * when RIX_MCP=1, so shipped installs never open a control port by default.
+ * and refusal of browser-originated requests. Runs only when the user opts in
+ * ("Allow Claude to control the editor", persisted in rix-mcp.json), or in dev
+ * builds / with RIX_MCP=1 — shipped installs never open a control port by default.
+ * Claude itself runs in the user's own Claude app on their own plan; RiX never
+ * handles Claude credentials.
  */
 
 const DEFAULT_PORT = 47821
@@ -312,22 +316,34 @@ async function handleMessage(msg: RpcMessage): Promise<object | null> {
 
 // ---------------------------------------------------------------- HTTP
 
-type McpConfig = { port: number; token: string }
+/** `enabled` = the user's opt-in "Allow Claude to control the editor" setting. */
+type McpConfig = { port: number; token: string; enabled: boolean }
+
+const configFile = () => path.join(app.getPath('userData'), 'rix-mcp.json')
 
 function loadConfig(): McpConfig {
-  const file = path.join(app.getPath('userData'), 'rix-mcp.json')
   let cfg: Partial<McpConfig> = {}
-  try { cfg = JSON.parse(fs.readFileSync(file, 'utf8')) } catch { /* first run */ }
+  try { cfg = JSON.parse(fs.readFileSync(configFile(), 'utf8')) } catch { /* first run */ }
   const envPort = Number(process.env.RIX_MCP_PORT)
   const next: McpConfig = {
     port: Number.isInteger(envPort) && envPort > 0 ? envPort : cfg.port ?? DEFAULT_PORT,
     token: cfg.token ?? randomBytes(24).toString('hex'),
+    enabled: cfg.enabled ?? false,
   }
-  if (next.token !== cfg.token || next.port !== cfg.port) {
-    fs.writeFileSync(file, JSON.stringify(next, null, 2), { encoding: 'utf8', mode: 0o600 })
-  }
+  if (next.token !== cfg.token || next.port !== cfg.port || next.enabled !== cfg.enabled) saveConfig(next)
   return next
 }
+
+function saveConfig(cfg: McpConfig): void {
+  fs.writeFileSync(configFile(), JSON.stringify(cfg, null, 2), { encoding: 'utf8', mode: 0o600 })
+}
+
+/** Dev builds and RIX_MCP=1 run the server regardless of the user setting. */
+const forcedOn = () => isDev || process.env.RIX_MCP === '1'
+
+// Which MCP client last talked to us (from `initialize`), for the "connected" light.
+let lastClient: { name: string; version?: string; at: number } | null = null
+let lastRequestAt = 0
 
 function readBody(req: http.IncomingMessage, limit = 5 * 1024 * 1024): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -342,13 +358,59 @@ function readBody(req: http.IncomingMessage, limit = 5 * 1024 * 1024): Promise<s
   })
 }
 
+let server: http.Server | null = null
+
+/** Registers IPC once and starts the server if forced on (dev / RIX_MCP=1) or the
+ *  user has opted in. The user toggles it at runtime via mcpSetEnabled. */
 export function startMcpServer(): void {
-  if (!isDev && process.env.RIX_MCP !== '1') return
   registerEditorBridge()
+  registerMcpIpc()
+  if (forcedOn() || loadConfig().enabled) listen()
+  app.on('before-quit', () => { server?.close(); server = null })
+}
+
+function registerMcpIpc(): void {
+  handle('mcpGetStatus', () => {
+    const cfg = loadConfig()
+    return {
+      enabled: cfg.enabled,
+      forcedOn: forcedOn(),
+      running: server?.listening ?? false,
+      port: cfg.port,
+      lastClient,
+      lastRequestAt: lastRequestAt || null,
+    }
+  })
+
+  handle('mcpSetEnabled', ({ enabled }) => {
+    saveConfig({ ...loadConfig(), enabled })
+    if (enabled && !server) listen()
+    if (!enabled && server && !forcedOn()) { server.close(); server = null; logger.info('[MCP] server stopped (user disabled)') }
+    return { success: true as const }
+  })
+
+  // "Direct with Claude": open Claude Desktop's Code tab with the brief PREFILLED (the
+  // user reviews and presses Send). The link runs on the user's own Claude plan — RiX
+  // never handles their Claude login. Scheme and host are fixed here, never from input.
+  handle('openClaudeCode', async ({ prompt }) => {
+    const { shell } = await import('electron')
+    if (!prompt.trim()) return { success: false as const, error: 'Empty brief' }
+    if (prompt.length > 13000) return { success: false as const, error: 'Brief is too long for a Claude link (max ~13,000 characters)' }
+    const url = `claude://code/new?q=${encodeURIComponent(prompt)}&folder=${encodeURIComponent(listLibrary().root)}`
+    try {
+      await shell.openExternal(url)
+      return { success: true as const }
+    } catch (e) {
+      return { success: false as const, error: `Couldn't open Claude Desktop — is it installed? (${e instanceof Error ? e.message : String(e)})` }
+    }
+  })
+}
+
+function listen(): void {
   const { port, token } = loadConfig()
   const allowedHosts = new Set([`127.0.0.1:${port}`, `localhost:${port}`])
 
-  const server = http.createServer(async (req, res) => {
+  server = http.createServer(async (req, res) => {
     const send = (status: number, body?: unknown) => {
       res.writeHead(status, body === undefined ? {} : { 'Content-Type': 'application/json' })
       res.end(body === undefined ? undefined : JSON.stringify(body))
@@ -363,15 +425,19 @@ export function startMcpServer(): void {
 
     let parsed: RpcMessage | RpcMessage[]
     try { parsed = JSON.parse(await readBody(req)) } catch { return send(400, rpcError(null, -32700, 'Parse error')) }
+    lastRequestAt = Date.now()
+    for (const m of Array.isArray(parsed) ? parsed : [parsed]) {
+      const info = m?.method === 'initialize' ? m.params?.clientInfo as { name?: string; version?: string } | undefined : undefined
+      if (info?.name) lastClient = { name: info.name, version: info.version, at: Date.now() }
+    }
     const batch = Array.isArray(parsed)
     const replies = (await Promise.all((batch ? parsed : [parsed]).map(handleMessage))).filter((r): r is object => r !== null)
     if (replies.length === 0) return send(202)
     return send(200, batch ? replies : replies[0])
   })
 
-  server.on('error', (err) => logger.warn(`[MCP] server not started: ${err.message}`))
+  server.on('error', (err) => { logger.warn(`[MCP] server not started: ${err.message}`); server = null })
   server.listen(port, '127.0.0.1', () => {
-    logger.info(`[MCP] RiX editor MCP server listening on http://127.0.0.1:${port}/mcp (token in ${path.join(app.getPath('userData'), 'rix-mcp.json')})`)
+    logger.info(`[MCP] RiX editor MCP server listening on http://127.0.0.1:${port}/mcp (token in ${configFile()})`)
   })
-  app.on('before-quit', () => server.close())
 }

@@ -331,6 +331,28 @@ export const electronAPISchemas = {
     output: emptyResult,
   },
 
+  // RiX MCP server status + the user's opt-in "Allow Claude to control the editor".
+  mcpGetStatus: {
+    input: z.object({}),
+    output: z.object({
+      enabled: z.boolean(),
+      forcedOn: z.boolean(),
+      running: z.boolean(),
+      port: z.number(),
+      lastClient: z.object({ name: z.string(), version: z.string().optional(), at: z.number() }).nullable(),
+      lastRequestAt: z.number().nullable(),
+    }),
+  },
+  mcpSetEnabled: {
+    input: z.object({ enabled: z.boolean() }),
+    output: emptyResult,
+  },
+  // "Direct with Claude": open Claude Desktop's Code tab with this brief prefilled.
+  openClaudeCode: {
+    input: z.object({ prompt: z.string() }),
+    output: emptyResult,
+  },
+
   // RiX MCP server: the renderer's reply to an editor tool request (see onMcpEditorRequest).
   mcpEditorResponse: {
     input: z.object({ id: z.string(), ok: z.boolean(), result: z.unknown().optional(), error: z.string().optional() }),
