@@ -313,10 +313,13 @@ function AssetCard({
         isHovered ? 'opacity-75' : 'opacity-0'
       }`}>
         {/* Top buttons */}
-        <div className="absolute top-2 left-2 right-2 flex items-center justify-between flex-wrap gap-y-1.5">
+        <div className="absolute top-2 left-2 right-2 flex items-start justify-between gap-1.5">
           {/* Left actions: originals stay on row 1; Regenerate sits on its own
-              row below so it can't push IC-LoRA off a narrow card. */}
-          <div className="flex flex-col items-start gap-1.5">
+              row below so it can't push IC-LoRA off a narrow card. The left group
+              shrinks and wraps within its own column so the right-hand chips
+              (X / Download / Tag) stay pinned top-right — on short cards (21:9)
+              a wrapped right group fell below the card edge and was clipped. */}
+          <div className="flex flex-col items-start gap-1.5 min-w-0 flex-1">
           <div className="flex items-center gap-1.5 flex-wrap">
             <button
               onClick={(e) => { e.stopPropagation(); onToggleFavorite?.() }}
@@ -400,7 +403,7 @@ function AssetCard({
           )}
           </div>
 
-          <div className="flex items-center gap-1.5">
+          <div className="flex items-center gap-1.5 shrink-0">
             {asset.type === 'video' && (
               <button
                 onClick={handlePostToX}
