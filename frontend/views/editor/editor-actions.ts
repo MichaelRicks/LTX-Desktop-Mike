@@ -694,13 +694,21 @@ export function createTimeline(state: EditorState, name?: string): EditorState {
 export function duplicateTimeline(state: EditorState, timelineId: string): EditorState {
   const source = state.editorModel.timelines.find(timeline => timeline.id === timelineId)
   if (!source) return state
+  // New clip ids, with video↔audio links re-pointed at the copies (not the source timeline).
+  const idMap = new Map(source.clips.map(clip => [clip.id, makeId('clip')]))
   const duplicate: Timeline = {
     ...source,
     id: makeId('timeline'),
     name: `${source.name} Copy`,
     createdAt: Date.now(),
     tracks: source.tracks.map(track => ({ ...track })),
-    clips: source.clips.map(clip => ({ ...clip, id: makeId('clip') })),
+    clips: source.clips.map(clip => ({
+      ...clip,
+      id: idMap.get(clip.id)!,
+      ...(clip.linkedClipIds
+        ? { linkedClipIds: clip.linkedClipIds.map(id => idMap.get(id)).filter((id): id is string => !!id) }
+        : {}),
+    })),
     subtitles: source.subtitles?.map(subtitle => ({ ...subtitle, id: makeId('sub') })),
   }
   return {

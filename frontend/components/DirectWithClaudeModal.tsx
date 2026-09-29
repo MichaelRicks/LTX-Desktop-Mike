@@ -19,7 +19,13 @@ const TRANSITION_OPTIONS: Array<{ value: ClipTransition; label: string; brief: s
   { value: 'dip-to-black', label: 'Dip to black', brief: 'dip to black between every clip' },
 ]
 
+type DirectorMode = 'new' | 'revise'
+
 export interface DirectorBrief {
+  mode: DirectorMode
+  // Revise mode: the existing timeline to change, and whether to work on a copy of it
+  timelineId: string
+  reviseCopy: boolean
   lengthSec: number
   aspect: Aspect
   folder: string // '' = let Claude choose from all footage
@@ -31,7 +37,41 @@ export interface DirectorBrief {
   exportWhenDone: boolean
 }
 
-export function buildDirectorPrompt(brief: DirectorBrief, project: { id: string; name: string }): string {
+function buildRevisePrompt(
+  brief: DirectorBrief,
+  project: { id: string; name: string },
+  timeline: { id: string; name: string } | undefined,
+): string {
+  const tl = timeline ?? { id: brief.timelineId, name: '(unknown)' }
+  const transition = (TRANSITION_OPTIONS.find(t => t.value === brief.transition) ?? TRANSITION_OPTIONS[0])
+  const copyName = `${tl.name} - ${transition.label.toLowerCase()}`
+  const lines = [
+    'Revise an existing timeline in RiX with the rix-editor tools, following the rix-editor skill ("Revise mode").',
+    '',
+    `Project: "${project.name}" (project_id ${project.id}). Confirm with rix_status that this is still the open project before editing; if it isn't, stop and ask me.`,
+    `Timeline: "${tl.name}" (timeline id ${tl.id}).`,
+    '',
+    'Change:',
+    `- Transitions between clips → ${transition.brief}. Leave the opening fade-in and closing fade-out as they are.`,
+    ...(brief.notes.trim() ? [`- Also: ${brief.notes.trim()}`] : []),
+    '',
+    'Keep everything else exactly as it is: every clip, in/out point, start time, track, audio level, fade, duck and title.',
+    brief.reviseCopy
+      ? `Work on a copy so my original stays untouched: duplicate_timeline it as "${copyName}", then change the copy.`
+      : 'Edit this timeline in place.',
+    `Review every join with render_frames, then ${brief.exportWhenDone
+      ? 'export it and tell me the file path.'
+      : "stop and tell me it's ready — don't export, I'll review it in RiX first."}`,
+  ]
+  return lines.join('\n')
+}
+
+export function buildDirectorPrompt(
+  brief: DirectorBrief,
+  project: { id: string; name: string },
+  timelines: Array<{ id: string; name: string }> = [],
+): string {
+  if (brief.mode === 'revise') return buildRevisePrompt(brief, project, timelines.find(t => t.id === brief.timelineId))
   const lines = [
     'Cut a video in RiX with the rix-editor tools, following the rix-editor skill.',
     '',
@@ -67,9 +107,10 @@ function agoLabel(ts: number | null | undefined): string {
   return `${Math.round(s / 3600)} h ago`
 }
 
-export function DirectWithClaudeModal({ project, projectAudio, onClose, onOpened }: {
+export function DirectWithClaudeModal({ project, projectAudio, timelines, onClose, onOpened }: {
   project: { id: string; name: string }
   projectAudio: Asset[]
+  timelines: Array<{ id: string; name: string }>
   onClose: () => void
   onOpened: (message: string) => void
 }) {
@@ -79,6 +120,7 @@ export function DirectWithClaudeModal({ project, projectAudio, onClose, onOpened
   const [opening, setOpening] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [brief, setBrief] = useState<DirectorBrief>({
+    mode: 'new', timelineId: timelines[timelines.length - 1]?.id ?? '', reviseCopy: true,
     lengthSec: 30, aspect: '16:9', folder: '', musicPath: '', transition: 'cut', title: '', notes: '',
     shotListFirst: true, exportWhenDone: true,
   })
@@ -100,8 +142,9 @@ export function DirectWithClaudeModal({ project, projectAudio, onClose, onOpened
     return () => clearInterval(t)
   }, [refreshStatus])
 
-  const prompt = useMemo(() => buildDirectorPrompt(brief, project), [brief, project])
-  const ready = !!status?.running
+  const prompt = useMemo(() => buildDirectorPrompt(brief, project, timelines), [brief, project, timelines])
+  const revising = brief.mode === 'revise'
+  const ready = !!status?.running && (!revising || !!brief.timelineId)
 
   const openInClaude = async () => {
     setOpening(true)
@@ -167,6 +210,31 @@ export function DirectWithClaudeModal({ project, projectAudio, onClose, onOpened
             )}
           </div>
 
+          <div className="flex gap-2">
+            {([['new', 'New cut'], ['revise', 'Revise a timeline']] as Array<[DirectorMode, string]>).map(([m, label]) => (
+              <button key={m} onClick={() => set('mode', m)}
+                className={`flex-1 py-2 rounded-lg text-sm border transition-colors ${
+                  brief.mode === m ? 'border-[rgb(var(--accent))] bg-[rgb(var(--accent)/0.15)] text-white' : 'border-zinc-700 text-zinc-400 hover:text-white'
+                }`}
+              >{label}</button>
+            ))}
+          </div>
+
+          {revising && (
+            <div>
+              <label className={labelCls}>Timeline to revise</label>
+              {timelines.length > 0 ? (
+                <select value={brief.timelineId} onChange={(e) => set('timelineId', e.target.value)} className={fieldCls}>
+                  {timelines.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+                </select>
+              ) : (
+                <p className="text-xs text-zinc-500">This project has no timelines yet.</p>
+              )}
+              <p className="mt-1.5 text-[11px] text-zinc-500">Claude keeps every clip, trim, audio level and title as it is and changes only what you pick below.</p>
+            </div>
+          )}
+
+          {!revising && (<>
           <div className="grid grid-cols-3 gap-3">
             <div>
               <label className={labelCls}>Length (seconds)</label>
@@ -211,30 +279,41 @@ export function DirectWithClaudeModal({ project, projectAudio, onClose, onOpened
               )}
             </select>
           </div>
+          </>)}
 
           <div>
-            <label className={labelCls}>Transitions between clips</label>
+            <label className={labelCls}>{revising ? 'Change transitions between clips to' : 'Transitions between clips'}</label>
             <select value={brief.transition} onChange={(e) => set('transition', e.target.value as ClipTransition)} className={fieldCls}>
               {TRANSITION_OPTIONS.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
             </select>
           </div>
 
-          <div>
-            <label className={labelCls}>End on a title (optional)</label>
-            <input value={brief.title} onChange={(e) => set('title', e.target.value)} placeholder="e.g. TRICK OR TREAT" className={fieldCls} />
-          </div>
+          {!revising && (
+            <div>
+              <label className={labelCls}>End on a title (optional)</label>
+              <input value={brief.title} onChange={(e) => set('title', e.target.value)} placeholder="e.g. TRICK OR TREAT" className={fieldCls} />
+            </div>
+          )}
 
           <div>
-            <label className={labelCls}>Notes for Claude (optional)</label>
+            <label className={labelCls}>{revising ? 'Anything else to change (optional)' : 'Notes for Claude (optional)'}</label>
             <textarea value={brief.notes} onChange={(e) => set('notes', e.target.value)} rows={3}
-              placeholder="Mood, pacing, shots to include or avoid, keep the witch's dialogue…" className={`${fieldCls} resize-none`} />
+              placeholder={revising ? 'Leave empty to change only the transitions' : "Mood, pacing, shots to include or avoid, keep the witch's dialogue…"}
+              className={`${fieldCls} resize-none`} />
           </div>
 
           <div className="flex flex-col gap-2 text-sm text-zinc-300">
-            <label className="flex items-center gap-2 cursor-pointer">
-              <input type="checkbox" checked={brief.shotListFirst} onChange={(e) => set('shotListFirst', e.target.checked)} className="accent-[rgb(var(--accent))]" />
-              Show me the shot list before building
-            </label>
+            {revising ? (
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input type="checkbox" checked={brief.reviseCopy} onChange={(e) => set('reviseCopy', e.target.checked)} className="accent-[rgb(var(--accent))]" />
+                Work on a copy (keeps the original timeline untouched)
+              </label>
+            ) : (
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input type="checkbox" checked={brief.shotListFirst} onChange={(e) => set('shotListFirst', e.target.checked)} className="accent-[rgb(var(--accent))]" />
+                Show me the shot list before building
+              </label>
+            )}
             <label className="flex items-center gap-2 cursor-pointer">
               <input type="checkbox" checked={brief.exportWhenDone} onChange={(e) => set('exportWhenDone', e.target.checked)} className="accent-[rgb(var(--accent))]" />
               Export when done (to Studio Assets › RiX Edits)

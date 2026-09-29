@@ -14,7 +14,7 @@ import { pathToFileUrl } from '../../lib/file-url'
 import type { EditorState } from './editor-state'
 import type { EditorStoreApi } from './editor-store'
 import * as actions from './editor-actions'
-import { selectActiveTimeline, selectAssets, selectClips, selectSubtitles, selectTracks } from './editor-selectors'
+import { selectActiveTimeline, selectAssets, selectClips, selectSubtitles, selectTimelines, selectTracks } from './editor-selectors'
 import { resolveOverlaps } from './video-editor-utils'
 import { buildAssetFromPath } from './dropped-media-asset'
 import { buildExportPayload } from './export-payload'
@@ -242,6 +242,8 @@ type EditOp =
   | { op: 'delete'; clips: string[] }
   | { op: 'clear' }
   | { op: 'new_timeline'; name?: string }
+  | { op: 'switch_timeline'; timeline: string }
+  | { op: 'duplicate_timeline'; timeline?: string; name?: string }
   | { op: 'add_track'; kind: 'video' | 'audio' }
 
 const looksLikePath = (s: string) => /[\\/]/.test(s) && /\.[a-z0-9]{2,4}$/i.test(s)
@@ -556,6 +558,28 @@ async function applyEdits(args: { ops?: EditOp[] } & Record<string, unknown>) {
             case 'new_timeline': {
               s = actions.createTimeline(s, op.name)
               results.push({ op: 'new_timeline', timelineId: selectActiveTimeline(s)?.id })
+              break
+            }
+            case 'switch_timeline':
+            case 'duplicate_timeline': {
+              // Timelines are addressed by id, or by exact (case-insensitive) name.
+              const wanted = op.op === 'switch_timeline' ? op.timeline : op.timeline ?? selectActiveTimeline(s)?.id
+              if (!wanted) throw new Error('"timeline" is required (id or exact name)')
+              const timelines = selectTimelines(s)
+              const byId = timelines.find(t => t.id === wanted)
+              const byName = timelines.filter(t => t.name.toLowerCase() === wanted.toLowerCase())
+              if (!byId && byName.length > 1) throw new Error(`${byName.length} timelines are named "${wanted}" — use the timeline id from rix_status`)
+              const target = byId ?? byName[0]
+              if (!target) throw new Error(`timeline "${wanted}" not found (rix_status lists them)`)
+              if (op.op === 'switch_timeline') {
+                s = actions.switchActiveTimeline(s, target.id)
+              } else {
+                s = actions.duplicateTimeline(s, target.id) // the copy becomes active
+                const copyId = selectActiveTimeline(s)?.id
+                if (copyId && op.name?.trim()) s = actions.renameTimeline(s, copyId, op.name.trim())
+              }
+              const active = selectActiveTimeline(s)
+              results.push({ op: op.op, timelineId: active?.id, name: active?.name, ...(op.op === 'duplicate_timeline' ? { source: target.id } : {}) })
               break
             }
             case 'add_track': {

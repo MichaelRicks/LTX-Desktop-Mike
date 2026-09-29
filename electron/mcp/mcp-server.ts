@@ -196,6 +196,9 @@ const TOOLS: Tool[] = [
       '     types: none, dissolve, fade-to-black, fade-to-white, wipe-left, wipe-right, wipe-up, wipe-down. A dissolve needs out on the left clip AND in on the right clip.',
       '  {"op":"delete","clips":["<id>"]}  (linked audio goes too)   {"op":"clear"}  (empty the active timeline)',
       '  {"op":"new_timeline","name":"Trailer v1"}  (becomes active)   {"op":"add_track","kind":"video"|"audio"}',
+      '  {"op":"switch_timeline","timeline":"<id | exact name>"}  (make an existing timeline active; later ops in the batch edit it)',
+      '  {"op":"duplicate_timeline","timeline":"<id | exact name>","name":"Cut v2"}  (copy it — clips, audio, fades, keyframes — and make the',
+      '     copy active; timeline defaults to the active one). Revise a copy, never the user\'s original, unless they ask to edit it in place.',
     ].join('\n'),
     inputSchema: {
       type: 'object',

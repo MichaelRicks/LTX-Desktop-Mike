@@ -265,7 +265,12 @@ export function Project() {
             pr-20 clears the global Logs/Settings icons fixed at the window's top-right. */}
         <div className="flex-1 flex items-center justify-end gap-2 pr-20">
           <button
-            onClick={() => setShowDirector(true)}
+            onClick={() => {
+              // Claude's edits land in the Video Editor, which must be mounted to accept them,
+              // so take the user there up front: the panel opens over the editor they'll watch.
+              setCurrentTab('video-editor')
+              setShowDirector(true)
+            }}
             title="Have Claude cut a video from your assets (runs in your own Claude app)"
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium text-white bg-[rgb(var(--accent)/0.85)] hover:bg-[rgb(var(--accent))] transition-colors"
           >
@@ -292,9 +297,10 @@ export function Project() {
         <DirectWithClaudeModal
           project={{ id: activeProject.id, name: activeProject.name }}
           projectAudio={activeProject.assets.filter(a => a.type === 'audio')}
+          timelines={activeProject.timelines.map(t => ({ id: t.id, name: t.name }))}
           onClose={() => setShowDirector(false)}
           onOpened={(message) => {
-            // Claude's edits land in the Video Editor, which must be mounted to accept them.
+            // Already on the editor (the button switched there); make sure it's still in front.
             setCurrentTab('video-editor')
             flashToast(message)
           }}
