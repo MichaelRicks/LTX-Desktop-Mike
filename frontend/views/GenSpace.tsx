@@ -119,6 +119,21 @@ function canRegenerateAsset(asset: Asset): boolean {
   return !!asset.generationParams && REGENERABLE_MODES.has(asset.generationParams.mode)
 }
 
+// "Lightweight" post-to-X: no API keys/OAuth — opens X's compose page with
+// the prompt pre-filled as a caption and the file on the clipboard (Ctrl+V to
+// attach); Explorer is also revealed afterwards as a drag-and-drop fallback.
+function postAssetToX(asset: Asset) {
+  void window.electronAPI?.openTwitterCompose({ text: asset.prompt, filePath: asset.path })
+}
+
+function XLogo({ className }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 24 24" className={className} fill="currentColor">
+      <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z" />
+    </svg>
+  )
+}
+
 // Asset card with hover overlays
 function AssetCard({
   asset,
@@ -210,13 +225,9 @@ function AssetCard({
     void saveToStudioAssets(asset.path, asset.prompt)
   }
 
-  // "Lightweight" post-to-X: no API keys/OAuth — opens X's compose page with
-  // the prompt pre-filled as a caption, and reveals the file in Explorer so
-  // the user can drag it straight into the compose box to attach it.
   const handlePostToX = (e: React.MouseEvent) => {
     e.stopPropagation()
-    void window.electronAPI?.showItemInFolder({ filePath: asset.path })
-    void window.electronAPI?.openTwitterCompose({ text: asset.prompt })
+    postAssetToX(asset)
   }
 
   return (
@@ -404,17 +415,13 @@ function AssetCard({
           </div>
 
           <div className="flex items-center gap-1.5 shrink-0">
-            {asset.type === 'video' && (
-              <button
-                onClick={handlePostToX}
-                title="Post to X — opens compose with your caption, reveals the file to drag in"
-                className="p-1.5 rounded-lg bg-black/40 backdrop-blur-md text-white hover:bg-black/60 transition-colors"
-              >
-                <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="currentColor">
-                  <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z" />
-                </svg>
-              </button>
-            )}
+            <button
+              onClick={handlePostToX}
+              title="Post to X — opens compose with your caption and copies the file: Ctrl+V to attach"
+              className="p-1.5 rounded-lg bg-black/40 backdrop-blur-md text-white hover:bg-black/60 transition-colors"
+            >
+              <XLogo className="h-3.5 w-3.5" />
+            </button>
             <button
               onClick={handleDownload}
               className="p-1.5 rounded-lg bg-black/40 backdrop-blur-md text-white hover:bg-black/60 transition-colors"
@@ -4771,35 +4778,102 @@ export function GenSpace() {
                 })}
               />
             )}
-            {selectedAsset.type === 'video' && (
-              <div className="mt-3 flex justify-center">
+            {/* Action row — same flows as the thumbnail hover chips, so the user
+                can act on what they're looking at without closing and hunting
+                for the card. Each action closes the lightbox first. */}
+            <div className="mt-3 flex flex-wrap items-center justify-center gap-2">
+              {selectedAsset.type === 'image' && (
+                <>
+                  <button
+                    onClick={() => { const a = selectedAsset; setSelectedAsset(null); handleCreateVideo(a) }}
+                    title="Use this image as the first frame of a new video"
+                    className="px-3 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-sm font-medium flex items-center gap-2 transition-colors"
+                  >
+                    <Film className="h-4 w-4" />
+                    Create video
+                  </button>
+                  <button
+                    onClick={() => { const a = selectedAsset; setSelectedAsset(null); handleEditImage(a) }}
+                    className="px-3 py-2 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-white text-sm font-medium flex items-center gap-2 transition-colors"
+                  >
+                    <Wand2 className="h-4 w-4" />
+                    Edit image
+                  </button>
+                </>
+              )}
+              {canRegenerateAsset(selectedAsset) && (
                 <button
-                  onClick={() => {
-                    const asset = selectedAsset
-                    if (!asset) return
-                    // Grab the currently shown frame. The modal <video> autoplays,
-                    // so it's usually AT the end when clicked — seeking exactly at
-                    // duration decodes no frame (ffmpeg writes nothing), which is
-                    // why this failed. Back off ~one frame from the end, matching
-                    // saveVideoFrame's fix.
-                    const v = enlargedVideoRef.current
-                    let t: number | undefined
-                    if (v) {
-                      const dur = Number.isFinite(v.duration) && v.duration > 0 ? v.duration : 0
-                      t = Number.isFinite(v.currentTime) ? Math.max(0, v.currentTime) : 0
-                      if (dur > 0 && t > dur - 0.05) t = Math.max(0, dur - 0.05)
-                    }
-                    setSelectedAsset(null)
-                    void handleContinue(asset, t)
-                  }}
-                  title="Seed a new clip from the exact frame shown here"
-                  className="px-3 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-sm font-medium flex items-center gap-2 transition-colors"
+                  onClick={() => { const a = selectedAsset; setSelectedAsset(null); handleRegenerate(a) }}
+                  title="Load this generation's image, prompt and settings back into Create"
+                  className="px-3 py-2 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-white text-sm font-medium flex items-center gap-2 transition-colors"
                 >
-                  <Clapperboard className="h-4 w-4" />
-                  Continue from this frame
+                  <RefreshCw className="h-4 w-4" />
+                  Regenerate
                 </button>
-              </div>
-            )}
+              )}
+              {selectedAsset.type === 'video' && (
+                <>
+                  <button
+                    onClick={() => { const a = selectedAsset; setSelectedAsset(null); handleRetake(a) }}
+                    className="px-3 py-2 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-white text-sm font-medium flex items-center gap-2 transition-colors"
+                  >
+                    <Scissors className="h-4 w-4" />
+                    Retake
+                  </button>
+                  <button
+                    onClick={() => { const a = selectedAsset; setSelectedAsset(null); handleExtend(a) }}
+                    className="px-3 py-2 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-white text-sm font-medium flex items-center gap-2 transition-colors"
+                  >
+                    <MoveHorizontal className="h-4 w-4" />
+                    Extend
+                  </button>
+                  {!forceApiGenerations && (
+                    <button
+                      onClick={() => { const a = selectedAsset; setSelectedAsset(null); handleIcLora(a) }}
+                      className="px-3 py-2 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-white text-sm font-medium flex items-center gap-2 transition-colors"
+                    >
+                      <Sparkles className="h-4 w-4" />
+                      IC-LoRA
+                    </button>
+                  )}
+                </>
+              )}
+              <button
+                onClick={() => postAssetToX(selectedAsset)}
+                title="Post to X — opens compose with your caption and copies the file: Ctrl+V to attach"
+                className="px-3 py-2 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-white text-sm font-medium flex items-center gap-2 transition-colors"
+              >
+                <XLogo className="h-4 w-4" />
+                Post to X
+              </button>
+              {selectedAsset.type === 'video' && (
+              <button
+                onClick={() => {
+                  const asset = selectedAsset
+                  if (!asset) return
+                  // Grab the currently shown frame. The modal <video> autoplays,
+                  // so it's usually AT the end when clicked — seeking exactly at
+                  // duration decodes no frame (ffmpeg writes nothing), which is
+                  // why this failed. Back off ~one frame from the end, matching
+                  // saveVideoFrame's fix.
+                  const v = enlargedVideoRef.current
+                  let t: number | undefined
+                  if (v) {
+                    const dur = Number.isFinite(v.duration) && v.duration > 0 ? v.duration : 0
+                    t = Number.isFinite(v.currentTime) ? Math.max(0, v.currentTime) : 0
+                    if (dur > 0 && t > dur - 0.05) t = Math.max(0, dur - 0.05)
+                  }
+                  setSelectedAsset(null)
+                  void handleContinue(asset, t)
+                }}
+                title="Seed a new clip from the exact frame shown here"
+                className="px-3 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-sm font-medium flex items-center gap-2 transition-colors"
+              >
+                <Clapperboard className="h-4 w-4" />
+                Continue from this frame
+              </button>
+              )}
+            </div>
             <div className="mt-4 text-center">
               <div className="inline-flex items-start gap-2 max-w-full">
                 <p className="text-zinc-300 max-h-40 overflow-y-auto whitespace-pre-wrap break-words text-left">{selectedAsset.prompt}</p>

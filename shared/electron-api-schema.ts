@@ -190,7 +190,7 @@ export const electronAPISchemas = {
     output: z.boolean(),
   },
   openTwitterCompose: {
-    input: z.object({ text: z.string().optional() }),
+    input: z.object({ text: z.string().optional(), filePath: z.string().optional() }),
     output: z.boolean(),
   },
   openParentFolderOfFile: {

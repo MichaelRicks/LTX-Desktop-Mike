@@ -1,6 +1,7 @@
 import { dialog } from 'electron'
 import path from 'path'
 import fs from 'fs'
+import { execFile } from 'child_process'
 import { getAllowedRoots } from '../config'
 import { logger } from '../logger'
 import { getMainWindow } from '../window'
@@ -34,6 +35,21 @@ function readLocalFileAsBase64(filePath: string): { data: string; mimeType: stri
   const ext = path.extname(filePath).toLowerCase()
   const mimeType = MIME_TYPES[ext] || 'application/octet-stream'
   return { data: base64, mimeType }
+}
+
+// Electron's clipboard can't write a real CF_HDROP (custom format names get
+// registered as new formats), so let PowerShell's Set-Clipboard do it — that's
+// what Explorer's own Copy produces, and what browsers accept on paste.
+function copyFileToClipboardWin(filePath: string): Promise<void> {
+  const quoted = `'${filePath.replace(/'/g, "''")}'`
+  return new Promise((resolve, reject) => {
+    execFile(
+      'powershell.exe',
+      ['-NoProfile', '-NonInteractive', '-Command', `Set-Clipboard -LiteralPath ${quoted}`],
+      { windowsHide: true, timeout: 10000 },
+      (err) => (err ? reject(err) : resolve()),
+    )
+  })
 }
 
 function searchDirectoryForFilesImpl(dir: string, filenames: string[]): Record<string, string> {
@@ -207,11 +223,29 @@ export function registerFileHandlers(): void {
     return true
   })
 
-  handle('openTwitterCompose', async ({ text }) => {
+  handle('openTwitterCompose', async ({ text, filePath }) => {
     const { shell } = await import('electron')
+    // Put the file on the clipboard (Windows file-drop list) so the user can just
+    // Ctrl+V into the compose box — Windows' focus-stealing guard won't let us
+    // raise Explorer above the browser, so a drag-from-Explorer is a scavenger hunt.
+    let normalizedPath: string | null = null
+    if (filePath) {
+      try {
+        normalizedPath = validatePath(filePath, getAllowedRoots())
+        if (process.platform === 'win32') await copyFileToClipboardWin(normalizedPath)
+      } catch (err) {
+        logger.warn(`openTwitterCompose: could not copy file to clipboard: ${err}`)
+      }
+    }
     const url = new URL('https://twitter.com/intent/tweet')
     if (text) url.searchParams.set('text', text)
     await shell.openExternal(url.toString())
+    // Fallback: still reveal the file for drag-and-drop, AFTER the browser has
+    // opened so it isn't immediately buried under the new browser window.
+    if (normalizedPath) {
+      const revealPath = normalizedPath
+      setTimeout(() => shell.showItemInFolder(revealPath), 1500)
+    }
     return true
   })
 
