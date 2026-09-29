@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
-import { ArrowLeft, Sparkles, Film, Save, Download, Pencil } from 'lucide-react'
+import { ArrowLeft, Sparkles, Film, Save, Download, Pencil, Clapperboard } from 'lucide-react'
+import { DirectWithClaudeModal } from '../components/DirectWithClaudeModal'
 import { useProjects } from '../contexts/ProjectContext'
 import { useView } from '../contexts/ViewContext'
 import { RixLogo } from '../components/RixLogo'
@@ -39,6 +40,7 @@ export function Project() {
   const [toast, setToast] = useState<string | null>(null)
   const [isEditingName, setIsEditingName] = useState(false)
   const [nameDraft, setNameDraft] = useState('')
+  const [showDirector, setShowDirector] = useState(false)
   const flashToast = useCallback((message: string) => {
     setToast(message)
     setTimeout(() => setToast(null), 2200)
@@ -263,6 +265,13 @@ export function Project() {
             pr-20 clears the global Logs/Settings icons fixed at the window's top-right. */}
         <div className="flex-1 flex items-center justify-end gap-2 pr-20">
           <button
+            onClick={() => setShowDirector(true)}
+            title="Have Claude cut a video from your assets (runs in your own Claude app)"
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium text-white bg-[rgb(var(--accent)/0.85)] hover:bg-[rgb(var(--accent))] transition-colors"
+          >
+            <Clapperboard className="h-4 w-4" />Direct with Claude
+          </button>
+          <button
             onClick={handleManualSave}
             title="Save the project now (it also autosaves continuously)"
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium text-zinc-400 hover:text-white hover:bg-zinc-800 transition-colors"
@@ -278,6 +287,19 @@ export function Project() {
           </button>
         </div>
       </header>
+
+      {showDirector && (
+        <DirectWithClaudeModal
+          project={{ id: activeProject.id, name: activeProject.name }}
+          projectAudio={activeProject.assets.filter(a => a.type === 'audio')}
+          onClose={() => setShowDirector(false)}
+          onOpened={(message) => {
+            // Claude's edits land in the Video Editor, which must be mounted to accept them.
+            setCurrentTab('video-editor')
+            flashToast(message)
+          }}
+        />
+      )}
 
       {toast && (
         <div className="absolute top-14 right-4 z-50 px-4 py-2 rounded-lg text-sm bg-zinc-800 border border-zinc-700 text-white shadow-xl">
