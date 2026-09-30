@@ -5,7 +5,7 @@
  *
  * apply_edits is atomic: all ops are folded into ONE setStateWithHistory call, so
  * a whole agent pass is a single Ctrl+Z — and a failing op leaves the timeline
- * untouched.
+ * untouched. The committed batch is then played back visually (mcp-reveal.ts).
  */
 import type { Asset, TextOverlayStyle, TimelineClip, TransitionType } from '../../types/project-model'
 import { DEFAULT_TEXT_STYLE, transitionTypeValues } from '../../types/project-model'
@@ -18,6 +18,7 @@ import { selectActiveTimeline, selectAssets, selectClips, selectSubtitles, selec
 import { resolveOverlaps } from './video-editor-utils'
 import { buildAssetFromPath } from './dropped-media-asset'
 import { buildExportPayload } from './export-payload'
+import { playMcpReveal, type RevealStep } from './mcp-reveal'
 
 type McpEditorEntry = { store: EditorStoreApi; projectId: string; projectName: string }
 
@@ -182,6 +183,18 @@ function describeClip(c: TimelineClip) {
     ...(c.transitionOut?.type && c.transitionOut.type !== 'none' ? { transitionOut: c.transitionOut } : {}),
     ...(c.opacity !== 100 ? { opacity: c.opacity } : {}),
     ...(c.linkedClipIds?.length ? { linkedClipIds: c.linkedClipIds } : {}),
+    // Reported in the same clip-local time the agent writes (video keys are stored in source time).
+    ...(c.reframe ? {
+      reframe: {
+        pos: c.reframe.pos,
+        ...(c.reframe.keys?.length ? {
+          keys: c.reframe.keys.map(k => ({
+            t: round(c.type === 'video' ? (k.t - c.trimStart) / (c.speed || 1) : k.t),
+            pos: k.pos,
+          })),
+        } : {}),
+      },
+    } : {}),
   }
 }
 
@@ -290,6 +303,35 @@ function num(v: unknown, name: string): number | undefined {
   if (v === undefined || v === null) return undefined
   if (typeof v !== 'number' || !Number.isFinite(v)) throw new Error(`"${name}" must be a number`)
   return v
+}
+
+/**
+ * 9:16 pan & scan window (TimelineClip.reframe). The agent writes key times as
+ * seconds from the CLIP's start (natural on a timeline); video clips store keys in
+ * SOURCE seconds so trims don't slide them — convert via in-point and speed.
+ * `time: "source"` passes source seconds through unchanged.
+ */
+function parseReframe(clip: TimelineClip, value: unknown): TimelineClip['reframe'] {
+  if (clip.type !== 'video' && clip.type !== 'image') throw new Error('reframe applies to video and image clips only')
+  if (!value || typeof value !== 'object') throw new Error('"reframe" must be {pos, keys?} or null')
+  const v = value as { pos?: unknown; keys?: unknown; time?: unknown }
+  const clampPos = (p: number) => Math.max(0, Math.min(1, p))
+  const toStored = (t: number) => (clip.type === 'video' && v.time !== 'source' ? clip.trimStart + t * (clip.speed || 1) : t)
+  let keys: Array<{ t: number; pos: number }> | undefined
+  if (v.keys !== undefined) {
+    if (!Array.isArray(v.keys)) throw new Error('reframe.keys must be an array of {t, pos}')
+    keys = v.keys.map((k: { t?: unknown; pos?: unknown }, i: number) => {
+      const t = num(k?.t, `reframe.keys[${i}].t`)
+      const pos = num(k?.pos, `reframe.keys[${i}].pos`)
+      if (t === undefined || pos === undefined) throw new Error(`reframe.keys[${i}] needs numeric t and pos`)
+      if (v.time !== 'source' && (t < -1e-3 || t > clip.duration + 1e-3)) {
+        throw new Error(`reframe.keys[${i}].t=${t} is outside the clip (0–${round(clip.duration)}s from its start)`)
+      }
+      return { t: round(toStored(Math.max(0, t))), pos: clampPos(pos) }
+    }).sort((a, b) => a.t - b.t)
+  }
+  const pos = num(v.pos, 'reframe.pos') ?? keys?.[0]?.pos ?? 0.5
+  return { pos: clampPos(pos), ...(keys && keys.length > 0 ? { keys } : {}) }
 }
 
 function transition(t: { type: TransitionType; duration?: number } | undefined, name: string) {
@@ -460,6 +502,9 @@ async function applyEdits(args: { ops?: EditOp[] } & Record<string, unknown>) {
                   return { t: Math.max(0, t), value: Math.max(0, Math.min(2, value)) }
                 }).sort((a, b) => a.t - b.t)
               }
+              if (set.reframe === null) patch.reframe = undefined
+              // Parse against the PATCHED clip: an in/speed change in the same set moves the source clock.
+              else if (set.reframe !== undefined) patch.reframe = parseReframe({ ...clip, ...patch }, set.reframe)
               if (typeof set.muted === 'boolean') patch.muted = set.muted
               if (typeof set.reversed === 'boolean') patch.reversed = set.reversed
               if (set.color && typeof set.color === 'object') patch.colorCorrection = { ...clip.colorCorrection, ...(set.color as object) }
@@ -472,7 +517,7 @@ async function applyEdits(args: { ops?: EditOp[] } & Record<string, unknown>) {
               }
               const unknown = Object.keys(set).filter(k => ![
                 'start', 'duration', 'in', 'speed', 'volume', 'opacity', 'audio_fade_in', 'audio_fade_out',
-                'text_fade_in', 'text_fade_out', 'muted', 'reversed', 'color', 'text', 'style', 'volume_keyframes',
+                'text_fade_in', 'text_fade_out', 'muted', 'reversed', 'color', 'text', 'style', 'volume_keyframes', 'reframe',
               ].includes(k))
               if (unknown.length) throw new Error(`unknown field(s) in "set": ${unknown.join(', ')}`)
               const next = { ...clip, ...patch }
@@ -604,7 +649,28 @@ async function applyEdits(args: { ops?: EditOp[] } & Record<string, unknown>) {
   if (outcome.failure) throw new Error(`${outcome.failure.message} — no edits were applied.`)
   mcpUndoable.push({ store: entry.store, model: entry.store.getState().state.editorModel })
   mcpRedoable.length = 0
-  return { applied: ops.length, results, timeline: getTimeline() }
+  const timeline = getTimeline()
+  await playMcpReveal(revealSteps(results, selectClips(entry.store.getState().state)), t =>
+    entry.store.getState().setStateWithoutHistory(prev => actions.pause(actions.setCurrentTime(prev, t))))
+  return { applied: ops.length, results, timeline }
+}
+
+/** Batch results → the order the timeline plays them back in (see mcp-reveal). */
+function revealSteps(results: Array<Record<string, unknown>>, finalClips: TimelineClip[]): RevealStep[] {
+  const byId = new Map(finalClips.map(c => [c.id, c]))
+  const steps: RevealStep[] = []
+  for (const r of results) {
+    const id = typeof r.clipId === 'string' ? r.clipId : null
+    const clip = id ? byId.get(id) : undefined
+    if (!clip) continue // deleted later in the batch, or on another timeline
+    if (r.op === 'add_clip' || r.op === 'add_text') {
+      const linked = Array.isArray(r.linked) ? (r.linked as string[]).filter(l => byId.has(l)) : []
+      steps.push({ kind: 'add', clipIds: [clip.id, ...linked], time: clip.type === 'text' ? undefined : clip.startTime + 0.05 })
+    } else if (r.op === 'update_clip' || r.op === 'transition' || r.op === 'duck') {
+      steps.push({ kind: 'touch', clipIds: [clip.id] })
+    }
+  }
+  return steps
 }
 
 // ---------------------------------------------------------------- dispatcher

@@ -50,15 +50,24 @@ const numArg = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v 
 
 let lastPreviewPath: string | null = null
 
+const VERTICAL_PROP = {
+  type: 'boolean',
+  description: '9:16 output through each clip\'s reframe window (pan & scan of 16:9 shots; set per clip via update_clip "reframe"). '
+    + 'Default false = the timeline\'s native shape.',
+}
+
 const PROJECT_ID_PROP = { type: 'string', description: 'editor.project.id from rix_status — guards against editing the wrong project' }
 
-async function renderTimeline(opts: { preview: boolean; width?: number; height?: number; fps?: number; quality?: number; outputPath?: string }) {
-  const { payload, aspect, duration, timelineName } = await callEditor<{
+async function renderTimeline(opts: { preview: boolean; vertical?: boolean; width?: number; height?: number; fps?: number; quality?: number; outputPath?: string }) {
+  const editor = await callEditor<{
     payload: Omit<ExportNativeInput, 'outputPath' | 'codec' | 'width' | 'height' | 'fps' | 'quality'>
     aspect: number
     duration: number
     timelineName: string
   }>('export_payload')
+  const { payload, duration, timelineName } = editor
+  // Vertical = 9:16 through each clip's reframe window (pan & scan of 16:9 sources).
+  const aspect = opts.vertical ? 9 / 16 : editor.aspect
   const even = (n: number) => Math.max(2, Math.round(n / 2) * 2)
   const long = opts.preview ? 640 : 1920
   let width = opts.width ?? (aspect >= 1 ? long : even(long * aspect))
@@ -67,7 +76,10 @@ async function renderTimeline(opts: { preview: boolean; width?: number; height?:
   if (opts.height && !opts.width) width = even(opts.height * aspect)
   const outputPath = opts.outputPath ?? path.join(os.tmpdir(), `rix-mcp-preview-${Date.now()}.mp4`)
   const r = await exportTimelineNative(
-    { ...payload, outputPath, codec: 'h264', width: even(width), height: even(height), fps: opts.fps ?? 24, quality: opts.quality ?? 18 },
+    {
+      ...payload, outputPath, codec: 'h264', width: even(width), height: even(height), fps: opts.fps ?? 24, quality: opts.quality ?? 18,
+      ...(opts.vertical ? { vertical: true } : {}),
+    },
     { preview: opts.preview },
   )
   if (!r.success) throw new Error(`Render failed: ${r.error}`)
@@ -191,7 +203,10 @@ const TOOLS: Tool[] = [
       '  {"op":"add_text","text":"TITLE","start":0,"duration":3,"style":{"fontSize":96,"color":"#FFFFFF","positionX":50,"positionY":50},"fade_in":0.5,"fade_out":0.5}',
       '  {"op":"update_clip","clip":"<clip id | $ref>","set":{"start","duration","in","speed","volume"(0–2),"opacity"(0–100),"audio_fade_in","audio_fade_out",',
       '     "text_fade_in","text_fade_out","muted","reversed","color":{brightness,contrast,saturation,temperature,tint,exposure,highlights,shadows},"text","style",',
-      '     "volume_keyframes":[{"t":clipSeconds,"value":0–2}]}}',
+      '     "volume_keyframes":[{"t":clipSeconds,"value":0–2}],',
+      '     "reframe":{"pos":0–1,"keys":[{"t":clipSeconds,"pos":0–1}]} | null}}  — 9:16 pan & scan window for vertical output:',
+      '     pos slides the window along the free axis (0 = left/top, 1 = right/bottom, 0.5 = centre); keys ease between',
+      '     positions (smoothstep) and hold at the ends; key t = seconds from the CLIP\'s start (converted for you); null clears.',
       '  {"op":"transition","clip":"<id>","in":{"type":"dissolve","duration":0.5},"out":{"type":"fade-to-black","duration":1}}',
       '     types: none, dissolve, fade-to-black, fade-to-white, wipe-left, wipe-right, wipe-up, wipe-down. A dissolve needs out on the left clip AND in on the right clip.',
       '  {"op":"delete","clips":["<id>"]}  (linked audio goes too)   {"op":"clear"}  (empty the active timeline)',
@@ -232,10 +247,11 @@ const TOOLS: Tool[] = [
       properties: {
         times: { type: 'array', items: { type: 'number' }, description: 'Timeline seconds to grab (max 16)' },
         count: { type: 'number', description: 'Evenly spaced frame count when times is omitted (default 8)' },
+        vertical: VERTICAL_PROP,
       },
     },
     run: async (args) => {
-      const render = await renderTimeline({ preview: true })
+      const render = await renderTimeline({ preview: true, vertical: args.vertical === true })
       if (lastPreviewPath && lastPreviewPath !== render.outputPath) { try { fs.unlinkSync(lastPreviewPath) } catch { /* temp */ } }
       lastPreviewPath = render.outputPath
       const times = Array.isArray(args.times) ? args.times.filter((t): t is number => typeof t === 'number') : undefined
@@ -255,6 +271,7 @@ const TOOLS: Tool[] = [
         height: { type: 'number' },
         fps: { type: 'number', description: 'Default 24' },
         quality: { type: 'number', description: 'H.264 CRF, lower = better (default 18)' },
+        vertical: VERTICAL_PROP,
       },
     },
     run: async (args) => {
@@ -266,7 +283,8 @@ const TOOLS: Tool[] = [
         outputPath = path.join(ensureLibFolder('RiX Edits'), `${safe}-${stamp}.mp4`)
       }
       const r = await renderTimeline({
-        preview: false, outputPath, width: numArg(args.width), height: numArg(args.height), fps: numArg(args.fps), quality: numArg(args.quality),
+        preview: false, vertical: args.vertical === true, outputPath,
+        width: numArg(args.width), height: numArg(args.height), fps: numArg(args.fps), quality: numArg(args.quality),
       })
       return text({ exported: r.outputPath, duration: r.duration, size: `${r.width}x${r.height}`, media: probeMedia(r.outputPath) })
     },

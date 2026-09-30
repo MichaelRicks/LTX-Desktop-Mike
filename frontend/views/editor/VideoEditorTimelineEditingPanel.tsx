@@ -81,6 +81,7 @@ import {
 } from './editor-selectors'
 import { useTimelineDrag } from './useTimelineDrag'
 import { useEditorActions, useEditorStore } from './editor-store'
+import { skipMcpReveal, useMcpReveal } from './mcp-reveal'
 
 // Custom scissors cursor SVG for the blade tool (white with dark outline for contrast)
 const SCISSORS_CURSOR_SVG = `<svg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><circle cx='6' cy='6' r='3'/><path d='M8.12 8.12 12 12'/><path d='M20 4 8.12 15.88'/><circle cx='6' cy='18' r='3'/><path d='M14.8 14.8 20 20'/></svg>`
@@ -1077,6 +1078,18 @@ export function VideoEditorTimelineEditingPanel(props: VideoEditorTimelineEditin
 
   const timelineRef = useRef<HTMLDivElement>(null)
   const trackContainerRef = useRef<HTMLDivElement>(null)
+  // Claude's edits drop in one at a time; keep the clip being revealed in view.
+  const mcpReveal = useMcpReveal()
+  useEffect(() => {
+    const container = trackContainerRef.current
+    const id = mcpReveal.focus.values().next().value
+    const el = id && container?.querySelector<HTMLElement>(`[data-clip-id="${CSS.escape(id)}"]`)
+    if (!container || !el) return
+    const left = el.offsetLeft, right = left + el.offsetWidth
+    if (left < container.scrollLeft || right > container.scrollLeft + container.clientWidth) {
+      container.scrollTo({ left: Math.max(0, left - container.clientWidth * 0.25), behavior: 'smooth' })
+    }
+  }, [mcpReveal.focus])
   const trackHeadersRef = useRef<HTMLDivElement>(null)
   const rulerScrollRef = useRef<HTMLDivElement>(null)
   const playheadRulerRef = useRef<HTMLDivElement>(null)
@@ -2283,6 +2296,13 @@ export function VideoEditorTimelineEditingPanel(props: VideoEditorTimelineEditin
               
               {/* Scrollable track content area */}
               <div className="flex-1 flex flex-col min-w-0 relative overflow-hidden">
+                {mcpReveal.total > 0 && (
+                  <div className="absolute top-1 right-2 z-40 flex items-center gap-2 h-5 pl-2 pr-1 rounded-full bg-zinc-900/90 border border-[rgb(var(--accent))]/60 text-[10px] text-zinc-200 shadow-lg">
+                    <span className="h-1.5 w-1.5 rounded-full bg-[rgb(var(--accent))] animate-pulse" />
+                    Claude is editing · {mcpReveal.step}/{mcpReveal.total}
+                    <button onClick={skipMcpReveal} className="px-1.5 rounded-full text-zinc-400 hover:text-white hover:bg-zinc-700">Skip</button>
+                  </div>
+                )}
                 {/* Full-height playhead line — spans spacer + tracks, positioned on the wrapper */}
                 <div
                   ref={playheadOverlayRef}
@@ -2532,8 +2552,10 @@ export function VideoEditorTimelineEditingPanel(props: VideoEditorTimelineEditin
                       } ${activeTool === 'slide' ? 'cursor-col-resize' : ''} ${
                         draggingClip?.clipId === clip.id || (draggingClip && selectedClipIds.has(clip.id)) ? 'opacity-80 cursor-grabbing z-30' : ''
                       } ${slipSlideClip?.clipId === clip.id ? 'opacity-90 ring-2 ring-yellow-500/50 z-30' : ''
+                      } ${mcpReveal.focus.has(clip.id) ? (mcpReveal.focusKind === 'add' ? 'mcp-clip-drop' : 'mcp-clip-flash') : ''
                       }`}
                       style={{
+                        ...(mcpReveal.hidden.has(clip.id) ? { visibility: 'hidden' as const, pointerEvents: 'none' as const } : {}),
                         left: `${clip.startTime * pixelsPerSecond}px`,
                         width: `${clip.duration * pixelsPerSecond}px`,
                         top: `${trackTopPx(clip.trackIndex, 4)}px`,
@@ -2570,11 +2592,20 @@ export function VideoEditorTimelineEditingPanel(props: VideoEditorTimelineEditin
                       {/* 9:16 reframe keyframes (cyan). Keys live on SOURCE time for video
                           (clip-local for images), so map through trim/speed to place them.
                           Drag to slide in time; click to park the playhead on the key — the
-                          program monitor's 9:16 frame then edits that key directly. */}
+                          program monitor's 9:16 frame then edits that key directly.
+                          Double-click (or Alt+click) deletes a key, like the volume dots. */}
                       {(clip.type === 'video' || clip.type === 'image') && clip.reframe?.keys && clip.reframe.keys.length > 0 && (() => {
                         const speed = clip.speed || 1
                         const toLocal = (t: number) => (clip.type === 'video' ? (t - clip.trimStart) / speed : t)
                         const toKeyTime = (local: number) => (clip.type === 'video' ? clip.trimStart + local * speed : local)
+                        // Removing the last key keeps the window where that key had it (as the
+                        // monitor's delete-key button does) instead of snapping back to centre.
+                        const deleteKey = (i: number) => setClips(prev => prev.map(c => {
+                          if (c.id !== clip.id || !c.reframe?.keys) return c
+                          const removed = c.reframe.keys[i]
+                          const rest = c.reframe.keys.filter((_, j) => j !== i)
+                          return { ...c, reframe: rest.length ? { ...c.reframe, keys: rest } : { pos: removed?.pos ?? c.reframe.pos } }
+                        }))
                         return (
                           <div className="absolute inset-x-0 top-0 h-3 z-20 pointer-events-none">
                             {clip.reframe.keys.map((k, i) => {
@@ -2585,11 +2616,13 @@ export function VideoEditorTimelineEditingPanel(props: VideoEditorTimelineEditin
                                   key={`rkf-${i}`}
                                   className="absolute top-0.5 -translate-x-1/2 text-cyan-300 hover:text-cyan-100 hover:scale-125 transition-transform pointer-events-auto cursor-ew-resize"
                                   style={{ left: `${Math.max(0, Math.min(1, local / Math.max(1e-6, clip.duration))) * 100}%` }}
-                                  title={`9:16 frame keyframe at ${local.toFixed(2)}s — drag to move, click to edit`}
+                                  title={`9:16 frame keyframe at ${local.toFixed(2)}s — drag to move, click to edit, double-click to delete`}
                                   onClick={(e) => e.stopPropagation()}
+                                  onDoubleClick={(e) => { e.stopPropagation(); e.preventDefault(); deleteKey(i) }}
                                   onMouseDown={(e) => {
                                     e.stopPropagation()
                                     e.preventDefault()
+                                    if (e.altKey) { deleteKey(i); return }
                                     const rect = (e.currentTarget.closest('[data-clip-id]') as HTMLElement | null)?.getBoundingClientRect()
                                     if (!rect) return
                                     const startX = e.clientX
@@ -2630,7 +2663,8 @@ export function VideoEditorTimelineEditingPanel(props: VideoEditorTimelineEditin
                       })()}
                       {/* Text opacity keyframes. Drag a diamond to slide the key in time
                           (the playhead follows so the preview shows it); click one to park
-                          the playhead on it and open the clip's properties to adjust it. */}
+                          the playhead on it and open the clip's properties to adjust it.
+                          Double-click (or Alt+click) deletes a key. */}
                       {clip.type === 'text' && clip.opacityKeyframes && clip.opacityKeyframes.length > 0 && (
                         <div className="absolute inset-x-0 bottom-0 h-3 z-20 pointer-events-none">
                           {clip.opacityKeyframes.map((k, i) => (
@@ -2638,11 +2672,27 @@ export function VideoEditorTimelineEditingPanel(props: VideoEditorTimelineEditin
                               key={`okf-${i}`}
                               className="absolute bottom-0.5 -translate-x-1/2 text-amber-300 hover:text-amber-100 hover:scale-125 transition-transform pointer-events-auto cursor-ew-resize"
                               style={{ left: `${Math.max(0, Math.min(1, k.t / Math.max(1e-6, clip.duration))) * 100}%` }}
-                              title={`Opacity ${Math.round(k.value)}% at ${k.t.toFixed(2)}s — drag to move, click to edit`}
+                              title={`Opacity ${Math.round(k.value)}% at ${k.t.toFixed(2)}s — drag to move, click to edit, double-click to delete`}
                               onClick={(e) => e.stopPropagation()}
+                              onDoubleClick={(e) => {
+                                e.stopPropagation(); e.preventDefault()
+                                setClips(prev => prev.map(c => {
+                                  if (c.id !== clip.id || !c.opacityKeyframes) return c
+                                  const rest = c.opacityKeyframes.filter((_, j) => j !== i)
+                                  return { ...c, opacityKeyframes: rest.length ? rest : undefined }
+                                }))
+                              }}
                               onMouseDown={(e) => {
                                 e.stopPropagation()
                                 e.preventDefault()
+                                if (e.altKey) {
+                                  setClips(prev => prev.map(c => {
+                                    if (c.id !== clip.id || !c.opacityKeyframes) return c
+                                    const rest = c.opacityKeyframes.filter((_, j) => j !== i)
+                                    return { ...c, opacityKeyframes: rest.length ? rest : undefined }
+                                  }))
+                                  return
+                                }
                                 const rect = (e.currentTarget.closest('[data-clip-id]') as HTMLElement | null)?.getBoundingClientRect()
                                 if (!rect) return
                                 const startX = e.clientX

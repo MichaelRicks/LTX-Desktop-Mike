@@ -9,6 +9,7 @@ import { Tooltip } from '../../components/ui/tooltip'
 import { AudioWaveform } from '../../components/AudioWaveform'
 import { pathToFileUrl } from '../../lib/file-url'
 import { VerticalReframeOverlay } from './VerticalReframeOverlay'
+import { VerticalFrameGuides } from '../../components/ReframeEditor'
 import { TextOverlayBox } from './TextOverlayBox'
 import { getOpacityPreview } from './text-opacity-preview'
 import { DEFAULT_SUBTITLE_STYLE } from '../../types/project-model'
@@ -514,13 +515,15 @@ export const ProgramMonitor = React.forwardRef<ProgramMonitorHandle, ProgramMoni
   const [playbackResOpen, setPlaybackResOpen] = React.useState(false)
   const [playbackResolution, setPlaybackResolution] = React.useState<1 | 0.5 | 0.25>(0.5)
   // "Protect for 9:16" guide: a centered vertical frame (sides dimmed) with
-  // optional thirds grid + social-app UI zones. Persisted per machine.
-  const [verticalGuide, setVerticalGuide] = React.useState<{ frame: boolean; grid: boolean; safe: boolean }>(() => {
+  // optional thirds grid + social-app UI zones, plus an independent thirds grid
+  // over the full frame. Persisted per machine.
+  const [verticalGuide, setVerticalGuide] = React.useState<{ frame: boolean; grid: boolean; safe: boolean; fullGrid: boolean }>(() => {
+    const defaults = { frame: false, grid: true, safe: false, fullGrid: false }
     try {
       const raw = localStorage.getItem('editor.verticalGuide')
-      if (raw) return { frame: false, grid: true, safe: false, ...JSON.parse(raw) }
+      if (raw) return { ...defaults, ...JSON.parse(raw) }
     } catch { /* storage unavailable */ }
-    return { frame: false, grid: true, safe: false }
+    return defaults
   })
   const [verticalGuideOpen, setVerticalGuideOpen] = React.useState(false)
   React.useEffect(() => {
@@ -1589,6 +1592,11 @@ export const ProgramMonitor = React.forwardRef<ProgramMonitorHandle, ProgramMoni
 
               {/* 9:16 guide + per-clip reframe window. The overlay itself is preview
                   only; a 9:16 export crops each clip to the window set here. */}
+              {verticalGuide.fullGrid && videoFrameSize.width > 0 && (
+                <div className="absolute inset-0 z-[19] pointer-events-none">
+                  <VerticalFrameGuides showGrid showSafe={false} />
+                </div>
+              )}
               {verticalGuide.frame && videoFrameSize.width > 0 && (() => {
                 const src = activeClip
                   ? assets.find(a => a.id === activeClip.assetId) ?? activeClip.asset
@@ -1939,11 +1947,11 @@ export const ProgramMonitor = React.forwardRef<ProgramMonitorHandle, ProgramMoni
             <button
               onClick={(e) => { e.stopPropagation(); setVerticalGuideOpen(prev => !prev) }}
               className={`h-6 px-2 rounded text-[11px] font-medium flex items-center gap-1 transition-colors border ${
-                verticalGuide.frame
+                verticalGuide.frame || verticalGuide.fullGrid
                   ? 'bg-zinc-900 text-[rgb(var(--accent))] border-[rgb(var(--accent))]/60'
                   : 'bg-zinc-900 text-zinc-400 border-zinc-700 hover:border-zinc-600'
               }`}
-              title="9:16 vertical guide — check the cut is safe for a portrait crop"
+              title="Framing guides — full-frame thirds grid, or a 9:16 frame to check the cut is safe for a portrait crop"
             >
               <Smartphone className="h-3 w-3" />
               9:16
@@ -1951,26 +1959,28 @@ export const ProgramMonitor = React.forwardRef<ProgramMonitorHandle, ProgramMoni
             </button>
             {verticalGuideOpen && (
               <div
-                className="absolute bottom-full right-0 mb-1 bg-zinc-900 border border-zinc-700 rounded-lg shadow-2xl py-1 min-w-[160px] z-50"
+                className="absolute bottom-full right-0 mb-1 bg-zinc-900 border border-zinc-700 rounded-lg shadow-2xl py-1 min-w-[180px] z-50"
                 onClick={(e) => e.stopPropagation()}
               >
                 {([
+                  { key: 'fullGrid', label: 'Thirds grid (full frame)' },
                   { key: 'frame', label: 'Show 9:16 frame' },
-                  { key: 'grid', label: 'Thirds grid' },
+                  { key: 'grid', label: 'Thirds grid in 9:16' },
                   { key: 'safe', label: 'Social UI safe zones' },
                 ] as const).map(opt => {
                   const on = verticalGuide[opt.key]
-                  const disabled = opt.key !== 'frame' && !verticalGuide.frame
+                  const disabled = (opt.key === 'grid' || opt.key === 'safe') && !verticalGuide.frame
                   return (
                     <button
                       key={opt.key}
+                      title={disabled ? 'Turn on the 9:16 frame first' : undefined}
                       disabled={disabled}
                       onClick={() => setVerticalGuide(g => ({ ...g, [opt.key]: !g[opt.key] }))}
                       className={`w-full text-left px-3 py-1.5 text-[11px] flex items-center gap-2 transition-colors ${
                         disabled ? 'text-zinc-600 cursor-default' : on ? 'text-blue-300 hover:bg-zinc-800' : 'text-zinc-300 hover:bg-zinc-800'
                       }`}
                     >
-                      <span className="w-3 text-blue-400">{on ? '✓' : ''}</span>
+                      <span className="w-3 text-blue-400">{on && !disabled ? '✓' : ''}</span>
                       {opt.label}
                     </button>
                   )
