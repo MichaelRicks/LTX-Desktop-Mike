@@ -6,7 +6,7 @@ import { findFont } from '../../shared/font-catalog'
 import { getMainWindow } from '../window'
 import { logger } from '../logger'
 import { validatePath } from '../path-validation'
-import { findFfmpegPath, runFfmpeg, stopExportProcess } from './ffmpeg-utils'
+import { findFfmpegPath, getVideoDimensions, runFfmpeg, stopExportProcess } from './ffmpeg-utils'
 import { buildDissolveTimeRemap, computeFinalVideoDuration, flattenTimeline } from './timeline'
 import { buildVideoFilterGraph } from './video-filter'
 import { mixAudioToPcm } from './audio-mix'
@@ -92,6 +92,20 @@ export async function exportTimelineNative(
 
   const segments = flattenTimeline(clips)
   if (segments.length === 0) return { success: false, error: 'No clips to export' }
+
+  // 9:16: titles are placed relative to each shot's 9:16 window, which depends on
+  // the shot's own shape (how it letterboxes in the 16:9 preview) — probe it.
+  if (vertical) {
+    const dims = new Map<string, { width: number; height: number } | null>()
+    for (const seg of segments) {
+      if (!seg.filePath) continue
+      if (!dims.has(seg.filePath)) {
+        try { dims.set(seg.filePath, getVideoDimensions(seg.filePath)) } catch { dims.set(seg.filePath, null) }
+      }
+      const d = dims.get(seg.filePath)
+      if (d && d.width > 0 && d.height > 0) { seg.srcWidth = d.width; seg.srcHeight = d.height }
+    }
+  }
 
   for (const seg of segments) {
     if (seg.filePath && !fs.existsSync(seg.filePath)) {

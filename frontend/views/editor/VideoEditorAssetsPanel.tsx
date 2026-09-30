@@ -9,6 +9,13 @@ import {
 import { shallow } from 'zustand/vanilla/shallow'
 import { createAssetBinId, type Asset } from '../../types/project-model'
 import { VideoThumbnailCard } from './VideoThumbnailCard'
+
+/** Thumbnail shape for an asset: its real aspect (clamped so extreme panoramas or
+ *  strips stay usable), 16:9 when the size isn't known. */
+function assetThumbRatio(asset: { width?: number; height?: number }): number {
+  if (!asset.width || !asset.height) return 16 / 9
+  return Math.max(0.5, Math.min(2.4, asset.width / asset.height))
+}
 import { getColorLabel } from './video-editor-utils'
 import { Tooltip } from '../../components/ui/tooltip'
 import { AssetContextMenu } from './AssetContextMenu'
@@ -780,15 +787,18 @@ export const VideoEditorAssetsPanel = forwardRef<VideoEditorAssetsPanelHandle, V
               </button>
             </div>
           ) : assetViewMode === 'grid' ? (
-            <div className="grid grid-cols-2 gap-2">
+            <div className="columns-2 gap-2">
+              {/* Two-column masonry: each card takes its asset's real shape, so 9:16
+                  shots show whole instead of cropped into a 16:9 box. */}
               {filteredAssets.map(asset => {
                 const cl = getColorLabel(asset.colorLabel)
+                const ratio = assetThumbRatio(asset)
                 return (
                   <div
                     key={asset.id}
                     data-asset-card
                     data-asset-id={asset.id}
-                    className={`relative group cursor-pointer rounded-lg overflow-hidden border-2 transition-all ${
+                    className={`relative group cursor-pointer rounded-lg overflow-hidden border-2 transition-all break-inside-avoid mb-2 ${
                       asset.id === sourceAssetId
                         ? 'border-emerald-400 ring-2 ring-emerald-400/50 shadow-lg shadow-emerald-500/20'
                         : selectedAssetIds.has(asset.id)
@@ -854,6 +864,7 @@ export const VideoEditorAssetsPanel = forwardRef<VideoEditorAssetsPanelHandle, V
                       <VideoThumbnailCard
                         videoUrl={pathToFileUrl(asset.path)}
                         thumbnailUrl={asset.smallThumbnailPath ? pathToFileUrl(asset.smallThumbnailPath) : undefined}
+                        aspectRatio={ratio}
                       />
                     ) : asset.type === 'audio' ? (
                       <div className="w-full aspect-video bg-gradient-to-br from-emerald-900/60 to-zinc-900 flex flex-col items-center justify-center gap-1.5">
@@ -878,9 +889,9 @@ export const VideoEditorAssetsPanel = forwardRef<VideoEditorAssetsPanelHandle, V
                       </div>
                     ) : (
                       asset.smallThumbnailPath ? (
-                        <img src={pathToFileUrl(asset.smallThumbnailPath)} alt="" className="w-full aspect-video object-cover" />
+                        <img src={pathToFileUrl(asset.smallThumbnailPath)} alt="" className="w-full object-cover" style={{ aspectRatio: ratio }} />
                       ) : (
-                        <div className="w-full aspect-video bg-zinc-800" />
+                        <div className="w-full bg-zinc-800" style={{ aspectRatio: ratio }} />
                       )
                     )}
                     {usedAssetIds.has(asset.id) && (

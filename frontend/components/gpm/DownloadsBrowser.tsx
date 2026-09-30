@@ -294,11 +294,12 @@ function Dock({ onClose }: { onClose: () => void }) {
                   {folderFiles.length === 0
                     ? <p className="text-[11px] text-center py-6" style={{ color: C.faint }}>{files.filter((x) => x.folder === f).length === 0 ? 'Empty. Add files or drag media here.' : 'No files match this filter.'}</p>
                     : (
-                      <div className="grid grid-cols-2 gap-2">
+                      <div className="columns-2 gap-2">
                         {folderFiles.map((file) => (
                           <MediaThumb
                             key={file.path} src={pathToFileUrl(file.path)} isVideo={file.isVideo} isAudio={file.isAudio} name={file.name}
-                            className="rounded-md" style={{ border: `1px solid ${C.border}` }}
+                            naturalAspect
+                            className="rounded-md break-inside-avoid mb-2" style={{ border: `1px solid ${C.border}` }}
                             draggable
                             onDragStart={(e) => { e.dataTransfer.setData(FILE_DND, JSON.stringify(file)); e.dataTransfer.effectAllowed = 'copyMove' }}
                           >

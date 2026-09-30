@@ -278,6 +278,74 @@ function buildReframeCrop(seg: FlatSegment, timeOffset: number): string {
 }
 
 /**
+ * Where a shot's 9:16 window sits in the 16:9 preview frame, as fractions of the
+ * frame (mirrors VerticalReframeOverlay: media object-contained in the frame,
+ * window = the largest 9:16 box in the media, slid by `pos`). `posExpr` is an
+ * ffmpeg expression over PROGRAM time `t`.
+ */
+function verticalWindow(seg: FlatSegment): {
+  winW: number; winH: number; winXExpr: string; winYExpr: string
+} {
+  const FR = 16 / 9
+  const R = seg.srcWidth && seg.srcHeight ? seg.srcWidth / seg.srcHeight : FR
+  const mw = R > FR ? 1 : R / FR
+  const mh = R > FR ? FR / R : 1
+  const offX = (1 - mw) / 2
+  const offY = (1 - mh) / 2
+  const horizontal = R >= 9 / 16
+  const winW = horizontal ? mh * (9 / 16) / FR : mw
+  const winH = horizontal ? mh : mw * FR * FR
+  const slack = Math.max(0, horizontal ? mw - winW : mh - winH)
+  // Same position curve as buildReframeCrop, re-timed from segment to program time.
+  const rf = seg.reframe
+  const clamp01 = (v: number) => Math.max(0, Math.min(1, v))
+  let posExpr: string
+  if (seg.type !== 'gap' && rf?.keys && rf.keys.length > 1 && !seg.reversed) {
+    const local = `(t-${seg.startTime.toFixed(6)})`
+    const clock = seg.type === 'video'
+      ? `(${local}*${(seg.speed || 1).toFixed(6)}+${seg.trimStart.toFixed(6)})`
+      : `(${local}+${seg.offsetInClip.toFixed(6)})`
+    posExpr = keyframeExpr(rf.keys.map(k => ({ t: k.t, v: clamp01(k.pos) })), clock)
+  } else {
+    posExpr = clamp01(rf?.keys?.length ? rf.keys[0].pos : rf?.pos ?? 0.5).toFixed(4)
+  }
+  const n = (v: number) => v.toFixed(6)
+  return {
+    winW,
+    winH,
+    winXExpr: horizontal ? `(${n(offX)}+(${posExpr})*${n(slack)})` : n(offX),
+    winYExpr: horizontal ? n(offY) : `(${n(offY)}+(${posExpr})*${n(slack)})`,
+  }
+}
+
+/**
+ * 9:16 title placement: the title keeps its spot on the 16:9 frame (what the
+ * preview shows under the 9:16 guide), so in the output its center is where that
+ * spot lands inside each shot's window — a program-time expression that switches
+ * window per shot and follows keyframed pans. Size scales with the window.
+ */
+function verticalTextMap(segments: FlatSegment[], start: number, end: number, outW: number, outH: number) {
+  const overlapping = segments.filter(s => s.startTime < end - 1e-4 && s.startTime + s.duration > start + 1e-4)
+  const wins = (overlapping.length ? overlapping : segments.slice(0, 1)).map(s => ({ s, w: verticalWindow(s) }))
+  // Title size is fixed per drawtext: take the window it opens in.
+  const scale = outH / (1080 * wins[0].w.winH)
+  const piecewise = (pick: (w: ReturnType<typeof verticalWindow>) => string) => {
+    let expr = pick(wins[wins.length - 1].w)
+    for (let i = wins.length - 2; i >= 0; i--) {
+      const boundary = wins[i + 1].s.startTime
+      expr = `if(lt(t,${boundary.toFixed(6)}),${pick(wins[i].w)},${expr})`
+    }
+    return expr
+  }
+  return {
+    scale,
+    /** Output-pixel center X/Y for a title at frame fraction (px, py). Unescaped commas. */
+    centerX: (px: number) => piecewise(w => `(${outW}*((${px.toFixed(6)}-${w.winXExpr})/${w.winW.toFixed(6)}))`),
+    centerY: (py: number) => piecewise(w => `(${outH}*((${py.toFixed(6)}-${w.winYExpr})/${w.winH.toFixed(6)}))`),
+  }
+}
+
+/**
  * Build the ffmpeg filter_complex script and input arguments for the video-only pass.
  * Pure string building — zero I/O.
  */
@@ -295,9 +363,11 @@ export function buildVideoFilterGraph(
   },
 ): { inputs: string[]; filterScript: string } {
   const { width, height, fps, letterbox, subtitles, textOverlays, fontFile, resolveFontFile, vertical } = opts
-  // Text sizes are authored against a 1080-line frame; key off the SHORT side so
-  // a 1080×1920 vertical export sizes text like 1920×1080 instead of 1.78× bigger.
-  const textScale = Math.min(width, height) / 1080
+  // Text sizes are authored against a 1080-line 16:9 frame. A 16:9 export scales
+  // by its height. A 9:16 export instead maps each title through the shot's 9:16
+  // window (see verticalTextMap) — the picture is blown up to fill it, so the
+  // title must scale with it or it renders ~1.8× too small.
+  const textScale = height / 1080
   const inputs: string[] = []
   const filterParts: string[] = []
   let idx = 0
@@ -446,11 +516,13 @@ export function buildVideoFilterGraph(
   // a non-uniform stretch draws the text on a transparent full-frame layer, scales
   // that layer, and overlays it centered on the text's anchor point.
   if (textOverlays && textOverlays.length > 0) {
-    const hf = textScale // scale style px (authored against 1080p) to export size
     for (let ti = 0; ti < textOverlays.length; ti++) {
       const ov = textOverlays[ti]
       const s = ov.style
       const nextLabel = `txt${ti}`
+      // 9:16: place and size through the shot's window; else plain frame fractions.
+      const vmap = vertical ? verticalTextMap(segments, ov.startTime, ov.endTime, width, height) : null
+      const hf = vmap ? vmap.scale : textScale // style px (authored against 1080p) → export px
       const keyed = Boolean(ov.opacityKeyframes && ov.opacityKeyframes.length > 0)
       const sx = s.scaleX && s.scaleX > 0 ? s.scaleX : 1
       const sy = s.scaleY && s.scaleY > 0 ? s.scaleY : 1
@@ -474,8 +546,12 @@ export function buildVideoFilterGraph(
       parts.push(`fontsize=${fontSize}`)
       parts.push(`fontcolor=${fontColor}`)
       // Stretched: centered on its own layer (placed by the overlay below).
-      parts.push(stretched ? 'x=(w-text_w)/2' : `x=(w*${px.toFixed(4)})-(text_w/2)`)
-      parts.push(stretched ? 'y=(h-text_h)/2' : `y=(h*${py.toFixed(4)})-(text_h/2)`)
+      // Vertical: a program-time expression (commas escaped for drawtext).
+      const escC = (e: string) => e.replace(/,/g, '\\,')
+      parts.push(stretched ? 'x=(w-text_w)/2'
+        : vmap ? `x='${escC(vmap.centerX(px))}-text_w/2'` : `x=(w*${px.toFixed(4)})-(text_w/2)`)
+      parts.push(stretched ? 'y=(h-text_h)/2'
+        : vmap ? `y='${escC(vmap.centerY(py))}-text_h/2'` : `y=(h*${py.toFixed(4)})-(text_h/2)`)
 
       if ((s.strokeWidth ?? 0) > 0) {
         const strokeColor = cssColorToFfmpeg(s.strokeColor, gA)
@@ -569,7 +645,9 @@ export function buildVideoFilterGraph(
           `scale=w='trunc(iw*${sx.toFixed(4)})':h='trunc(ih*${sy.toFixed(4)})'[${layer}]`,
         )
         filterParts.push(
-          `[${lastLabel}][${layer}]overlay=x='W*${px.toFixed(4)}-w/2':y='H*${py.toFixed(4)}-h/2':eof_action=pass:format=auto[${nextLabel}]`,
+          vmap
+            ? `[${lastLabel}][${layer}]overlay=x='${escC(vmap.centerX(px))}-w/2':y='${escC(vmap.centerY(py))}-h/2':eof_action=pass:format=auto[${nextLabel}]`
+            : `[${lastLabel}][${layer}]overlay=x='W*${px.toFixed(4)}-w/2':y='H*${py.toFixed(4)}-h/2':eof_action=pass:format=auto[${nextLabel}]`,
         )
       } else {
         filterParts.push(`[${lastLabel}]drawtext=${parts.join(':')}[${nextLabel}]`)

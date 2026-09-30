@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react'
 
-export function VideoThumbnailCard({ videoUrl, thumbnailUrl }: { videoUrl: string; thumbnailUrl?: string }) {
+export function VideoThumbnailCard({ videoUrl, thumbnailUrl, aspectRatio }: { videoUrl: string; thumbnailUrl?: string; aspectRatio?: number }) {
   const containerRef = useRef<HTMLDivElement>(null)
   const videoRef = useRef<HTMLVideoElement | null>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
@@ -87,7 +87,8 @@ export function VideoThumbnailCard({ videoUrl, thumbnailUrl }: { videoUrl: strin
   return (
     <div
       ref={containerRef}
-      className="w-full aspect-video relative overflow-hidden bg-zinc-900"
+      className={`w-full relative overflow-hidden bg-zinc-900 ${aspectRatio ? '' : 'aspect-video'}`}
+      style={aspectRatio ? { aspectRatio } : undefined}
       onMouseEnter={handleMouseEnter}
       onMouseLeave={handleMouseLeave}
       onMouseMove={isHovering ? handleMouseMove : undefined}

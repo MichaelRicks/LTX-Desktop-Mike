@@ -2567,6 +2567,67 @@ export function VideoEditorTimelineEditingPanel(props: VideoEditorTimelineEditin
                       onContextMenu={(e) => handleClipContextMenu(e, clip)}
                       /* EFFECTS HIDDEN - drag-drop for effects hidden because effects are not applied during export */
                     >
+                      {/* 9:16 reframe keyframes (cyan). Keys live on SOURCE time for video
+                          (clip-local for images), so map through trim/speed to place them.
+                          Drag to slide in time; click to park the playhead on the key — the
+                          program monitor's 9:16 frame then edits that key directly. */}
+                      {(clip.type === 'video' || clip.type === 'image') && clip.reframe?.keys && clip.reframe.keys.length > 0 && (() => {
+                        const speed = clip.speed || 1
+                        const toLocal = (t: number) => (clip.type === 'video' ? (t - clip.trimStart) / speed : t)
+                        const toKeyTime = (local: number) => (clip.type === 'video' ? clip.trimStart + local * speed : local)
+                        return (
+                          <div className="absolute inset-x-0 top-0 h-3 z-20 pointer-events-none">
+                            {clip.reframe.keys.map((k, i) => {
+                              const local = toLocal(k.t)
+                              if (local < -1e-3 || local > clip.duration + 1e-3) return null // trimmed away
+                              return (
+                                <button
+                                  key={`rkf-${i}`}
+                                  className="absolute top-0.5 -translate-x-1/2 text-cyan-300 hover:text-cyan-100 hover:scale-125 transition-transform pointer-events-auto cursor-ew-resize"
+                                  style={{ left: `${Math.max(0, Math.min(1, local / Math.max(1e-6, clip.duration))) * 100}%` }}
+                                  title={`9:16 frame keyframe at ${local.toFixed(2)}s — drag to move, click to edit`}
+                                  onClick={(e) => e.stopPropagation()}
+                                  onMouseDown={(e) => {
+                                    e.stopPropagation()
+                                    e.preventDefault()
+                                    const rect = (e.currentTarget.closest('[data-clip-id]') as HTMLElement | null)?.getBoundingClientRect()
+                                    if (!rect) return
+                                    const startX = e.clientX
+                                    let dragged = false
+                                    const onMove = (ev: MouseEvent) => {
+                                      if (!dragged && Math.abs(ev.clientX - startX) < 3) return
+                                      dragged = true
+                                      const localNew = Math.max(0, Math.min(clip.duration, ((ev.clientX - rect.left) / rect.width) * clip.duration))
+                                      setClips(prev => prev.map(c => c.id === clip.id && c.reframe?.keys
+                                        ? { ...c, reframe: { ...c.reframe, keys: c.reframe.keys.map((kk, j) => (j === i ? { ...kk, t: +toKeyTime(localNew).toFixed(3) } : kk)) } }
+                                        : c))
+                                      setCurrentTime(clip.startTime + localNew)
+                                    }
+                                    const onUp = () => {
+                                      document.removeEventListener('mousemove', onMove)
+                                      document.removeEventListener('mouseup', onUp)
+                                      document.body.style.cursor = ''
+                                      if (dragged) {
+                                        setClips(prev => prev.map(c => c.id === clip.id && c.reframe?.keys
+                                          ? { ...c, reframe: { ...c.reframe, keys: [...c.reframe.keys].sort((a, b) => a.t - b.t) } }
+                                          : c))
+                                      } else {
+                                        setSelectedClipIds(expandWithLinkedClips(new Set([clip.id])))
+                                        setCurrentTime(clip.startTime + local)
+                                      }
+                                    }
+                                    document.addEventListener('mousemove', onMove)
+                                    document.addEventListener('mouseup', onUp)
+                                    document.body.style.cursor = 'ew-resize'
+                                  }}
+                                >
+                                  <Diamond className="h-2.5 w-2.5 fill-current" />
+                                </button>
+                              )
+                            })}
+                          </div>
+                        )
+                      })()}
                       {/* Text opacity keyframes. Drag a diamond to slide the key in time
                           (the playhead follows so the preview shows it); click one to park
                           the playhead on it and open the clip's properties to adjust it. */}

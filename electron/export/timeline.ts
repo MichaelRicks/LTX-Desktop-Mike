@@ -27,6 +27,8 @@ export interface FlatSegment {
   speed: number; reversed: boolean; flipH: boolean; flipV: boolean; opacity: number;
   muted: boolean; volume: number;
   reframe?: ClipReframe;
+  /** Source pixel size — filled in by the exporter for 9:16 exports (title mapping). */
+  srcWidth?: number; srcHeight?: number;
   colorCorrection?: ColorCorrection; transitionIn?: ClipTransition; transitionOut?: ClipTransition;
   // Position of this segment within its ORIGINAL clip's own timeline (not the
   // overall program timeline) and that clip's total duration - needed so a
