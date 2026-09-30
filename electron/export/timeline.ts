@@ -12,13 +12,21 @@ export interface ExportClip {
   speed: number; reversed: boolean; flipH: boolean; flipV: boolean; opacity: number; trackIndex: number;
   muted: boolean; volume: number; audioFadeIn?: number; audioFadeOut?: number;
   volumeKeyframes?: { t: number; value: number }[];
+  reframe?: ClipReframe;
   colorCorrection?: ColorCorrection; transitionIn?: ClipTransition; transitionOut?: ClipTransition;
+}
+
+/** 9:16 window position (0..1 along the free axis), optionally keyframed. */
+export interface ClipReframe {
+  pos: number
+  keys?: { t: number; pos: number }[]
 }
 
 export interface FlatSegment {
   filePath: string; type: string; startTime: number; duration: number; trimStart: number;
   speed: number; reversed: boolean; flipH: boolean; flipV: boolean; opacity: number;
   muted: boolean; volume: number;
+  reframe?: ClipReframe;
   colorCorrection?: ColorCorrection; transitionIn?: ClipTransition; transitionOut?: ClipTransition;
   // Position of this segment within its ORIGINAL clip's own timeline (not the
   // overall program timeline) and that clip's total duration - needed so a
@@ -76,6 +84,7 @@ export function flattenTimeline(clips: ExportClip[]): FlatSegment[] {
         opacity: c.opacity,
         muted: c.muted,
         volume: c.volume,
+        reframe: c.reframe,
         colorCorrection: c.colorCorrection,
         transitionIn: c.transitionIn,
         transitionOut: c.transitionOut,
@@ -100,6 +109,7 @@ export function flattenTimeline(clips: ExportClip[]): FlatSegment[] {
         prev.speed === seg.speed && prev.reversed === seg.reversed &&
         prev.flipH === seg.flipH && prev.flipV === seg.flipV &&
         prev.opacity === seg.opacity && prev.muted === seg.muted && prev.volume === seg.volume &&
+        prev.reframe === seg.reframe &&
         Math.abs((prev.trimStart + prev.duration * prev.speed) - seg.trimStart) < 0.01) {
       prev.duration += seg.duration
     } else {

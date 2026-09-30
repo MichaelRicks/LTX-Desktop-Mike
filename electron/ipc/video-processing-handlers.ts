@@ -1,8 +1,11 @@
+import fs from 'fs'
+import os from 'os'
 import path from 'path'
 import {
   extractVideoFrameToFile,
   extractLastFrameToFile,
   trimFirstFrameToFile,
+  reframeCropToFile,
   getVideoDimensions,
   getVideoFps,
   findFfmpegPath,
@@ -58,6 +61,25 @@ export function registerVideoProcessingHandlers(): void {
     const dir = ensureLibFolder(CONTINUATIONS_FOLDER)
     const outPath = path.join(dir, `continuation_${stamp()}.mp4`)
     trimFirstFrameToFile({ videoPath, outputPath: outPath, colorMatchReferencePath: colorMatchReference })
+    return { path: outPath }
+  })
+
+  // Reframe (e.g. 16:9 → 9:16): crop into a temp file; the renderer then imports
+  // it into the project so it lands in the gallery like any other asset.
+  handle('reframeCrop', async ({ srcPath, type, x, y, width, height, outWidth, outHeight, suffix, keyframes }) => {
+    const outDir = path.join(os.tmpdir(), 'rix-reframe')
+    fs.mkdirSync(outDir, { recursive: true })
+    const parsed = path.parse(srcPath)
+    const safeSuffix = suffix.replace(/[^a-z0-9-]/gi, '') || 'reframe'
+    const outPath = path.join(outDir, `${parsed.name}-${safeSuffix}${parsed.ext}`)
+    await reframeCropToFile({
+      inputPath: srcPath,
+      outputPath: outPath,
+      type,
+      crop: { x, y, width, height },
+      scale: outWidth && outHeight ? { width: outWidth, height: outHeight } : undefined,
+      keyframes: type === 'video' && keyframes && keyframes.length > 1 ? keyframes : undefined,
+    })
     return { path: outPath }
   })
 }

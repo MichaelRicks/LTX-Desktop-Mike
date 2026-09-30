@@ -5,7 +5,7 @@ import {
   Heart, Film, Volume2, VolumeX, Sparkles, Sparkle,
   Clock, Monitor, ChevronUp, Scissors, Music, Undo2, Redo2, Loader2,
   ChevronLeft, ChevronRight, Copy, Check, Tag, Eraser, Square, MoveHorizontal, Wand2, Rows3, RefreshCw, Clapperboard,
-  CheckSquare, Lock, Dices, History, Shuffle
+  CheckSquare, Lock, Dices, History, Shuffle, RectangleVertical,
 } from 'lucide-react'
 import { useProjects } from '../contexts/ProjectContext'
 import type { GenSpaceRetakeSource } from '../contexts/ProjectContext'
@@ -36,6 +36,7 @@ import type { ICLoraConditioningType } from '../components/ICLoraPanel'
 import type { Asset } from '../types/project-model'
 import { GenerationErrorDialog } from '../components/GenerationErrorDialog'
 import { addVisualAssetToProject } from '../lib/asset-copy'
+import { ReframeEditor, type ReframeRect, type ReframeKeyframe } from '../components/ReframeEditor'
 import { pathToFileUrl } from '../lib/file-url'
 import { GPM_IMAGE_DND_TYPE, saveDataUrlToTempFile, type GpmDndImage } from '../components/gpm/gpm-image-file'
 import { FILE_DND, type LibFile } from '../components/gpm/DownloadsBrowser'
@@ -1944,6 +1945,10 @@ export function GenSpace() {
   const lightboxInsetRight = (promptManagerOpen ? 396 : 0) + 24
   const enlargedVideoRef = useRef<HTMLVideoElement | null>(null)
   const [copiedPrompt, setCopiedPrompt] = useState(false)
+  // Lightbox "Reframe 9:16" mode — swaps the media for the crop-frame editor.
+  const [reframing, setReframing] = useState(false)
+  const [reframeNotice, setReframeNotice] = useState<string | null>(null)
+  useEffect(() => { setReframing(false); setReframeNotice(null) }, [selectedAsset?.id])
   // Live render stopwatch: elapsedMs ticks while generating and freezes on
   // completion; generationStartRef feeds the render time stored on the asset.
   const [elapsedMs, setElapsedMs] = useState(0)
@@ -3794,6 +3799,60 @@ export function GenSpace() {
     )
   }, [sanitizeVideoSettings, loraLibrary.items, appSettings.modelsDir, updateAppSettings])
 
+  // Reframe: crop the source to the chosen 9:16 rect, import the result into the
+  // project and add it to the gallery beside the original (same prompt + tag), and
+  // quick-save a copy into the open Studio Assets folder like the Download chip.
+  // generationParams is required for the gallery to list it; mode 'reframe' keeps
+  // it out of Regenerate (which would re-roll the 16:9 source).
+  const handleReframeSave = useCallback(async (
+    source: Asset,
+    rect: ReframeRect,
+    upscaleTo: { width: number; height: number } | null,
+    keyframes: ReframeKeyframe[] | null,
+  ) => {
+    const api = window.electronAPI
+    if (!api || !currentProjectId) throw new Error('No project open')
+    if (source.type !== 'image' && source.type !== 'video') throw new Error('Only images and videos can be reframed')
+    const { path: croppedPath } = await api.reframeCrop({
+      srcPath: source.path,
+      type: source.type,
+      ...rect,
+      outWidth: upscaleTo?.width,
+      outHeight: upscaleTo?.height,
+      suffix: 'vertical',
+      keyframes: keyframes ?? undefined,
+    })
+    const copied = await addVisualAssetToProject(croppedPath, currentProjectId, source.type)
+    if (!copied) throw new Error('Could not add the cropped file to the project')
+    addAsset(currentProjectId, {
+      type: source.type,
+      path: copied.path,
+      bigThumbnailPath: copied.bigThumbnailPath,
+      smallThumbnailPath: copied.smallThumbnailPath,
+      width: copied.width,
+      height: copied.height,
+      prompt: source.prompt,
+      resolution: `${copied.width}x${copied.height}`,
+      duration: source.duration,
+      binId: source.binId,
+      generationParams: {
+        mode: 'reframe',
+        prompt: source.prompt,
+        model: '',
+        modelLabel: source.generationParams?.modelLabel,
+        seed: source.generationParams?.seed,
+        duration: source.duration ?? null,
+        resolution: `${copied.width}x${copied.height}`,
+        fps: source.generationParams?.fps ?? 24,
+        audio: source.generationParams?.audio ?? false,
+        cameraMotion: 'none',
+        imageAspectRatio: '9:16',
+      },
+    })
+    await saveToStudioAssets(copied.path, source.prompt)
+    setReframeNotice(`Saved 9:16 version (${copied.width}×${copied.height}) to the gallery and Studio Assets`)
+  }, [currentProjectId, addAsset])
+
   const handleEditImage = (imageAsset: Asset) => {
     setMode('image')
     setInputImage(imageAsset.path)
@@ -4747,7 +4806,15 @@ export function GenSpace() {
               </div>
             </div>
 
-            {selectedAsset.type === 'video' ? (
+            {reframing && (selectedAsset.type === 'image' || selectedAsset.type === 'video') ? (
+              <ReframeEditor
+                key={selectedAsset.id}
+                path={selectedAsset.path}
+                type={selectedAsset.type}
+                onCancel={() => setReframing(false)}
+                onSave={(rect, upscaleTo, keyframes) => handleReframeSave(selectedAsset, rect, upscaleTo, keyframes)}
+              />
+            ) : selectedAsset.type === 'video' ? (
               <video
                 key={selectedAsset.id}
                 ref={enlargedVideoRef}
@@ -4781,6 +4848,10 @@ export function GenSpace() {
             {/* Action row — same flows as the thumbnail hover chips, so the user
                 can act on what they're looking at without closing and hunting
                 for the card. Each action closes the lightbox first. */}
+            {reframeNotice && (
+              <p className="mt-2 text-center text-sm text-green-400">{reframeNotice}</p>
+            )}
+            {!reframing && (
             <div className="mt-3 flex flex-wrap items-center justify-center gap-2">
               {selectedAsset.type === 'image' && (
                 <>
@@ -4846,6 +4917,14 @@ export function GenSpace() {
                 <XLogo className="h-4 w-4" />
                 Post to X
               </button>
+              <button
+                onClick={() => { setReframeNotice(null); setReframing(true) }}
+                title="Frame a 9:16 vertical crop of this shot and save it as a new asset"
+                className="px-3 py-2 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-white text-sm font-medium flex items-center gap-2 transition-colors"
+              >
+                <RectangleVertical className="h-4 w-4" />
+                Reframe 9:16
+              </button>
               {selectedAsset.type === 'video' && (
               <button
                 onClick={() => {
@@ -4874,6 +4953,7 @@ export function GenSpace() {
               </button>
               )}
             </div>
+            )}
             <div className="mt-4 text-center">
               <div className="inline-flex items-start gap-2 max-w-full">
                 <p className="text-zinc-300 max-h-40 overflow-y-auto whitespace-pre-wrap break-words text-left">{selectedAsset.prompt}</p>

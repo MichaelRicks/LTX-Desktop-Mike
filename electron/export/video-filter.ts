@@ -1,4 +1,5 @@
 import { findDissolveBoundaries, type FlatSegment } from './timeline'
+import { keyframeExpr } from './keyframe-expr'
 
 export interface ExportSubtitle {
   text: string; startTime: number; endTime: number;
@@ -222,6 +223,26 @@ function applyWipeTransitions(
 }
 
 /**
+ * Vertical (9:16) export: crop the segment to its reframe window BEFORE scaling.
+ * The window is the largest 9:16 box that fits the source; `pos` slides it along
+ * whichever axis has slack (the other axis's slack is 0, so one pos drives both).
+ * Keys are timed in source seconds (video) / clip seconds (image); `timeOffset`
+ * maps the chain's local `t` onto that clock. Reversed clips use the static pos.
+ */
+function buildReframeCrop(seg: FlatSegment, timeOffset: number): string {
+  const rf = seg.reframe
+  const clamp01 = (v: number) => Math.max(0, Math.min(1, v))
+  let posExpr: string
+  if (rf?.keys && rf.keys.length > 1 && !seg.reversed) {
+    posExpr = keyframeExpr(rf.keys.map(k => ({ t: k.t, v: clamp01(k.pos) })), `(t+${timeOffset.toFixed(6)})`)
+  } else {
+    const p = rf?.keys?.length ? rf.keys[0].pos : rf?.pos ?? 0.5
+    posExpr = clamp01(p).toFixed(4)
+  }
+  return `crop=w='min(iw,ih*9/16)':h='min(ih,iw*16/9)':x='(iw-ow)*(${posExpr})':y='(ih-oh)*(${posExpr})'`
+}
+
+/**
  * Build the ffmpeg filter_complex script and input arguments for the video-only pass.
  * Pure string building — zero I/O.
  */
@@ -233,9 +254,13 @@ export function buildVideoFilterGraph(
     subtitles?: ExportSubtitle[];
     textOverlays?: ExportTextOverlay[];
     fontFile?: string;
+    vertical?: boolean;
   },
 ): { inputs: string[]; filterScript: string } {
-  const { width, height, fps, letterbox, subtitles, textOverlays, fontFile } = opts
+  const { width, height, fps, letterbox, subtitles, textOverlays, fontFile, vertical } = opts
+  // Text sizes are authored against a 1080-line frame; key off the SHORT side so
+  // a 1080×1920 vertical export sizes text like 1920×1080 instead of 1.78× bigger.
+  const textScale = Math.min(width, height) / 1080
   const inputs: string[] = []
   const filterParts: string[] = []
   let idx = 0
@@ -253,7 +278,7 @@ export function buildVideoFilterGraph(
     } else if (seg.type === 'image') {
       // Image: loop for exact duration, use target fps for frame generation
       inputs.push('-loop', '1', '-framerate', String(fps), '-t', seg.duration.toFixed(6), '-i', seg.filePath)
-      let chain = `[${idx}:v]scale=${width}:${height}:force_original_aspect_ratio=decrease,pad=${width}:${height}:-1:-1:color=black,setsar=1`
+      let chain = `[${idx}:v]${vertical ? `${buildReframeCrop(seg, seg.offsetInClip)},` : ''}scale=${width}:${height}:force_original_aspect_ratio=decrease,pad=${width}:${height}:-1:-1:color=black,setsar=1`
       if (seg.flipH) chain += ',hflip'
       if (seg.flipV) chain += ',vflip'
       chain += buildGradingFilters(seg, seg.duration)
@@ -266,6 +291,8 @@ export function buildVideoFilterGraph(
       const trimEnd = seg.trimStart + seg.duration * seg.speed
       inputs.push('-i', seg.filePath)
       let chain = `[${idx}:v]trim=start=${seg.trimStart.toFixed(6)}:end=${trimEnd.toFixed(6)},setpts=PTS-STARTPTS`
+      // Crop before the speed change so `t` is still source time minus trimStart.
+      if (vertical) chain += `,${buildReframeCrop(seg, seg.trimStart)}`
       if (seg.speed !== 1) chain += `,setpts=PTS/${seg.speed.toFixed(6)}`
       if (seg.reversed) chain += ',reverse'
       chain += `,scale=${width}:${height}:force_original_aspect_ratio=decrease,pad=${width}:${height}:-1:-1:color=black,setsar=1`
@@ -380,7 +407,7 @@ export function buildVideoFilterGraph(
   // (maxWidth) and shadow blur aren't representable in drawtext and are dropped;
   // explicit newlines in the text are preserved.
   if (textOverlays && textOverlays.length > 0) {
-    const hf = height / 1080 // scale style px (authored against 1080p) to export height
+    const hf = textScale // scale style px (authored against 1080p) to export size
     for (let ti = 0; ti < textOverlays.length; ti++) {
       const ov = textOverlays[ti]
       const s = ov.style
@@ -458,7 +485,7 @@ export function buildVideoFilterGraph(
       const escapedText = escapeDrawtext(sub.text)
       const alignPart = sub.text.includes('\n') ? ':text_align=C' : ''
 
-      const fontSize = Math.round(sub.style.fontSize * (height / 1080)) // scale relative to export res
+      const fontSize = Math.round(sub.style.fontSize * textScale) // scale relative to export res
       const fontColor = sub.style.color.replace('#', '0x')
 
       // Y position based on style.position

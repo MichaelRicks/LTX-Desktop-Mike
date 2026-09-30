@@ -174,6 +174,11 @@ export function ExportModal({ projectName }: ExportModalProps) {
     quality: 18, // CRF 18 for h264
   })
   const [burnSubtitles, setBurnSubtitles] = useState(true)
+  // 9:16 exports crop every visual clip to its reframe window (set in the program
+  // monitor's 9:16 guide); the resolution presets flip to portrait.
+  const [vertical, setVertical] = useState(false)
+  const outWidth = vertical ? settings.height : settings.width
+  const outHeight = vertical ? settings.width : settings.height
 
   const closeModal = useCallback(() => {
     closeExportModal()
@@ -190,6 +195,14 @@ export function ExportModal({ projectName }: ExportModalProps) {
     setExportPath(null)
     setExportFrameInfo('')
     abortRef.current = false
+    // Default the orientation to match the editor: if the program monitor's 9:16
+    // guide is on, the user is cutting for vertical — don't silently export 16:9.
+    try {
+      const guide = JSON.parse(localStorage.getItem('editor.verticalGuide') || 'null')
+      setVertical(Boolean(guide?.frame))
+    } catch {
+      setVertical(false)
+    }
   }, [isOpen])
 
   // Update quality default when codec changes
@@ -280,10 +293,11 @@ export function ExportModal({ projectName }: ExportModalProps) {
         subtitles: burnSubtitles ? payload.subtitles : undefined,
         outputPath: filePath,
         codec: settings.codec,
-        width: settings.width,
-        height: settings.height,
+        width: outWidth,
+        height: outHeight,
         fps: settings.fps,
         quality: settings.quality,
+        vertical,
       })
 
       if (result && !result.success) {
@@ -300,7 +314,7 @@ export function ExportModal({ projectName }: ExportModalProps) {
     } finally {
       unsubscribe?.()
     }
-  }, [burnSubtitles, payload, projectName, settings, timeline])
+  }, [burnSubtitles, payload, projectName, settings, timeline, vertical, outWidth, outHeight])
 
   const handleCancel = useCallback(async () => {
     abortRef.current = true
@@ -480,6 +494,30 @@ export function ExportModal({ projectName }: ExportModalProps) {
                 </div>
               </div>
 
+              {/* Orientation */}
+              <div>
+                <label className="text-[10px] text-zinc-500 uppercase tracking-wider font-semibold mb-1.5 block">Orientation</label>
+                <div className="grid grid-cols-2 gap-2">
+                  {([
+                    { v: false, label: '16:9 Landscape', desc: 'Full frame' },
+                    { v: true, label: '9:16 Vertical', desc: 'Crops each clip to its 9:16 frame' },
+                  ] as const).map(opt => (
+                    <button
+                      key={opt.label}
+                      onClick={() => setVertical(opt.v)}
+                      className={`px-3 py-2 rounded-lg border text-left transition-colors ${
+                        vertical === opt.v
+                          ? 'border-blue-500 bg-blue-600/15 text-white'
+                          : 'border-zinc-700 bg-zinc-800 text-zinc-300 hover:border-zinc-600'
+                      }`}
+                    >
+                      <div className="text-sm font-medium">{opt.label}</div>
+                      <div className="text-[10px] text-zinc-500">{opt.desc}</div>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
               {/* Resolution & Frame rate row */}
               <div className="grid grid-cols-2 gap-3">
                 <div>
@@ -495,7 +533,7 @@ export function ExportModal({ projectName }: ExportModalProps) {
                     >
                       {RESOLUTIONS.map(r => (
                         <option key={`${r.width}x${r.height}`} value={`${r.width}x${r.height}`}>
-                          {r.label}
+                          {vertical ? r.label.replace(/\((\d+) x (\d+)\)/, '($2 x $1)') : r.label}
                         </option>
                       ))}
                     </select>

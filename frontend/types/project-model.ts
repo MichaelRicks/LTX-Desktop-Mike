@@ -11,6 +11,8 @@ export const generationModeValues = [
   'retake',
   'extend',
   'ic-lora',
+  // A crop of another asset (Reframe 9:16) — not regenerable, but listed in the gallery.
+  'reframe',
 ] as const
 
 export const assetTypeValues = ['image', 'video', 'audio', 'adjustment'] as const
@@ -331,6 +333,14 @@ export const timelineClipSchema = z.object({
   // start, value = 0..2. When present + non-empty, replaces the flat `volume`
   // as the base gain (the fade envelope still multiplies on top).
   volumeKeyframes: z.array(z.object({ t: z.number(), value: z.number() })).optional(),
+  // Vertical (9:16) export framing — where the 9:16 window sits across the
+  // frame's free axis (0 = left/top, 1 = right/bottom; unset = centered),
+  // optionally keyframed. Key `t` = SOURCE seconds for video (so trims don't
+  // slide the keys), clip-local seconds for images. Ignored by 16:9 exports.
+  reframe: z.object({
+    pos: z.number(),
+    keys: z.array(z.object({ t: z.number(), pos: z.number() })).optional(),
+  }).optional(),
   // Text-overlay opacity fade in/out (seconds). Unset = the 0.5s default (a soft
   // in/out is almost always wanted); set 0 explicitly for a hard cut.
   textFadeIn: z.number().optional(),

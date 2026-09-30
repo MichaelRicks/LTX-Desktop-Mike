@@ -5,6 +5,7 @@ import fs from 'fs'
 import { isDev, getCurrentDir } from '../config'
 import { logger } from '../logger'
 import { getPythonDir } from '../python-setup'
+import { keyframeExpr } from './keyframe-expr'
 
 let activeExportProcess: ChildProcess | null = null
 
@@ -317,6 +318,73 @@ export function trimFirstFrameToFile({ videoPath, outputPath, colorMatchReferenc
   ]
   logger.info(`[trim-first-frame] ${args.join(' ').slice(0, 300)}`)
   runFfmpegSyncOrThrow(ffmpegPath, args, timeoutMs)
+  if (!fs.existsSync(outputPath)) throw new Error('ffmpeg produced no output file')
+  return outputPath
+}
+
+/**
+ * Reframe: crop an image or video to a source-pixel rect, optionally scaling the
+ * crop to a fixed output size (e.g. 1080×1920). Async so a long video crop doesn't
+ * block the main process; deliberately does NOT touch activeExportProcess, so it
+ * can't collide with (or be cancelled by) a timeline export.
+ */
+export async function reframeCropToFile({ inputPath, outputPath, type, crop, scale, keyframes, timeoutMs = 600000 }: {
+  inputPath: string
+  outputPath: string
+  type: 'image' | 'video'
+  crop: { x: number; y: number; width: number; height: number }
+  scale?: { width: number; height: number }
+  /** Videos: animate the crop origin between these keys (ease-in-out). */
+  keyframes?: Array<{ t: number; x: number; y: number }>
+  timeoutMs?: number
+}): Promise<string> {
+  const ffmpegPath = findFfmpegPath()
+  if (!ffmpegPath) throw new Error('ffmpeg not found')
+  if (!fs.existsSync(inputPath)) throw new Error(`File not found: ${inputPath}`)
+
+  // yuv420p (and most encoders) need even dimensions/offsets.
+  const evenDown = (n: number) => Math.max(0, Math.floor(n / 2) * 2)
+  const w = Math.max(2, evenDown(crop.width))
+  const h = Math.max(2, evenDown(crop.height))
+  const sorted = keyframes && keyframes.length > 1 ? [...keyframes].sort((a, b) => a.t - b.t) : null
+  // Keyed: per-frame x/y expressions (crop re-evaluates them every frame and
+  // rounds to the chroma grid itself). Single-quoted so the commas inside the
+  // if()s aren't read as filter separators.
+  const xArg = sorted ? `'${keyframeExpr(sorted.map(k => ({ t: k.t, v: k.x })))}'` : String(evenDown(crop.x))
+  const yArg = sorted ? `'${keyframeExpr(sorted.map(k => ({ t: k.t, v: k.y })))}'` : String(evenDown(crop.y))
+  const filters = [`crop=w=${w}:h=${h}:x=${xArg}:y=${yArg}`]
+  if (scale) filters.push(`scale=${Math.max(2, evenDown(scale.width))}:${Math.max(2, evenDown(scale.height))}:flags=lanczos`)
+  const vf = filters.join(',')
+
+  const ext = path.extname(outputPath).toLowerCase()
+  const args: string[] =
+    type === 'video'
+      ? [
+          '-i', inputPath, '-vf', vf,
+          '-c:v', 'libx264', '-crf', '18', '-preset', 'medium', '-pix_fmt', 'yuv420p',
+          '-c:a', 'copy', '-movflags', '+faststart',
+          '-y', outputPath,
+        ]
+      : [
+          '-i', inputPath, '-vf', vf, '-frames:v', '1',
+          ...(ext === '.jpg' || ext === '.jpeg' ? ['-q:v', '2'] : []),
+          '-y', outputPath,
+        ]
+
+  logger.info(`[reframe] ${args.join(' ').slice(0, 400)}`)
+  await new Promise<void>((resolve, reject) => {
+    const proc = spawn(ffmpegPath, args, { stdio: ['ignore', 'ignore', 'pipe'] })
+    let stderr = ''
+    proc.stderr?.on('data', (chunk: Buffer) => { stderr = (stderr + chunk.toString()).slice(-4000) })
+    const timer = setTimeout(() => proc.kill(), timeoutMs)
+    proc.on('error', (err) => { clearTimeout(timer); reject(err) })
+    proc.on('close', (code) => {
+      clearTimeout(timer)
+      if (code === 0) return resolve()
+      const tail = stderr.split('\n').filter(l => l.trim()).slice(-5).join('\n')
+      reject(new Error(`FFmpeg reframe failed (code ${code}): ${tail.slice(0, 300)}`))
+    })
+  })
   if (!fs.existsSync(outputPath)) throw new Error('ffmpeg produced no output file')
   return outputPath
 }

@@ -46,6 +46,11 @@ const exportClip = z.object({
   audioFadeIn: z.number().optional(),
   audioFadeOut: z.number().optional(),
   volumeKeyframes: z.array(z.object({ t: z.number(), value: z.number() })).optional(),
+  // 9:16 framing (see TimelineClip.reframe); only applied when exporting vertical.
+  reframe: z.object({
+    pos: z.number(),
+    keys: z.array(z.object({ t: z.number(), pos: z.number() })).optional(),
+  }).optional(),
   colorCorrection: exportColorCorrection.optional(),
   transitionIn: exportClipTransition.optional(),
   transitionOut: exportClipTransition.optional(),
@@ -323,6 +328,8 @@ export const electronAPISchemas = {
       letterbox: z.object({ ratio: z.number(), color: z.string(), opacity: z.number() }).optional(),
       subtitles: z.array(exportSubtitle).optional(),
       textOverlays: z.array(exportTextOverlay).optional(),
+      // 9:16 export: each visual clip is cropped to its reframe window before scaling.
+      vertical: z.boolean().optional(),
     }),
     output: emptyResult,
   },
@@ -406,6 +413,25 @@ export const electronAPISchemas = {
     // trim step neutralize the i2v VAE's systematic ~2-3/255 darkening of the
     // continuation, which otherwise compounds across chained continuations.
     input: z.object({ videoPath: z.string(), colorMatchReference: z.string().optional() }),
+    output: z.object({ path: z.string() }),
+  },
+  // Reframe: crop an image/video to a region (source pixels), optionally scaling
+  // the result to outWidth×outHeight. Writes to a temp file; the caller imports it
+  // into the project like any other asset.
+  reframeCrop: {
+    input: z.object({
+      srcPath: z.string(),
+      type: z.enum(['image', 'video']),
+      x: z.number(),
+      y: z.number(),
+      width: z.number(),
+      height: z.number(),
+      outWidth: z.number().optional(),
+      outHeight: z.number().optional(),
+      suffix: z.string(),
+      // Videos only: animate the crop origin between these keys (source px, seconds).
+      keyframes: z.array(z.object({ t: z.number(), x: z.number(), y: z.number() })).optional(),
+    }),
     output: z.object({ path: z.string() }),
   },
 

@@ -35,7 +35,7 @@ export type ExportNativeResult = { success: true } | { success: false; error: st
 /** Render the timeline to a file. `preview` trades quality for speed (ultrafast,
  *  high CRF) — used by the RiX MCP server to render frames for review. */
 export async function exportTimelineNative(
-  { clips, outputPath, codec, width, height, fps, quality, letterbox, subtitles, textOverlays }: ExportNativeInput,
+  { clips, outputPath, codec, width, height, fps, quality, letterbox, subtitles, textOverlays, vertical }: ExportNativeInput,
   { preview = false }: { preview?: boolean } = {},
 ): Promise<ExportNativeResult> {
   const ffmpegPath = findFfmpegPath()
@@ -86,7 +86,7 @@ export async function exportTimelineNative(
     logger.info( `[Export] Step 1: Video-only export (${segments.length} segments)`)
     {
       const fontFile = resolveExportFont()
-      const { inputs, filterScript } = buildVideoFilterGraph(segments, { width, height, fps, letterbox, subtitles, textOverlays, fontFile })
+      const { inputs, filterScript } = buildVideoFilterGraph(segments, { width, height, fps, letterbox, subtitles, textOverlays, fontFile, vertical })
 
       const filterFile = path.join(tmpDir, `ltx-filter-v-${ts}.txt`)
       fs.writeFileSync(filterFile, filterScript, 'utf8')

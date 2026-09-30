@@ -44,6 +44,7 @@ export function buildExportPayload(
       audioFadeIn: clip.audioFadeIn ?? 0,
       audioFadeOut: clip.audioFadeOut ?? 0,
       volumeKeyframes: clip.volumeKeyframes,
+      reframe: clip.reframe,
       colorCorrection: clip.colorCorrection,
       transitionIn: clip.transitionIn,
       transitionOut: clip.transitionOut,
