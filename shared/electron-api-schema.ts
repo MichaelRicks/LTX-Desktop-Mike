@@ -77,6 +77,8 @@ const exportTextOverlay = z.object({
   endTime: z.number(),
   fadeIn: z.number().optional(),
   fadeOut: z.number().optional(),
+  // Opacity automation: t = seconds from overlay start, value 0..100 (linear).
+  opacityKeyframes: z.array(z.object({ t: z.number(), value: z.number() })).optional(),
   style: z.object({
     fontSize: z.number(),
     color: z.string(),
@@ -91,6 +93,12 @@ const exportTextOverlay = z.object({
     opacity: z.number(),
     padding: z.number(),
     textAlign: z.string().optional(),
+    // Resolved to a font file via shared/font-catalog (unknown → Arial).
+    fontFamily: z.string().optional(),
+    fontWeight: z.string().optional(),
+    // Non-uniform stretch about the text's center (1 = none).
+    scaleX: z.number().optional(),
+    scaleY: z.number().optional(),
   }),
 })
 

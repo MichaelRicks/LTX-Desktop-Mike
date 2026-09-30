@@ -12,7 +12,7 @@ import {
   X, MessageSquare, FileUp, FileDown,
   Sparkles, Type,
   Music, RefreshCw, Loader2, Link2,
-  CircleDot, Circle, PanelRight, ArrowLeftRight,
+  CircleDot, Circle, PanelRight, ArrowLeftRight, Diamond,
 } from 'lucide-react'
 import { Button } from '../../components/ui/button'
 import { Tooltip } from '../../components/ui/tooltip'
@@ -1993,8 +1993,18 @@ export function VideoEditorTimelineEditingPanel(props: VideoEditorTimelineEditin
             <div className="flex flex-1 min-h-0 flex-col">
               {/* Scrollable tracks area */}
               <div className="flex flex-1 min-h-0">
-              {/* Track headers column */}
-              <div className="w-32 flex-shrink-0 border-r border-zinc-800 bg-zinc-900 flex flex-col overflow-hidden">
+              {/* Track headers column. A click on its empty space (not a control)
+                  deselects, same as clicking empty track area. */}
+              <div
+                className="w-32 flex-shrink-0 border-r border-zinc-800 bg-zinc-900 flex flex-col overflow-hidden"
+                onMouseDown={(e) => {
+                  if (e.button !== 0) return
+                  if ((e.target as HTMLElement).closest('button, input, select, textarea, [contenteditable="true"]')) return
+                  setSelectedClipIds(new Set())
+                  setSelectedSubtitleId(null)
+                  clearSelectedGap()
+                }}
+              >
                 {/* Add track buttons - pinned above scrollable area */}
                 <div className="flex-shrink-0 h-7 flex items-center px-2 gap-1.5 border-b border-zinc-700/50">
                   <button 
@@ -2557,6 +2567,58 @@ export function VideoEditorTimelineEditingPanel(props: VideoEditorTimelineEditin
                       onContextMenu={(e) => handleClipContextMenu(e, clip)}
                       /* EFFECTS HIDDEN - drag-drop for effects hidden because effects are not applied during export */
                     >
+                      {/* Text opacity keyframes. Drag a diamond to slide the key in time
+                          (the playhead follows so the preview shows it); click one to park
+                          the playhead on it and open the clip's properties to adjust it. */}
+                      {clip.type === 'text' && clip.opacityKeyframes && clip.opacityKeyframes.length > 0 && (
+                        <div className="absolute inset-x-0 bottom-0 h-3 z-20 pointer-events-none">
+                          {clip.opacityKeyframes.map((k, i) => (
+                            <button
+                              key={`okf-${i}`}
+                              className="absolute bottom-0.5 -translate-x-1/2 text-amber-300 hover:text-amber-100 hover:scale-125 transition-transform pointer-events-auto cursor-ew-resize"
+                              style={{ left: `${Math.max(0, Math.min(1, k.t / Math.max(1e-6, clip.duration))) * 100}%` }}
+                              title={`Opacity ${Math.round(k.value)}% at ${k.t.toFixed(2)}s — drag to move, click to edit`}
+                              onClick={(e) => e.stopPropagation()}
+                              onMouseDown={(e) => {
+                                e.stopPropagation()
+                                e.preventDefault()
+                                const rect = (e.currentTarget.closest('[data-clip-id]') as HTMLElement | null)?.getBoundingClientRect()
+                                if (!rect) return
+                                const startX = e.clientX
+                                let dragged = false
+                                const onMove = (ev: MouseEvent) => {
+                                  if (!dragged && Math.abs(ev.clientX - startX) < 3) return
+                                  dragged = true
+                                  const tNew = Math.max(0, Math.min(clip.duration, ((ev.clientX - rect.left) / rect.width) * clip.duration))
+                                  setClips(prev => prev.map(c => c.id === clip.id && c.opacityKeyframes
+                                    ? { ...c, opacityKeyframes: c.opacityKeyframes.map((kk, j) => (j === i ? { ...kk, t: +tNew.toFixed(3) } : kk)) }
+                                    : c))
+                                  setCurrentTime(clip.startTime + tNew)
+                                }
+                                const onUp = () => {
+                                  document.removeEventListener('mousemove', onMove)
+                                  document.removeEventListener('mouseup', onUp)
+                                  document.body.style.cursor = ''
+                                  if (dragged) {
+                                    setClips(prev => prev.map(c => c.id === clip.id && c.opacityKeyframes
+                                      ? { ...c, opacityKeyframes: [...c.opacityKeyframes].sort((a, b) => a.t - b.t) }
+                                      : c))
+                                  } else {
+                                    setSelectedClipIds(expandWithLinkedClips(new Set([clip.id])))
+                                    setShowPropertiesPanel(true)
+                                    setCurrentTime(clip.startTime + k.t)
+                                  }
+                                }
+                                document.addEventListener('mousemove', onMove)
+                                document.addEventListener('mouseup', onUp)
+                                document.body.style.cursor = 'ew-resize'
+                              }}
+                            >
+                              <Diamond className="h-2.5 w-2.5 fill-current" />
+                            </button>
+                          ))}
+                        </div>
+                      )}
                       {/* Blade cut indicator line */}
                       {activeTool === 'blade' && bladeHoverInfo && (() => {
                         // Show indicator on the hovered clip, or on all clips at that time when Shift is held

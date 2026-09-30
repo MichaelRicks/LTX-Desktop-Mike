@@ -266,6 +266,10 @@ export const textOverlayStyleSchema = z.object({
   padding: z.number(),
   borderRadius: z.number(),
   opacity: z.number(),
+  // Non-uniform stretch from the preview's edge handles (1 = none). Uniform
+  // (corner-handle) resizing changes fontSize instead, so text stays crisp.
+  scaleX: z.number().optional(),
+  scaleY: z.number().optional(),
 })
 
 export const DEFAULT_TEXT_STYLE = textOverlayStyleSchema.parse({
@@ -345,6 +349,10 @@ export const timelineClipSchema = z.object({
   // in/out is almost always wanted); set 0 explicitly for a hard cut.
   textFadeIn: z.number().optional(),
   textFadeOut: z.number().optional(),
+  // Text-overlay opacity automation: t = seconds from clip start, value 0..100.
+  // When present + non-empty it replaces textStyle.opacity (linear between keys;
+  // fade in/out still multiplies on top).
+  opacityKeyframes: z.array(z.object({ t: z.number(), value: z.number() })).optional(),
   trackIndex: z.number(),
   asset: assetSchema.nullable(),
   importedName: z.string().optional(),

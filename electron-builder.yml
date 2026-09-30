@@ -16,6 +16,8 @@ files:
 
 asarUnpack:
   - dist/splash/**
+  # Text-overlay fonts: ffmpeg drawtext reads them by path at export time.
+  - dist/fonts/**
   # koffi 3.x loads ../../@koromix/koffi-${platform}-${arch} from its JS.
   # Unpack that package so require() can load the .node from disk, not asar.
   - node_modules/@koromix/**/*

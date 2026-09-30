@@ -9,6 +9,7 @@ export interface ExportSubtitle {
 export interface ExportTextOverlay {
   text: string; startTime: number; endTime: number;
   fadeIn?: number; fadeOut?: number;
+  opacityKeyframes?: { t: number; value: number }[];
   style: {
     fontSize: number; color: string; backgroundColor: string;
     positionX: number; positionY: number;
@@ -16,6 +17,8 @@ export interface ExportTextOverlay {
     shadowColor: string; shadowOffsetX: number; shadowOffsetY: number;
     opacity: number; padding: number;
     textAlign?: string;
+    fontFamily?: string; fontWeight?: string;
+    scaleX?: number; scaleY?: number;
   };
 }
 
@@ -222,6 +225,38 @@ function applyWipeTransitions(
   return applied ? { inputs, filterLines, label, nextIdx: idx } : null
 }
 
+/** Piecewise-linear value of {t, value} keys at time t (holds the end values). */
+function linearKeyValue(keys: { t: number; value: number }[], t: number): number {
+  const sorted = [...keys].sort((a, b) => a.t - b.t)
+  if (t <= sorted[0].t) return sorted[0].value
+  const last = sorted[sorted.length - 1]
+  if (t >= last.t) return last.value
+  for (let i = 0; i < sorted.length - 1; i++) {
+    const a = sorted[i]
+    const b = sorted[i + 1]
+    if (t < b.t) return a.value + (b.value - a.value) * ((t - a.t) / Math.max(1e-6, b.t - a.t))
+  }
+  return last.value
+}
+
+/**
+ * Piecewise-linear ffmpeg expression over program time `t` for keys timed from
+ * `offset` seconds (holds the end values). Commas escaped for a drawtext value.
+ */
+function linearKeyExpr(keys: { t: number; value: number }[], offset: number): string {
+  const n = (x: number) => x.toFixed(4)
+  const sorted = [...keys].sort((a, b) => a.t - b.t)
+  const T = `(t-${n(offset)})`
+  let expr = n(sorted[sorted.length - 1].value)
+  for (let i = sorted.length - 2; i >= 0; i--) {
+    const a = sorted[i]
+    const b = sorted[i + 1]
+    if (b.t - a.t <= 0) continue
+    expr = `if(lt(${T}\\,${n(b.t)})\\,${n(a.value)}+(${n(b.value - a.value)})*(${T}-${n(a.t)})/${n(b.t - a.t)}\\,${expr})`
+  }
+  return `if(lt(${T}\\,${n(sorted[0].t)})\\,${n(sorted[0].value)}\\,${expr})`
+}
+
 /**
  * Vertical (9:16) export: crop the segment to its reframe window BEFORE scaling.
  * The window is the largest 9:16 box that fits the source; `pos` slides it along
@@ -254,10 +289,12 @@ export function buildVideoFilterGraph(
     subtitles?: ExportSubtitle[];
     textOverlays?: ExportTextOverlay[];
     fontFile?: string;
+    /** Per-overlay font file for a family + boldness; falls back to `fontFile`. */
+    resolveFontFile?: (fontFamily: string | undefined, bold: boolean) => string | undefined;
     vertical?: boolean;
   },
 ): { inputs: string[]; filterScript: string } {
-  const { width, height, fps, letterbox, subtitles, textOverlays, fontFile, vertical } = opts
+  const { width, height, fps, letterbox, subtitles, textOverlays, fontFile, resolveFontFile, vertical } = opts
   // Text sizes are authored against a 1080-line frame; key off the SHORT side so
   // a 1080×1920 vertical export sizes text like 1920×1080 instead of 1.78× bigger.
   const textScale = Math.min(width, height) / 1080
@@ -403,16 +440,24 @@ export function buildVideoFilterGraph(
 
   // Text-overlay burn-in (drawtext) — the type:'text' clips with a textStyle.
   // The live preview renders these as DOM; export mirrors position/size/color so
-  // the baked video matches. fontFamily/weight/style, letter-spacing, auto-wrap
-  // (maxWidth) and shadow blur aren't representable in drawtext and are dropped;
-  // explicit newlines in the text are preserved.
+  // the baked video matches. Letter-spacing and shadow blur aren't representable
+  // in drawtext and are dropped; explicit newlines are preserved (no auto-wrap —
+  // the preview doesn't wrap either). Opacity keyframes ride drawtext's alpha;
+  // a non-uniform stretch draws the text on a transparent full-frame layer, scales
+  // that layer, and overlays it centered on the text's anchor point.
   if (textOverlays && textOverlays.length > 0) {
     const hf = textScale // scale style px (authored against 1080p) to export size
     for (let ti = 0; ti < textOverlays.length; ti++) {
       const ov = textOverlays[ti]
       const s = ov.style
       const nextLabel = `txt${ti}`
-      const gA = Math.max(0, Math.min(1, (s.opacity ?? 100) / 100)) // global overlay opacity
+      const keyed = Boolean(ov.opacityKeyframes && ov.opacityKeyframes.length > 0)
+      const sx = s.scaleX && s.scaleX > 0 ? s.scaleX : 1
+      const sy = s.scaleY && s.scaleY > 0 ? s.scaleY : 1
+      const stretched = Math.abs(sx - 1) > 1e-3 || Math.abs(sy - 1) > 1e-3
+      // Static opacity is baked into the colors; keyed opacity moves to the alpha
+      // expr, and a stretched title gets its opacity on the layer instead.
+      const gA = keyed || stretched ? 1 : Math.max(0, Math.min(1, (s.opacity ?? 100) / 100))
       const fontSize = Math.max(1, Math.round(s.fontSize * hf))
       const fontColor = cssColorToFfmpeg(s.color, gA) ?? `white@${gA.toFixed(3)}`
 
@@ -421,13 +466,16 @@ export function buildVideoFilterGraph(
       const py = Math.max(0, Math.min(1, (s.positionY ?? 50) / 100))
 
       const parts: string[] = []
-      if (fontFile) parts.push(fontFileArg(fontFile))
+      const bold = s.fontWeight === 'bold' || Number(s.fontWeight) >= 600
+      const overlayFont = resolveFontFile?.(s.fontFamily, bold) ?? fontFile
+      if (overlayFont) parts.push(fontFileArg(overlayFont))
       parts.push(`text='${escapeDrawtext(ov.text)}'`)
       if (ov.text.includes('\n')) parts.push(`text_align=${drawtextAlign(s.textAlign)}`)
       parts.push(`fontsize=${fontSize}`)
       parts.push(`fontcolor=${fontColor}`)
-      parts.push(`x=(w*${px.toFixed(4)})-(text_w/2)`)
-      parts.push(`y=(h*${py.toFixed(4)})-(text_h/2)`)
+      // Stretched: centered on its own layer (placed by the overlay below).
+      parts.push(stretched ? 'x=(w-text_w)/2' : `x=(w*${px.toFixed(4)})-(text_w/2)`)
+      parts.push(stretched ? 'y=(h-text_h)/2' : `y=(h*${py.toFixed(4)})-(text_h/2)`)
 
       if ((s.strokeWidth ?? 0) > 0) {
         const strokeColor = cssColorToFfmpeg(s.strokeColor, gA)
@@ -464,14 +512,68 @@ export function buildVideoFilterGraph(
       const ramps: string[] = []
       if (fin > 0.001) ramps.push(`(t-${ov.startTime.toFixed(3)})/${fin.toFixed(3)}`)
       if (fout > 0.001) ramps.push(`(${ov.endTime.toFixed(3)}-t)/${fout.toFixed(3)}`)
+      const alphaTerms: string[] = []
       if (ramps.length > 0) {
         const inner = ramps.length === 2 ? `min(${ramps[0]}\\,${ramps[1]})` : ramps[0]
-        parts.push(`alpha='max(0\\,min(1\\,${inner}))'`)
+        alphaTerms.push(`max(0\\,min(1\\,${inner}))`)
+      }
+      if (keyed) alphaTerms.push(`(${linearKeyExpr(ov.opacityKeyframes!, ov.startTime)})/100`)
+      // Drawn straight onto the video, drawtext's alpha is right. On the stretch
+      // layer it isn't (see below), so there the opacity is applied to the layer.
+      if (alphaTerms.length > 0 && !stretched) {
+        parts.push(`alpha='max(0\\,min(1\\,${alphaTerms.join('*')}))'`)
       }
 
       parts.push(`enable='between(t\\,${ov.startTime.toFixed(3)}\\,${ov.endTime.toFixed(3)})'`)
 
-      filterParts.push(`[${lastLabel}]drawtext=${parts.join(':')}[${nextLabel}]`)
+      if (stretched) {
+        // Transparent layer that only exists for the overlay's lifetime, shifted
+        // onto the program clock so drawtext's t / enable see program time.
+        //
+        // drawtext on an RGBA canvas writes PREMULTIPLIED color, and with alpha < 1
+        // it also squares the written alpha (measured: alpha 0.5 → stored 64/255),
+        // so a faded title nearly vanished. So: draw at full opacity (clean
+        // premultiplied coverage), unpremultiply to straight alpha, and apply the
+        // fade/keyframed opacity to the whole layer — one value per frame, pushed
+        // into colorchannelmixer's alpha gain by sendcmd.
+        const layer = `txtl${ti}`
+        const opacityAt = (t: number) => {
+          const local = t - ov.startTime
+          let g = 1
+          if (fin > 0.001 && local < fin) g = Math.max(0, Math.min(1, local / fin))
+          if (fout > 0.001 && local > ovDur - fout) g = Math.min(g, Math.max(0, (ovDur - local) / fout))
+          const base = keyed ? linearKeyValue(ov.opacityKeyframes!, local) / 100 : Math.max(0, Math.min(1, (s.opacity ?? 100) / 100))
+          return Math.max(0, Math.min(1, g * base))
+        }
+        const cmds: string[] = []
+        let last = -1
+        const frames = Math.ceil(ovDur * fps) + 1
+        for (let f = 0; f < frames; f++) {
+          const t = ov.startTime + f / fps
+          const v = opacityAt(t)
+          if (Math.abs(v - last) > 0.002) {
+            cmds.push(`${t.toFixed(4)} colorchannelmixer@txo${ti} aa ${v.toFixed(4)}`)
+            last = v
+          }
+        }
+        const first = opacityAt(ov.startTime)
+        const opacityStage = cmds.length > 1
+          ? `sendcmd=c='${cmds.join(';')}',colorchannelmixer@txo${ti}=aa=${first.toFixed(4)},`
+          : first < 0.999 ? `colorchannelmixer=aa=${first.toFixed(4)},` : ''
+        filterParts.push(
+          `color=c=black@0.0:s=${width}x${height}:r=${fps}:d=${ovDur.toFixed(6)},format=rgba,` +
+          `setpts=PTS+${ov.startTime.toFixed(6)}/TB,` +
+          `drawtext=${parts.join(':')},` +
+          `unpremultiply=inplace=1,` +
+          opacityStage +
+          `scale=w='trunc(iw*${sx.toFixed(4)})':h='trunc(ih*${sy.toFixed(4)})'[${layer}]`,
+        )
+        filterParts.push(
+          `[${lastLabel}][${layer}]overlay=x='W*${px.toFixed(4)}-w/2':y='H*${py.toFixed(4)}-h/2':eof_action=pass:format=auto[${nextLabel}]`,
+        )
+      } else {
+        filterParts.push(`[${lastLabel}]drawtext=${parts.join(':')}[${nextLabel}]`)
+      }
       lastLabel = nextLabel
     }
   }

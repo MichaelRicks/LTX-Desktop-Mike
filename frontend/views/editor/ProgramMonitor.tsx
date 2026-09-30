@@ -9,9 +9,11 @@ import { Tooltip } from '../../components/ui/tooltip'
 import { AudioWaveform } from '../../components/AudioWaveform'
 import { pathToFileUrl } from '../../lib/file-url'
 import { VerticalReframeOverlay } from './VerticalReframeOverlay'
+import { TextOverlayBox } from './TextOverlayBox'
+import { getOpacityPreview } from './text-opacity-preview'
 import { DEFAULT_SUBTITLE_STYLE } from '../../types/project-model'
 import type { Asset, TimelineClip, Track, SubtitleClip } from '../../types/project-model'
-import { getClipEffectStyles, getTransitionBgColor, formatTime, getShortcutLabel, tooltipLabel, getMaskedEffectOverlays, textFadeMultiplier } from './video-editor-utils'
+import { getClipEffectStyles, getTransitionBgColor, formatTime, getShortcutLabel, tooltipLabel, getMaskedEffectOverlays, textClipOpacity } from './video-editor-utils'
 import type { KeyboardLayout } from '../../lib/keyboard-shortcuts'
 import {
   selectActiveTimelineInPoint,
@@ -1107,7 +1109,8 @@ export const ProgramMonitor = React.forwardRef<ProgramMonitorHandle, ProgramMoni
         const el = textOverlayElsRef.current.get(tc.id)
         const ts = tc.textStyle
         if (!el || !ts) continue
-        el.style.opacity = String((ts.opacity / 100) * textFadeMultiplier(tc.startTime, tc.duration, t, tc.textFadeIn, tc.textFadeOut))
+        const preview = getOpacityPreview()
+        el.style.opacity = String(textClipOpacity(tc, t, preview?.clipId === tc.id ? preview.value : null))
       }
       id = requestAnimationFrame(tick)
     }
@@ -1466,89 +1469,53 @@ export const ProgramMonitor = React.forwardRef<ProgramMonitorHandle, ProgramMoni
               })}
 
               {/* Text overlay clips */}
-              {activeTextClips.map(tc => {
-                const ts = tc.textStyle!
-                const isSelected = selectedClipIds.has(tc.id)
-                const fadeOpacity = (ts.opacity / 100) * textFadeMultiplier(tc.startTime, tc.duration, currentTime, tc.textFadeIn, tc.textFadeOut)
-                return (
-                  <div
-                    key={`text-${tc.id}`}
-                    ref={(el) => { if (el) textOverlayElsRef.current.set(tc.id, el); else textOverlayElsRef.current.delete(tc.id) }}
-                    className={`absolute z-[24] ${isSelected ? 'ring-2 ring-cyan-400/60 ring-offset-1 ring-offset-transparent' : ''}`}
-                    style={{
-                      left: `${ts.positionX}%`,
-                      top: `${ts.positionY}%`,
-                      transform: 'translate(-50%, -50%)',
-                      maxWidth: ts.maxWidth > 0 ? `${ts.maxWidth}%` : undefined,
-                      opacity: fadeOpacity,
-                      pointerEvents: 'auto',
-                      cursor: 'move',
-                    }}
-                    onMouseDown={(e) => {
-                      e.stopPropagation()
-                      clickedTextOverlayRef.current = true
-                      selectClip(tc.id)
-                      // Capture panel state at mousedown time so we can restore it after any
-                      // spurious onClick handlers that might close it
-                      const wasOpen = showPropertiesPanel
-                      const clipId = tc.id
-                      const container = (e.currentTarget.parentElement as HTMLElement)
-                      if (!container) return
-                      const rect = container.getBoundingClientRect()
-                      const onMove = (ev: MouseEvent) => {
-                        const px = Math.max(0, Math.min(100, ((ev.clientX - rect.left) / rect.width) * 100))
-                        const py = Math.max(0, Math.min(100, ((ev.clientY - rect.top) / rect.height) * 100))
-                        setClipTextPosition(tc.id, px, py)
-                      }
-                      const onUp = () => {
-                        window.removeEventListener('mousemove', onMove)
-                        window.removeEventListener('mouseup', onUp)
-                        // Reset the ref and restore state after all click events have fired
-                        requestAnimationFrame(() => {
-                          clickedTextOverlayRef.current = false
-                          selectClip(clipId)
-                          if (wasOpen) setShowPropertiesPanel(true)
-                        })
-                      }
-                      window.addEventListener('mousemove', onMove)
-                      window.addEventListener('mouseup', onUp)
-                    }}
-                    onClick={(e) => e.stopPropagation()}
-                    onDoubleClick={(e) => {
-                      e.stopPropagation()
-                      selectClip(tc.id)
-                      setShowPropertiesPanel(true)
-                    }}
-                  >
-                    <div
-                      style={{
-                        fontFamily: ts.fontFamily,
-                        fontSize: `${ts.fontSize * 0.05}vh`,
-                        fontWeight: ts.fontWeight,
-                        fontStyle: ts.fontStyle,
-                        color: ts.color,
-                        backgroundColor: ts.backgroundColor,
-                        textAlign: ts.textAlign,
-                        padding: ts.padding > 0 ? `${ts.padding * 0.04}vh` : undefined,
-                        borderRadius: ts.borderRadius > 0 ? `${ts.borderRadius}px` : undefined,
-                        letterSpacing: ts.letterSpacing !== 0 ? `${ts.letterSpacing}px` : undefined,
-                        lineHeight: ts.lineHeight,
-                        textShadow: ts.shadowBlur > 0 || ts.shadowOffsetX !== 0 || ts.shadowOffsetY !== 0
-                          ? `${ts.shadowOffsetX}px ${ts.shadowOffsetY}px ${ts.shadowBlur}px ${ts.shadowColor}`
-                          : undefined,
-                        WebkitTextStroke: ts.strokeWidth > 0 && ts.strokeColor !== 'transparent'
-                          ? `${ts.strokeWidth}px ${ts.strokeColor}`
-                          : undefined,
-                        whiteSpace: 'pre-wrap',
-                        wordBreak: 'break-word',
-                        userSelect: 'none',
-                      }}
-                    >
-                      {ts.text}
-                    </div>
-                  </div>
-                )
-              })}
+              {activeTextClips.map(tc => (
+                <TextOverlayBox
+                  key={`text-${tc.id}`}
+                  clip={tc}
+                  frameHeight={videoFrameSize.height}
+                  // While playing, the store's time lags (it's throttled) — use the live
+                  // playhead so React renders agree with the per-frame opacity loop.
+                  time={isPlaying ? playbackTimeRef.current : currentTime}
+                  selected={selectedClipIds.has(tc.id)}
+                  registerEl={(id, el) => { if (el) textOverlayElsRef.current.set(id, el); else textOverlayElsRef.current.delete(id) }}
+                  onTransformCommit={(patch) => updateClip(tc.id, { textStyle: { ...tc.textStyle!, ...patch } })}
+                  onBodyMouseDown={(e) => {
+                    e.stopPropagation()
+                    clickedTextOverlayRef.current = true
+                    selectClip(tc.id)
+                    // Capture panel state at mousedown time so we can restore it after any
+                    // spurious onClick handlers that might close it
+                    const wasOpen = showPropertiesPanel
+                    const clipId = tc.id
+                    const container = (e.currentTarget.parentElement as HTMLElement)
+                    if (!container) return
+                    const rect = container.getBoundingClientRect()
+                    const onMove = (ev: MouseEvent) => {
+                      const px = Math.max(0, Math.min(100, ((ev.clientX - rect.left) / rect.width) * 100))
+                      const py = Math.max(0, Math.min(100, ((ev.clientY - rect.top) / rect.height) * 100))
+                      setClipTextPosition(tc.id, px, py)
+                    }
+                    const onUp = () => {
+                      window.removeEventListener('mousemove', onMove)
+                      window.removeEventListener('mouseup', onUp)
+                      // Reset the ref and restore state after all click events have fired
+                      requestAnimationFrame(() => {
+                        clickedTextOverlayRef.current = false
+                        selectClip(clipId)
+                        if (wasOpen) setShowPropertiesPanel(true)
+                      })
+                    }
+                    window.addEventListener('mousemove', onMove)
+                    window.addEventListener('mouseup', onUp)
+                  }}
+                  onDoubleClick={(e) => {
+                    e.stopPropagation()
+                    selectClip(tc.id)
+                    setShowPropertiesPanel(true)
+                  }}
+                />
+              ))}
 
               {/* Subtitle overlay */}
               {activeSubtitles.length > 0 && (

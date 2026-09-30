@@ -89,6 +89,40 @@ export function textFadeMultiplier(
   return g
 }
 
+/** Linear interpolation over {t, value} keys (holds the end values). */
+export function linearKeyframeValue(keys: { t: number; value: number }[], t: number): number {
+  const sorted = keys.length > 1 && keys.some((k, i) => i > 0 && k.t < keys[i - 1].t)
+    ? [...keys].sort((a, b) => a.t - b.t)
+    : keys
+  if (t <= sorted[0].t) return sorted[0].value
+  const last = sorted[sorted.length - 1]
+  if (t >= last.t) return last.value
+  for (let i = 0; i < sorted.length - 1; i++) {
+    const a = sorted[i]
+    const b = sorted[i + 1]
+    if (t < b.t) return a.value + (b.value - a.value) * ((t - a.t) / Math.max(1e-6, b.t - a.t))
+  }
+  return last.value
+}
+
+/** Text-overlay opacity (0..1) at a timeline time: keyframed or static base
+ *  opacity, times the fade in/out ramp. Mirrors the export's drawtext alpha. */
+export function textClipOpacity(
+  clip: { startTime: number; duration: number; textFadeIn?: number; textFadeOut?: number;
+    opacityKeyframes?: { t: number; value: number }[]; textStyle?: { opacity: number } | null },
+  time: number,
+  /** Uncommitted slider value being previewed for this clip (0..100), if any. */
+  previewOpacity?: number | null,
+): number {
+  const base = previewOpacity != null
+    ? previewOpacity
+    : clip.opacityKeyframes && clip.opacityKeyframes.length > 0
+      ? linearKeyframeValue(clip.opacityKeyframes, time - clip.startTime)
+      : clip.textStyle?.opacity ?? 100
+  return Math.max(0, Math.min(1, base / 100)) *
+    textFadeMultiplier(clip.startTime, clip.duration, time, clip.textFadeIn, clip.textFadeOut)
+}
+
 /** A single volume-automation keyframe: `t` seconds from clip start, `value` gain 0..2. */
 export interface VolumeKeyframe { t: number; value: number }
 

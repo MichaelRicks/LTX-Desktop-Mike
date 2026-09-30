@@ -2,9 +2,12 @@ import { useState, useRef, useCallback, useEffect, useMemo } from 'react'
 import { X, Download, FolderOpen, Film, Package, Loader2, Check, AlertCircle, ChevronDown } from 'lucide-react'
 import { Button } from './ui/button'
 import type { Track, TimelineClip } from '../types/project-model'
-import { buildExportPayload } from '../views/editor/export-payload'
+import { buildExportPayload, sliceExportPayloadToRange } from '../views/editor/export-payload'
+import { formatTime } from '../views/editor/video-editor-utils'
 import {
   selectActiveTimeline,
+  selectActiveTimelineInPoint,
+  selectActiveTimelineOutPoint,
   selectAssets,
   selectClips,
   selectShowExportModal,
@@ -152,9 +155,26 @@ export function ExportModal({ projectName }: ExportModalProps) {
   const tracks = useEditorStore(selectTracks)
   const subtitles = useEditorStore(selectSubtitles)
 
-  const payload = useMemo(
+  const inPoint = useEditorStore(selectActiveTimelineInPoint)
+  const outPoint = useEditorStore(selectActiveTimelineOutPoint)
+  const hasMarks = inPoint != null || outPoint != null
+  // Export the In→Out range when marks are set (the default), else the whole cut.
+  const [useRange, setUseRange] = useState(true)
+  const fullPayload = useMemo(
     () => buildExportPayload(assets, clips, tracks, subtitles),
     [assets, clips, tracks, subtitles],
+  )
+  const programEnd = useMemo(() => Math.max(
+    0,
+    ...fullPayload.clips.map(c => c.startTime + c.duration),
+    ...(fullPayload.textOverlays ?? []).map(o => o.endTime),
+  ), [fullPayload])
+  const rangeIn = inPoint ?? 0
+  const rangeOut = outPoint ?? programEnd
+  const rangeActive = hasMarks && useRange && rangeOut - rangeIn > 0.01
+  const payload = useMemo(
+    () => (rangeActive ? sliceExportPayloadToRange(fullPayload, rangeIn, rangeOut) : fullPayload),
+    [fullPayload, rangeActive, rangeIn, rangeOut],
   )
 
   const [exportStatus, setExportStatus] = useState<ExportStatus>('idle')
@@ -166,13 +186,18 @@ export function ExportModal({ projectName }: ExportModalProps) {
   const abortRef = useRef(false)
 
   // Export settings
-  const [settings, setSettings] = useState<ExportSettings>({
-    codec: 'h264',
-    width: 1920,
-    height: 1080,
-    fps: 24,
-    quality: 18, // CRF 18 for h264
+  // Resolution defaults to 720p and then remembers the last one used.
+  const [settings, setSettings] = useState<ExportSettings>(() => {
+    let res = { width: 1280, height: 720 }
+    try {
+      const saved = JSON.parse(localStorage.getItem('export.resolution') || 'null')
+      if (saved && RESOLUTIONS.some(r => r.width === saved.width && r.height === saved.height)) res = saved
+    } catch { /* storage unavailable */ }
+    return { codec: 'h264', ...res, fps: 24, quality: 18 } // CRF 18 for h264
   })
+  useEffect(() => {
+    try { localStorage.setItem('export.resolution', JSON.stringify({ width: settings.width, height: settings.height })) } catch { /* storage unavailable */ }
+  }, [settings.width, settings.height])
   const [burnSubtitles, setBurnSubtitles] = useState(true)
   // 9:16 exports crop every visual clip to its reframe window (set in the program
   // monitor's 9:16 guide); the resolution presets flip to portrait.
@@ -195,6 +220,7 @@ export function ExportModal({ projectName }: ExportModalProps) {
     setExportPath(null)
     setExportFrameInfo('')
     abortRef.current = false
+    setUseRange(true)
     // Default the orientation to match the editor: if the program monitor's 9:16
     // guide is on, the user is cutting for vertical — don't silently export 16:9.
     try {
@@ -493,6 +519,32 @@ export function ExportModal({ projectName }: ExportModalProps) {
                   ))}
                 </div>
               </div>
+
+              {/* Range — only offered when In/Out marks exist */}
+              {hasMarks && (
+                <div>
+                  <label className="text-[10px] text-zinc-500 uppercase tracking-wider font-semibold mb-1.5 block">Range</label>
+                  <div className="grid grid-cols-2 gap-2">
+                    {([
+                      { v: true, label: 'In → Out', desc: `${formatTime(rangeIn)} – ${formatTime(rangeOut)}` },
+                      { v: false, label: 'Entire timeline', desc: `${formatTime(0)} – ${formatTime(programEnd)}` },
+                    ] as const).map(opt => (
+                      <button
+                        key={opt.label}
+                        onClick={() => setUseRange(opt.v)}
+                        className={`px-3 py-2 rounded-lg border text-left transition-colors ${
+                          useRange === opt.v
+                            ? 'border-blue-500 bg-blue-600/15 text-white'
+                            : 'border-zinc-700 bg-zinc-800 text-zinc-300 hover:border-zinc-600'
+                        }`}
+                      >
+                        <div className="text-sm font-medium">{opt.label}</div>
+                        <div className="text-[10px] text-zinc-500 font-mono tabular-nums">{opt.desc}</div>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
 
               {/* Orientation */}
               <div>

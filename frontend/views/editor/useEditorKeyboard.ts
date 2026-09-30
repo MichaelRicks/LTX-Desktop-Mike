@@ -60,7 +60,16 @@ export function useEditorKeyboard(params: UseEditorKeyboardParams) {
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) {
+        // Esc from a properties control: sliders/checkboxes keep focus after use,
+        // which used to swallow Esc entirely. Non-text controls let Esc through
+        // (deselect); text fields just give up focus, so a second Esc deselects.
+        if (e.key !== 'Escape') return
+        const isTextField = e.target instanceof HTMLTextAreaElement ||
+          !['range', 'checkbox', 'radio', 'button', 'color'].includes(e.target.type)
+        e.target.blur()
+        if (isTextField) return
+      }
       if (refs.isKbEditorOpenRef.current) return
 
       const context = contextRef.current

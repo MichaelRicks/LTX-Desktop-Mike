@@ -1,7 +1,8 @@
 import path from 'path'
 import fs from 'fs'
 import os from 'os'
-import { getAllowedRoots } from '../config'
+import { getAllowedRoots, getCurrentDir, isDev } from '../config'
+import { findFont } from '../../shared/font-catalog'
 import { getMainWindow } from '../window'
 import { logger } from '../logger'
 import { validatePath } from '../path-validation'
@@ -26,6 +27,44 @@ function resolveExportFont(): string | undefined {
   for (const f of candidates) {
     try { if (fs.existsSync(f)) return f } catch { /* ignore */ }
   }
+  return undefined
+}
+
+/** Where the bundled overlay fonts live: public/fonts in dev; in the packaged app
+ *  dist/fonts, unpacked from asar (see electron-builder asarUnpack) because ffmpeg
+ *  reads the file directly and can't see inside the archive. */
+function bundledFontsDir(): string {
+  return isDev
+    ? path.join(getCurrentDir(), 'public', 'fonts')
+    : path.join(process.resourcesPath, 'app.asar.unpacked', 'dist', 'fonts')
+}
+
+/** Windows keeps machine fonts in %WINDIR%\Fonts and per-user installs in
+ *  %LOCALAPPDATA%\Microsoft\Windows\Fonts. */
+function systemFontDirs(): string[] {
+  if (process.platform !== 'win32') return []
+  const dirs = [path.join(process.env.WINDIR || 'C:/Windows', 'Fonts')]
+  if (process.env.LOCALAPPDATA) dirs.push(path.join(process.env.LOCALAPPDATA, 'Microsoft', 'Windows', 'Fonts'))
+  return dirs
+}
+
+/** Font file for a text overlay: the catalog's bundled/system file for its family
+ *  (bold face when asked for and available), else undefined → default font. */
+function resolveOverlayFontFile(fontFamily: string | undefined, bold: boolean): string | undefined {
+  const entry = findFont(fontFamily)
+  const candidates: string[] = []
+  if (entry.bundled) {
+    const file = (bold && entry.bundled.bold) || entry.bundled.regular
+    candidates.push(path.join(bundledFontsDir(), file))
+  }
+  if (entry.system) {
+    const file = (bold && entry.system.bold) || entry.system.regular
+    for (const dir of systemFontDirs()) candidates.push(path.join(dir, file))
+  }
+  for (const c of candidates) {
+    try { if (fs.existsSync(c)) return c } catch { /* ignore */ }
+  }
+  logger.warn(`[Export] No font file for "${fontFamily}" — using the default font`)
   return undefined
 }
 
@@ -86,7 +125,10 @@ export async function exportTimelineNative(
     logger.info( `[Export] Step 1: Video-only export (${segments.length} segments)`)
     {
       const fontFile = resolveExportFont()
-      const { inputs, filterScript } = buildVideoFilterGraph(segments, { width, height, fps, letterbox, subtitles, textOverlays, fontFile, vertical })
+      const { inputs, filterScript } = buildVideoFilterGraph(segments, {
+        width, height, fps, letterbox, subtitles, textOverlays, fontFile, vertical,
+        resolveFontFile: resolveOverlayFontFile,
+      })
 
       const filterFile = path.join(tmpDir, `ltx-filter-v-${ts}.txt`)
       fs.writeFileSync(filterFile, filterScript, 'utf8')

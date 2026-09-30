@@ -77,6 +77,7 @@ export function buildExportPayload(
         endTime: clip.startTime + clip.duration,
         fadeIn: clip.textFadeIn ?? 0.5,
         fadeOut: clip.textFadeOut ?? 0.5,
+        opacityKeyframes: clip.opacityKeyframes,
         style: {
           fontSize: ts.fontSize,
           color: ts.color,
@@ -91,6 +92,10 @@ export function buildExportPayload(
           opacity: ts.opacity,
           padding: ts.padding,
           textAlign: ts.textAlign,
+          fontFamily: ts.fontFamily,
+          fontWeight: ts.fontWeight,
+          scaleX: ts.scaleX,
+          scaleY: ts.scaleY,
         },
       }
     })
@@ -118,5 +123,83 @@ export function buildExportPayload(
     subtitles: burnSubtitles && subtitleData.length > 0 ? subtitleData : undefined,
     textOverlays: textOverlayData.length > 0 ? textOverlayData : undefined,
     letterbox,
+  }
+}
+
+/**
+ * Cut an export payload down to the program range [inPoint, outPoint) and shift
+ * it to start at 0 — "export In→Out". Clips are trimmed where the range cuts
+ * them; anything keyed to clip-local time (volume/opacity keys, image reframe
+ * keys) is shifted by the head cut, and fades/transitions on a cut edge are
+ * dropped (the cut isn't the clip's real start/end). Video reframe keys are on
+ * source time, so a trimStart change keeps them aligned for free.
+ */
+export function sliceExportPayloadToRange(
+  payload: ExportTimelinePayload,
+  inPoint: number,
+  outPoint: number,
+): ExportTimelinePayload {
+  const EPS = 1e-4
+  // Keep every key (a key before the cut still shapes the ramp into the range);
+  // interpolation holds the end values, so negative / past-the-end times are fine.
+  const shiftKeys = <K extends { t: number }>(keys: K[] | undefined, by: number): K[] | undefined => {
+    if (!keys || keys.length === 0 || by === 0) return keys
+    return keys.map(k => ({ ...k, t: k.t - by }))
+  }
+
+  const clips = payload.clips.flatMap(c => {
+    const end = c.startTime + c.duration
+    const s = Math.max(c.startTime, inPoint)
+    const e = Math.min(end, outPoint)
+    if (e - s <= EPS) return []
+    const headCut = s - c.startTime
+    const tailCut = end - e
+    const speed = c.speed || 1
+    // Reversed clips play their source backwards: cutting the timeline's tail
+    // removes the source's head, so it's the tail cut that advances trimStart.
+    const trimStart = c.reversed ? c.trimStart + tailCut * speed : c.trimStart + headCut * speed
+    const dur = e - s
+    return [{
+      ...c,
+      startTime: s - inPoint,
+      duration: dur,
+      trimStart,
+      audioFadeIn: headCut > EPS ? 0 : c.audioFadeIn,
+      audioFadeOut: tailCut > EPS ? 0 : c.audioFadeOut,
+      transitionIn: headCut > EPS ? undefined : c.transitionIn,
+      transitionOut: tailCut > EPS ? undefined : c.transitionOut,
+      volumeKeyframes: shiftKeys(c.volumeKeyframes, headCut),
+      reframe: c.reframe && c.type === 'image' && c.reframe.keys
+        ? { ...c.reframe, keys: shiftKeys(c.reframe.keys, headCut) }
+        : c.reframe,
+    }]
+  })
+
+  const textOverlays = payload.textOverlays?.flatMap(o => {
+    const s = Math.max(o.startTime, inPoint)
+    const e = Math.min(o.endTime, outPoint)
+    if (e - s <= EPS) return []
+    const headCut = s - o.startTime
+    return [{
+      ...o,
+      startTime: s - inPoint,
+      endTime: e - inPoint,
+      fadeIn: headCut > EPS ? 0 : o.fadeIn,
+      fadeOut: o.endTime - e > EPS ? 0 : o.fadeOut,
+      opacityKeyframes: shiftKeys(o.opacityKeyframes, headCut),
+    }]
+  })
+
+  const subtitles = payload.subtitles?.flatMap(sub => {
+    const s = Math.max(sub.startTime, inPoint)
+    const e = Math.min(sub.endTime, outPoint)
+    return e - s <= EPS ? [] : [{ ...sub, startTime: s - inPoint, endTime: e - inPoint }]
+  })
+
+  return {
+    ...payload,
+    clips,
+    textOverlays: textOverlays && textOverlays.length > 0 ? textOverlays : undefined,
+    subtitles: subtitles && subtitles.length > 0 ? subtitles : undefined,
   }
 }
