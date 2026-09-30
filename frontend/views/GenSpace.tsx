@@ -1930,6 +1930,18 @@ export function GenSpace() {
   const [promptHistory, setPromptHistory] = useState<string[]>([])
   const [historyIndex, setHistoryIndex] = useState(-1)
   const [inputImage, setInputImage] = useState<string | null>(null)
+  // Source image's aspect ratio — an image EDIT comes out in the source's shape
+  // (not the prompt bar's aspect setting), so the "Generating…" card uses this.
+  const [inputImageRatio, setInputImageRatio] = useState<number | null>(null)
+  useEffect(() => {
+    setInputImageRatio(null)
+    if (!inputImage) return
+    let alive = true
+    const img = new window.Image()
+    img.onload = () => { if (alive && img.naturalWidth && img.naturalHeight) setInputImageRatio(img.naturalWidth / img.naturalHeight) }
+    img.src = pathToFileUrl(inputImage)
+    return () => { alive = false }
+  }, [inputImage])
   const [inputLastImage, setInputLastImage] = useState<string | null>(null)
   const [inputAudio, setInputAudio] = useState<string | null>(null)
   const [keyframes, setKeyframes] = useState<KeyframeItem[]>([])
@@ -4491,8 +4503,18 @@ export function GenSpace() {
               />
             )}
             {(() => {
+              // In the Natural (masonry) layout the placeholder takes the shape of what's
+              // being generated, so a 9:16 render doesn't sit in a 16:9 box and then jump.
+              const arMatch = settings.aspectRatio?.match(/^(\d+(?:\.\d+)?):(\d+(?:\.\d+)?)$/)
+              const pendingRatio = mode === 'image' && inputImage && inputImageRatio
+                ? inputImageRatio // image edit: output keeps the source's shape
+                : arMatch ? Number(arMatch[1]) / Number(arMatch[2]) : 16 / 9
               const generatingCard = isGenerating && (
-                <div key="__generating__" className="relative rounded-xl overflow-hidden bg-zinc-800 aspect-video">
+                <div
+                  key="__generating__"
+                  className={`relative rounded-xl overflow-hidden bg-zinc-800 ${natural ? '' : 'aspect-video'}`}
+                  style={natural ? { aspectRatio: pendingRatio } : undefined}
+                >
                   <div className="absolute inset-0 flex flex-col items-center justify-center">
                     <div className="relative w-16 h-16 mb-3">
                       <div className="absolute inset-0 rounded-full border-2 border-violet-500/30" />
@@ -4526,7 +4548,7 @@ export function GenSpace() {
                 <MasonryGrid
                   minColWidth={galleryMinColWidth[gallerySize]}
                   items={generatingCard
-                    ? [{ key: '__generating__', ratio: 16 / 9, node: generatingCard }, ...assetCardItems]
+                    ? [{ key: '__generating__', ratio: pendingRatio, node: generatingCard }, ...assetCardItems]
                     : assetCardItems}
                 />
               ) : (

@@ -334,6 +334,9 @@ export function ExportModal({ projectName }: ExportModalProps) {
       setExportPath(filePath)
       setExportFrameInfo('Export complete')
       setExportStatus('done')
+      // Open Explorer with the new file already selected (like Post to X), so it's
+      // ready to drag into an upload without hunting through the folder.
+      void window.electronAPI?.showItemInFolder({ filePath })
     } catch (err) {
       setExportError(String(err))
       setExportStatus('error')
@@ -418,7 +421,7 @@ export function ExportModal({ projectName }: ExportModalProps) {
                   className="border-zinc-700 text-zinc-300"
                   onClick={() => {
                     if (exportPath) {
-                      window.electronAPI?.openParentFolderOfFile({ filePath: exportPath })
+                      void window.electronAPI?.showItemInFolder({ filePath: exportPath })
                     }
                   }}
                 >
