@@ -50,6 +50,10 @@ extraResources:
     to: icon.ico
   - from: resources/icon.png
     to: icon.png
+  # The rix-editor skill that "Connect Claude" installs into the user's
+  # ~/.claude/skills (electron/mcp/claude-connect.ts reads <resourcesPath>/claude).
+  - from: resources/claude
+    to: claude
 
 win:
   target:

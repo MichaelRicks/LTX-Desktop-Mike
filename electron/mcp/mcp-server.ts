@@ -10,6 +10,7 @@ import { listLibrary, ensureLibFolder } from '../ipc/library-handlers'
 import { exportTimelineNative, type ExportNativeInput } from '../export/export-handler'
 import { callEditor, registerEditorBridge } from './editor-bridge'
 import { handle } from '../ipc/typed-handle'
+import { claudeConnectStatus, connectClaude, disconnectClaude } from './claude-connect'
 import { analyzeAudio, probeMedia, sampleFrames, type Frame } from './media-tools'
 
 /**
@@ -408,6 +409,31 @@ function registerMcpIpc(): void {
     if (enabled && !server) listen()
     if (!enabled && server && !forcedOn()) { server.close(); server = null; logger.info('[MCP] server stopped (user disabled)') }
     return { success: true as const }
+  })
+
+  // "Connect Claude": one-time setup of the user's own Claude Code (see claude-connect.ts).
+  handle('claudeConnectStatus', () => claudeConnectStatus(loadConfig()))
+
+  handle('claudeConnect', ({ updateSkill }) => {
+    try {
+      const cfg = loadConfig()
+      const result = connectClaude(cfg, { updateSkill })
+      // Connecting implies the user wants Claude to reach the editor.
+      if (!cfg.enabled) saveConfig({ ...cfg, enabled: true })
+      if (!server) listen()
+      return { success: true as const, ...result }
+    } catch (e) {
+      return { success: false as const, error: e instanceof Error ? e.message : String(e) }
+    }
+  })
+
+  handle('claudeDisconnect', () => {
+    try {
+      disconnectClaude()
+      return { success: true as const }
+    } catch (e) {
+      return { success: false as const, error: e instanceof Error ? e.message : String(e) }
+    }
   })
 
   // "Direct with Claude": open Claude Desktop's Code tab with the brief PREFILLED (the

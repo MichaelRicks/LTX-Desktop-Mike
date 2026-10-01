@@ -98,6 +98,7 @@ export function buildDirectorPrompt(
 }
 
 type McpStatus = Awaited<ReturnType<typeof window.electronAPI.mcpGetStatus>>
+type ConnectStatus = Awaited<ReturnType<typeof window.electronAPI.claudeConnectStatus>>
 
 function agoLabel(ts: number | null | undefined): string {
   if (!ts) return 'never'
@@ -133,9 +134,32 @@ export function DirectWithClaudeModal({ project, projectAudio, timelines, onClos
     }).catch(() => {})
   }, [])
 
+  // One-time "Connect Claude" setup: are RiX's tools registered with the user's
+  // Claude Code (for THIS install's address + token) and is the skill installed?
+  const [conn, setConn] = useState<ConnectStatus | null>(null)
+  const [connecting, setConnecting] = useState(false)
   const refreshStatus = useCallback(() => {
     void window.electronAPI.mcpGetStatus().then(setStatus).catch(() => {})
+    void window.electronAPI.claudeConnectStatus().then(setConn).catch(() => {})
   }, [])
+  const connected = !!conn?.mcpRegistered && !!conn?.skillInstalled
+
+  const connect = async (updateSkill = false) => {
+    setConnecting(true)
+    setError(null)
+    try {
+      const r = await window.electronAPI.claudeConnect({ updateSkill })
+      if (!r.success) setError(r.error)
+    } finally {
+      setConnecting(false)
+      refreshStatus()
+    }
+  }
+  const disconnect = async () => {
+    const r = await window.electronAPI.claudeDisconnect()
+    if (!r.success) setError(r.error)
+    refreshStatus()
+  }
   useEffect(() => {
     refreshStatus()
     const t = setInterval(refreshStatus, 3000)
@@ -144,7 +168,7 @@ export function DirectWithClaudeModal({ project, projectAudio, timelines, onClos
 
   const prompt = useMemo(() => buildDirectorPrompt(brief, project, timelines), [brief, project, timelines])
   const revising = brief.mode === 'revise'
-  const ready = !!status?.running && (!revising || !!brief.timelineId)
+  const ready = !!status?.running && connected && (!revising || !!brief.timelineId)
 
   const openInClaude = async () => {
     setOpening(true)
@@ -179,36 +203,94 @@ export function DirectWithClaudeModal({ project, projectAudio, timelines, onClos
         </div>
 
         <div className="p-6 overflow-y-auto flex-1 space-y-4">
-          {/* Connection */}
-          <div className="flex items-center justify-between gap-3 rounded-xl border border-zinc-800 bg-zinc-950/50 px-4 py-3">
-            <div className="flex items-center gap-2.5 min-w-0">
-              <span className={`h-2.5 w-2.5 rounded-full flex-shrink-0 ${
-                !ready ? 'bg-zinc-600' : status?.lastClient ? 'bg-emerald-400' : 'bg-amber-400'
-              }`} />
-              <div className="text-xs min-w-0">
-                {!ready ? (
-                  <span className="text-zinc-300">Claude can't reach the editor yet.</span>
-                ) : status?.lastClient ? (
-                  <span className="text-zinc-300">
-                    Editor is open to Claude · last connected: <span className="text-white">{status.lastClient.name}</span>, {agoLabel(status.lastClient.at)}
-                  </span>
-                ) : (
-                  <span className="text-zinc-300">Editor is open to Claude · no Claude app has connected yet.</span>
+          {/* Connection: one-time Connect Claude setup, then a live status line. */}
+          {conn && !connected ? (
+            <div className="rounded-xl border border-[rgb(var(--accent)/0.5)] bg-[rgb(var(--accent)/0.08)] px-4 py-3.5 space-y-2.5">
+              <div className="flex items-center gap-2.5">
+                <span className="h-2.5 w-2.5 rounded-full flex-shrink-0 bg-zinc-500" />
+                <span className="text-sm font-semibold text-white">
+                  {conn.mcpRegistered || conn.skillInstalled ? 'Finish connecting Claude' : 'Connect Claude (one-time setup)'}
+                </span>
+              </div>
+              {conn.claudeFound ? (
+                <>
+                  <p className="text-xs text-zinc-300 leading-relaxed">
+                    Claude runs in your own Claude app, on your own Claude plan. Connecting does two things on this computer:
+                  </p>
+                  <ul className="text-xs text-zinc-400 leading-relaxed list-disc pl-5 space-y-0.5">
+                    <li>adds RiX's editing tools to Claude Code{conn.mcpRegistered ? ' — done' : ''}</li>
+                    <li>installs the RiX editing skill in your Claude skills folder{conn.skillInstalled ? ' — done' : ''}</li>
+                  </ul>
+                  <button
+                    onClick={() => void connect()}
+                    disabled={connecting}
+                    className="mt-1 px-4 py-2 rounded-lg bg-[rgb(var(--accent))] hover:brightness-110 disabled:opacity-50 text-white text-sm font-semibold flex items-center gap-2 transition"
+                  >
+                    {connecting && <Loader2 className="h-4 w-4 animate-spin" />}
+                    Connect Claude
+                  </button>
+                </>
+              ) : (
+                <>
+                  <p className="text-xs text-zinc-300 leading-relaxed">
+                    Claude Code wasn't found on this computer. Install Claude Desktop, sign in, open its <span className="text-white">Code</span> tab once, then come back here.
+                  </p>
+                  <button
+                    onClick={() => void window.electronAPI.openExternalUrl({ url: 'https://claude.com/download' })}
+                    className="mt-1 px-4 py-2 rounded-lg border border-zinc-600 hover:border-zinc-400 text-white text-sm font-medium flex items-center gap-2 transition-colors"
+                  >
+                    <ExternalLink className="h-4 w-4" />Get Claude Desktop
+                  </button>
+                </>
+              )}
+            </div>
+          ) : (
+            <div className="rounded-xl border border-zinc-800 bg-zinc-950/50 px-4 py-3 space-y-2">
+              <div className="flex items-center justify-between gap-3">
+                <div className="flex items-center gap-2.5 min-w-0">
+                  <span className={`h-2.5 w-2.5 rounded-full flex-shrink-0 ${
+                    !status?.running ? 'bg-zinc-600' : status?.lastClient ? 'bg-emerald-400' : 'bg-amber-400'
+                  }`} />
+                  <div className="text-xs min-w-0">
+                    {!status?.running ? (
+                      <span className="text-zinc-300">Connected to Claude, but the editor is closed to it — turn on the switch.</span>
+                    ) : status?.lastClient ? (
+                      <span className="text-zinc-300">
+                        Connected to Claude · last used by <span className="text-white">{status.lastClient.name}</span>, {agoLabel(status.lastClient.at)}
+                      </span>
+                    ) : (
+                      <span className="text-zinc-300">Connected to Claude · ready for your first brief.</span>
+                    )}
+                  </div>
+                </div>
+                {status && !status.forcedOn && (
+                  <label className="flex items-center gap-2 text-xs text-zinc-300 flex-shrink-0 cursor-pointer" title="Lets your Claude app edit timelines in RiX through a private, local-only connection">
+                    <input
+                      type="checkbox"
+                      checked={status.enabled}
+                      onChange={(e) => void window.electronAPI.mcpSetEnabled({ enabled: e.target.checked }).then(refreshStatus)}
+                      className="accent-[rgb(var(--accent))]"
+                    />
+                    Allow Claude to control the editor
+                  </label>
                 )}
               </div>
+              {conn && (
+                <div className="flex items-center gap-3 pl-5 text-[11px] text-zinc-500">
+                  {!conn.skillCurrent && (
+                    <button onClick={() => void connect(true)} disabled={connecting} className="text-amber-300 hover:text-amber-200 underline underline-offset-2"
+                      title="Your installed RiX skill differs from the one in this version of RiX. Updating keeps a backup of the old file.">
+                      Update the RiX skill
+                    </button>
+                  )}
+                  <button onClick={() => void disconnect()} className="hover:text-zinc-300 underline underline-offset-2"
+                    title="Removes RiX's tools from Claude Code. The skill file is left in place.">
+                    Disconnect
+                  </button>
+                </div>
+              )}
             </div>
-            {status && !status.forcedOn && (
-              <label className="flex items-center gap-2 text-xs text-zinc-300 flex-shrink-0 cursor-pointer" title="Lets your Claude app edit timelines in RiX through a private, local-only connection">
-                <input
-                  type="checkbox"
-                  checked={status.enabled}
-                  onChange={(e) => void window.electronAPI.mcpSetEnabled({ enabled: e.target.checked }).then(refreshStatus)}
-                  className="accent-[rgb(var(--accent))]"
-                />
-                Allow Claude to control the editor
-              </label>
-            )}
-          </div>
+          )}
 
           <div className="flex gap-2">
             {([['new', 'New cut'], ['revise', 'Revise a timeline']] as Array<[DirectorMode, string]>).map(([m, label]) => (

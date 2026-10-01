@@ -362,6 +362,25 @@ export const electronAPISchemas = {
     input: z.object({ enabled: z.boolean() }),
     output: emptyResult,
   },
+  // "Connect Claude": is the user's Claude Code set up to drive this RiX install?
+  claudeConnectStatus: {
+    input: z.object({}),
+    output: z.object({
+      claudeFound: z.boolean(),
+      mcpRegistered: z.boolean(),
+      skillInstalled: z.boolean(),
+      skillCurrent: z.boolean(),
+    }),
+  },
+  // Registers the RiX tools with the user's Claude Code and installs the editing skill.
+  claudeConnect: {
+    input: z.object({ updateSkill: z.boolean().optional() }),
+    output: ipcResult({ via: z.enum(['cli', 'config']), skill: z.enum(['installed', 'updated', 'kept', 'current']) }),
+  },
+  claudeDisconnect: {
+    input: z.object({}),
+    output: emptyResult,
+  },
   // "Direct with Claude": open Claude Desktop's Code tab with this brief prefilled.
   openClaudeCode: {
     input: z.object({ prompt: z.string() }),
