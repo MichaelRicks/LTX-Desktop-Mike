@@ -6,6 +6,7 @@ import { registerExportHandlers } from './export/export-handler'
 import { stopExportProcess } from './export/ffmpeg-utils'
 import { registerAppHandlers } from './ipc/app-handlers'
 import { registerFileHandlers } from './ipc/file-handlers'
+import { registerProjectBackupHandlers } from './ipc/project-backup-handlers'
 import { registerLibraryHandlers } from './ipc/library-handlers'
 import { registerLogHandlers } from './ipc/log-handlers'
 import { registerVideoProcessingHandlers } from './ipc/video-processing-handlers'
@@ -36,6 +37,7 @@ if (!gotLock) {
 
   registerAppHandlers()
   registerFileHandlers()
+  registerProjectBackupHandlers()
   registerLibraryHandlers()
   registerLogHandlers()
   registerExportHandlers()

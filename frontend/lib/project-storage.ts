@@ -1,5 +1,6 @@
 import { migrateProjectData, projectSchema, type Project } from '../types/project-model'
 import { logger } from './logger'
+import { removeProjectBackup, scheduleProjectBackup } from './project-backup'
 
 export const PROJECT_IDS_STORAGE_KEY = 'ltx-project-ids'
 export const PROJECT_STORAGE_KEY_PREFIX = 'ltx-project-'
@@ -56,13 +57,13 @@ export function readProject(projectId: string): Project | null {
 
 export function writeProject(projectId: string, project: Project): Project {
   const normalizedProject = projectSchema.parse({ ...project, id: projectId })
-  localStorage.setItem(
-    getProjectStorageKey(projectId),
-    JSON.stringify(normalizedProject),
-  )
+  const serialized = JSON.stringify(normalizedProject)
+  localStorage.setItem(getProjectStorageKey(projectId), serialized)
+  scheduleProjectBackup(projectId, serialized)
   return normalizedProject
 }
 
 export function deleteProjectEntry(projectId: string): void {
   localStorage.removeItem(getProjectStorageKey(projectId))
+  removeProjectBackup(projectId)
 }

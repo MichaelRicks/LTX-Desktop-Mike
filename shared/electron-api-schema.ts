@@ -281,6 +281,30 @@ export const electronAPISchemas = {
     output: ipcResult({ path: z.string() }),
   },
 
+  // On-disk copy of each project record (<project assets>/<id>/project.rix.json),
+  // so projects survive localStorage being rolled back or wiped.
+  saveProjectBackup: {
+    input: z.object({ projectId: z.string(), data: z.string() }),
+    output: emptyResult,
+  },
+  listProjectBackups: {
+    input: z.object({}),
+    output: z.array(z.object({
+      projectId: z.string(),
+      name: z.string(),
+      updatedAt: z.number(),
+      assetCount: z.number(),
+    })),
+  },
+  readProjectBackup: {
+    input: z.object({ projectId: z.string() }),
+    output: ipcResult({ data: z.string() }),
+  },
+  deleteProjectBackup: {
+    input: z.object({ projectId: z.string() }),
+    output: emptyResult,
+  },
+
   // File dialogs & save
   showSaveDialog: {
     input: z.object({

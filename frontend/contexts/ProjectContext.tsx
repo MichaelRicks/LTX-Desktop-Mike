@@ -19,6 +19,7 @@ interface ProjectContextType {
   setProject: (id: string, project: Project) => void
   createProject: (name: string) => Project
   importProject: (projectData: unknown) => Project
+  restoreProject: (projectData: unknown) => Project
   duplicateProject: (id: string) => Project | null
   deleteProject: (id: string) => void
   renameProject: (id: string, name: string) => void
@@ -208,6 +209,20 @@ export function ProjectProvider({ children }: { children: React.ReactNode }) {
     const nextProjectIds = [persistedProject.id, ...readProjectIds().filter(id => id !== persistedProject.id)]
     writeProjectIds(nextProjectIds)
     setProjectIds(nextProjectIds)
+    bumpProjectRevision()
+    return persistedProject
+  }, [bumpProjectRevision])
+
+  // Put back a project from its on-disk backup (lib/project-backup.ts). Unlike
+  // importProject this keeps the id, so the project's asset folder and backup
+  // file still belong to it, and it replaces a stale copy of the same project.
+  const restoreProject = useCallback((projectData: unknown): Project => {
+    const restored = normalizeProject(projectData)
+    const persistedProject = writeProject(restored.id, restored)
+    const nextProjectIds = [persistedProject.id, ...readProjectIds().filter(id => id !== persistedProject.id)]
+    writeProjectIds(nextProjectIds)
+    setProjectIds(nextProjectIds)
+    setActiveProject(prev => (prev?.id === persistedProject.id ? persistedProject : prev))
     bumpProjectRevision()
     return persistedProject
   }, [bumpProjectRevision])
@@ -432,6 +447,7 @@ export function ProjectProvider({ children }: { children: React.ReactNode }) {
       createProject,
       importProject,
       duplicateProject,
+      restoreProject,
       deleteProject,
       renameProject,
       activateProject,

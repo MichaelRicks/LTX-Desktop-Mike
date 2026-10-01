@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react'
-import { Plus, Folder, MoreVertical, Trash2, Pencil, Upload, Copy } from 'lucide-react'
+import { Plus, Folder, MoreVertical, Trash2, Pencil, Upload, Copy, HardDriveDownload } from 'lucide-react'
 import { useProjects } from '../contexts/ProjectContext'
 import { useView } from '../contexts/ViewContext'
 import { RixLogo } from '../components/RixLogo'
@@ -7,6 +7,7 @@ import { Button } from '../components/ui/button'
 import { pathToFileUrl } from '../lib/file-url'
 import type { Project } from '../types/project-model'
 import { useProjectReferencesMigration } from '../hooks/useProjectReferencesMigration'
+import { listProjectBackups, readProjectBackup, scheduleProjectBackup, type ProjectBackupInfo } from '../lib/project-backup'
 
 function formatDate(timestamp: number): string {
   const date = new Date(timestamp)
@@ -131,7 +132,7 @@ function ProjectCard({ project, onOpen, onDelete, onRename, onDuplicate }: {
 }
 
 export function Home() {
-  const { projectIds, getProject, createProject, importProject, duplicateProject, deleteProject, renameProject } = useProjects()
+  const { projectIds, getProject, createProject, importProject, restoreProject, duplicateProject, deleteProject, renameProject } = useProjects()
   const { openProject } = useView()
   const { migrationStatus, migrateProjects } = useProjectReferencesMigration()
   const [isCreating, setIsCreating] = useState(false)
@@ -140,6 +141,10 @@ export function Home() {
   const [renameValue, setRenameValue] = useState('')
   const [importError, setImportError] = useState<string | null>(null)
   const importFileRef = useRef<HTMLInputElement | null>(null)
+  // Projects whose on-disk backup is missing from (or newer than) localStorage.
+  const [restorable, setRestorable] = useState<ProjectBackupInfo[]>([])
+  const [restoreDismissed, setRestoreDismissed] = useState(false)
+  const [restoreError, setRestoreError] = useState<string | null>(null)
   const migrationStartedRef = useRef(false)
 
   const handleImportFile = async (e: ChangeEvent<HTMLInputElement>) => {
@@ -179,6 +184,41 @@ export function Home() {
       .map(projectId => getProject(projectId))
       .filter((project): project is Project => project !== null)
   ), [getProject, projectIds])
+
+  // Compare the project list with the backups on disk: offer to restore what
+  // localStorage lost, and write a backup for any project that has none yet.
+  useEffect(() => {
+    if (migrationStatus.status === 'needed' || migrationStatus.status === 'inProgress') return
+    let cancelled = false
+    void listProjectBackups().then(backups => {
+      if (cancelled) return
+      const backupById = new Map(backups.map(backup => [backup.projectId, backup]))
+      const localById = new Map(projects.map(project => [project.id, project]))
+      setRestorable(backups.filter(backup => {
+        const local = localById.get(backup.projectId)
+        return !local || backup.updatedAt > local.updatedAt
+      }))
+      for (const project of projects) {
+        const backup = backupById.get(project.id)
+        if (!backup || backup.updatedAt < project.updatedAt) {
+          scheduleProjectBackup(project.id, JSON.stringify(project))
+        }
+      }
+    }).catch(() => { /* backups are best-effort; Home still works without them */ })
+    return () => { cancelled = true }
+  }, [migrationStatus.status, projects])
+
+  const handleRestoreBackups = async () => {
+    const failed: string[] = []
+    for (const backup of restorable) {
+      try {
+        restoreProject(await readProjectBackup(backup.projectId))
+      } catch {
+        failed.push(backup.name)
+      }
+    }
+    setRestoreError(failed.length > 0 ? `Couldn't restore: ${failed.join(', ')}` : null)
+  }
 
   const handleCreateProject = () => {
     if (newProjectName.trim()) {
@@ -303,6 +343,32 @@ export function Home() {
           <div className="flex items-center justify-between mb-6">
             <h2 className="text-xl font-semibold text-white">Projects</h2>
           </div>
+
+          {restorable.length > 0 && !restoreDismissed && (
+            <div className="mb-6 rounded-lg border border-amber-500/40 bg-amber-500/10 p-4 flex items-start gap-3">
+              <HardDriveDownload className="h-5 w-5 text-amber-400 flex-shrink-0 mt-0.5" />
+              <div className="flex-1 min-w-0">
+                <p className="text-sm text-zinc-100">
+                  {restorable.length === 1
+                    ? '1 project saved on disk is missing from this list or newer than the copy here.'
+                    : `${restorable.length} projects saved on disk are missing from this list or newer than the copies here.`}
+                </p>
+                <p className="text-xs text-zinc-400 mt-1 truncate" title={restorable.map(backup => backup.name).join(', ')}>
+                  {restorable.map(backup => backup.name).join(', ')}
+                </p>
+                {restoreError && <p className="text-xs text-red-400 mt-1">{restoreError}</p>}
+              </div>
+              <Button onClick={() => void handleRestoreBackups()} className="bg-amber-600 hover:bg-amber-500">
+                Restore
+              </Button>
+              <button
+                onClick={() => setRestoreDismissed(true)}
+                className="px-3 py-2 rounded-lg text-sm text-zinc-400 hover:text-white hover:bg-zinc-800 transition-colors"
+              >
+                Not now
+              </button>
+            </div>
+          )}
           
           {projects.length === 0 ? (
             <div className="text-center py-16">
