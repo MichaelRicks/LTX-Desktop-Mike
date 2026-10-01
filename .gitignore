@@ -84,6 +84,8 @@ backend/generated/
 # Build artifacts
 release/
 python-embed/
+# Staged python-embed tarball parts for the GitHub release (~3 GB).
+python-release/
 # Generated at build time (sha256 of `uv export`); bundled into the app so the
 # first-run downloader can match the hosted python-embed archive. Regenerated
 # each build — must not be committed, or it would go stale vs. the lockfile.

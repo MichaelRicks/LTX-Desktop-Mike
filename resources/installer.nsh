@@ -1,4 +1,4 @@
-; Custom NSIS include for RiX Desktop Studio Pro installer
+; Custom NSIS include for RiX Film Studio Pro installer
 ; Installs the VC++ 2015-2022 Redistributable (x64) required by PyTorch/CUDA
 
 !macro customInstall

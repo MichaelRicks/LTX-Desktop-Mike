@@ -8,6 +8,7 @@ import { AppSettingsProvider, useAppSettings } from './contexts/AppSettingsConte
 import { DevFlagsProvider } from './contexts/DevFlagsContext'
 import { KeyboardShortcutsModal } from './components/KeyboardShortcutsModal'
 import { DevPanel } from './components/DevPanel'
+import { RixLogo } from './components/RixLogo'
 import { useBackend } from './hooks/use-backend'
 import { useGenerationRecoveryWatcher } from './hooks/use-generation-recovery-watcher'
 import { logger } from './lib/logger'
@@ -541,9 +542,9 @@ function AppContent() {
       <div className="relative h-screen w-screen">
         <div className="h-screen bg-background flex items-center justify-center">
           <div className="text-center">
-            <Loader2 className="h-12 w-12 text-primary animate-spin mx-auto mb-4" />
-            <h2 className="text-xl font-semibold text-foreground mb-2">Starting RiX Desktop Studio Pro...</h2>
-            <p className="text-muted-foreground">Initializing the inference engine</p>
+            <RixLogo variant="stacked" className="h-28 w-auto mx-auto mb-8" />
+            <Loader2 className="h-8 w-8 text-primary animate-spin mx-auto mb-3" />
+            <p className="text-muted-foreground">Starting up — initializing the inference engine</p>
           </div>
         </div>
         {restartingOverlay}

@@ -1,6 +1,6 @@
 ---
 name: rix-editor
-description: Assemble, cut and export videos in the RiX Desktop Studio Pro Video Editor from the user's generated assets, via the rix-editor MCP server. Use when the user asks to cut, edit, assemble or make a trailer/teaser/promo/montage/music video/reel from their RiX assets, library folders or generations, or to fix/re-cut an existing RiX timeline.
+description: Assemble, cut and export videos in the RiX Film Studio Pro Video Editor from the user's generated assets, via the rix-editor MCP server. Use when the user asks to cut, edit, assemble or make a trailer/teaser/promo/montage/music video/reel from their RiX assets, library folders or generations, or to fix/re-cut an existing RiX timeline.
 ---
 
 # RiX Editor
@@ -346,7 +346,7 @@ or directly by absolute library path (auto-imported, deduped).
 ## Setup (for the user, only if the tools are missing or refuse to connect)
 The rix-editor tools come from RiX itself, so RiX must be running. If the tools are missing,
 or every call fails with a connection or "invalid bearer token" error, tell the user:
-1. Open RiX Desktop Studio Pro and a project.
+1. Open RiX Film Studio Pro and a project.
 2. Click **Direct with Claude** (top right) → **Connect Claude**. That registers RiX with
    Claude Code and installs this skill. It needs doing once per RiX install, and again if
    that dialog says the connection is out of date.

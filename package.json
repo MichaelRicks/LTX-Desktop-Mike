@@ -1,8 +1,8 @@
 {
   "name": "rix-desktop-studio-pro",
-  "productName": "RiX Desktop Studio Pro",
+  "productName": "RiX Film Studio Pro",
   "version": "1.4.0",
-  "description": "RiX Desktop Studio Pro — AI video studio built on LTX-2",
+  "description": "RiX Film Studio Pro — AI video studio built on LTX-2",
   "type": "module",
   "main": "dist-electron/main.js",
   "author": {
@@ -32,8 +32,8 @@
     "build:fast": "node scripts/run-script.js scripts/local-build --unpack --skip-python",
     "prepare:python": "node scripts/run-script.js scripts/prepare-python",
     "build:frontend": "vite build",
-    "start:unpacked:mac": "open release/mac-arm64/LTX\\ Desktop.app",
-    "start:unpacked:win": "powershell -Command \"& '.\\release\\win-unpacked\\LTX Desktop.exe'\""
+    "start:unpacked:mac": "open release/mac-arm64/RiX\\ Film\\ Studio\\ Pro.app",
+    "start:unpacked:win": "powershell -Command \"& '.\\release\\win-unpacked\\RiX Film Studio Pro.exe'\""
   },
   "dependencies": {
     "class-variance-authority": "^0.7.0",

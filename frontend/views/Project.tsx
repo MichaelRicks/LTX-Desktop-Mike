@@ -216,7 +216,7 @@ export function Project() {
             <ArrowLeft className="h-5 w-5 text-zinc-400" />
           </button>
           
-          <RixLogo className="h-5 w-auto text-white" />
+          <RixLogo className="h-5" />
 
           {/* Project name */}
           {isEditingName ? (

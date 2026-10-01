@@ -1,5 +1,5 @@
 appId: com.michaelricks.rix-desktop-studio-pro
-productName: RiX Desktop Studio Pro
+productName: RiX Film Studio Pro
 copyright: Copyright © 2026 Michael Ricks
 
 directories:
@@ -75,7 +75,7 @@ nsis:
   installerHeaderIcon: resources/icon.ico
   createDesktopShortcut: true
   createStartMenuShortcut: true
-  shortcutName: RiX Desktop Studio Pro
+  shortcutName: RiX Film Studio Pro
 
 mac:
   hardenedRuntime: true

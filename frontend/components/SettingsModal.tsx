@@ -3,6 +3,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { PALETTES, getStoredPaletteId, selectPalette } from '../lib/theme'
 import { Button } from './ui/button'
 import { BaseModelSection } from './settings/BaseModelSection'
+import { RixLogo } from './RixLogo'
 import { useAppSettings, type AppSettings, DEFAULT_GEMINI_MODEL } from '../contexts/AppSettingsContext'
 import { ApiClient, type ApiSuccessOf } from '../lib/api-client'
 import { logger } from '../lib/logger'
@@ -1112,7 +1113,7 @@ export function SettingsModal({ isOpen, onClose, initialTab, initialReason, upda
                       </label>
                     </div>
                     <p className="text-xs text-zinc-500 leading-relaxed">
-                      Share anonymous usage data to help improve RiX Desktop Studio Pro.
+                      Share anonymous usage data to help improve RiX Film Studio Pro.
                       Only basic technical information is collected — never personal data or generated content.
                     </p>
                   </div>
@@ -1567,10 +1568,11 @@ export function SettingsModal({ isOpen, onClose, initialTab, initialReason, upda
               ) : (
                 <div className="space-y-6">
                   {/* App Identity */}
-                  <div className="text-center space-y-2">
-                    <h3 className="text-lg font-bold text-white">RiX Desktop Studio Pro</h3>
+                  {/* The lockup carries the name and the tagline, so the only
+                      thing left to say here is the version. */}
+                  <div className="flex flex-col items-center gap-4">
+                    <RixLogo variant="stacked" className="h-24 w-auto" />
                     <p className="text-sm text-zinc-400">Version {appVersion || '...'}</p>
-                    <p className="text-xs text-zinc-500">AI-Powered Video Editor</p>
                   </div>
 
                   {/* Updates */}

@@ -269,7 +269,7 @@ export function Home() {
       {/* Sidebar */}
       <aside className="w-64 border-r border-zinc-800 flex flex-col">
         <div className="p-6">
-          <RixLogo className="h-6 w-auto text-white" />
+          <RixLogo className="h-6" />
         </div>
         
         <nav className="flex-1 px-3">
@@ -333,8 +333,13 @@ export function Home() {
           {/* Dark overlay for text readability */}
           <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-black/30 to-black/10" />
           <div className="absolute bottom-6 left-8 z-10">
-            <h1 className="text-3xl font-bold text-white mb-2 drop-shadow-lg">RiX Desktop Studio Pro</h1>
-            <p className="text-zinc-200 drop-shadow-md">Create and manage your video projects</p>
+            {/* The mark stands in for "RiX" — its alt text keeps the heading
+                reading as the full product name. */}
+            <h1 className="text-3xl font-bold text-white mb-2 drop-shadow-lg flex items-center gap-3">
+              <RixLogo variant="mark" className="h-10 w-auto drop-shadow-lg" />
+              Film Studio Pro
+            </h1>
+            <p className="text-zinc-200 drop-shadow-md">Film Studio in a Box</p>
           </div>
         </div>
         
