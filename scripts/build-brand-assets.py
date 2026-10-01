@@ -161,6 +161,45 @@ def write_icns(master: Image.Image, path: Path) -> None:
     print(f"  {path.relative_to(ROOT).as_posix():<46} {len(types)} sizes")
 
 
+# At 16px a LANCZOS downsample of the mark turns to grey mush — the sprocket
+# holes, the counter and the box all blur into each other at a size that only
+# has ~12px of drawing area. This is the same mark redrawn straight onto the
+# pixel grid: the box is dropped, and the R and the film strip are squared up
+# so every edge lands on a whole pixel. '#' is ink, '.' is the plate.
+PIXEL_ICON_16 = (
+    "................",
+    "................",
+    "..############..",
+    "..#.##########..",
+    "..####.....###..",
+    "..#.##.....####.",
+    "..####.....###..",
+    "..#.########....",
+    "..##########....",
+    "..####.###......",
+    "..####..###.....",
+    "..####...###....",
+    "..####....###...",
+    "..####.....###..",
+    "................",
+    "................",
+)
+
+
+def render_pixel_icon(grid: tuple[str, ...], plate: tuple[int, int, int], radius: int = 3) -> Image.Image:
+    """Rasterise a hand-authored grid, aliased, one cell per pixel."""
+    size = len(grid)
+    silhouette = Image.new("L", (size, size), 0)
+    ImageDraw.Draw(silhouette).rounded_rectangle([0, 0, size - 1, size - 1], radius=radius, fill=255)
+    out = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+    px = out.load()
+    for y in range(size):
+        for x in range(size):
+            if silhouette.getpixel((x, y)):
+                px[x, y] = (255, 255, 255, 255) if grid[y][x] == "#" else (*plate, 255)
+    return out
+
+
 # As drawn, the R fills only ~48% of the square, which reads as a speck once
 # the icon is down at taskbar sizes. Rescale it inside the same silhouette, and
 # go tighter again for the small entries — the usual per-size optical sizing.
@@ -194,11 +233,16 @@ def tighten(master: Image.Image, scale: float) -> Image.Image:
         Image.LANCZOS,
     )
 
-    plate = Image.new("RGB", master.size, master.convert("RGB").getpixel((size // 2, 6)))
+    plate = Image.new("RGB", master.size, plate_colour(master))
     plate.paste(crop, ((size - crop.width) // 2, (size - crop.height) // 2))
     out = plate.convert("RGBA")
     out.putalpha(master.getchannel("A"))
     return out
+
+
+def plate_colour(master: Image.Image) -> tuple[int, int, int]:
+    """The icon's background black, sampled just inside the top edge."""
+    return master.convert("RGB").getpixel((master.width // 2, 6))
 
 
 def build_app_icons() -> None:
@@ -206,7 +250,11 @@ def build_app_icons() -> None:
     master = tighten(build_icon_master(), ICON_SCALE)
     small = tighten(build_icon_master(), ICON_SCALE_SMALL)
 
+    pixel_16 = render_pixel_icon(PIXEL_ICON_16, plate_colour(master))
+
     def at(size: int) -> Image.Image:
+        if size == 16:
+            return pixel_16
         source = small if size <= SMALL_ICON_MAX else master
         return source.resize((size, size), Image.LANCZOS)
 

@@ -30,8 +30,14 @@ background out per file and derives the rest.
 As drawn, the R fills only ~48% of the square, which collapses to a speck in the
 taskbar, so the script rescales it inside the same silhouette: 70% for 64px and
 up, 78% at 48px and below. That per-size optical sizing is deliberate — see
-`ICON_SCALE` in the script. At 16px the sprocket holes and the box still blur
-together; that size is at the limit of this much detail.
+`ICON_SCALE` in the script.
+
+**16px is hand-authored**, not downsampled. With only ~12px of drawing area, any
+resample blurs the sprocket holes, the counter and the box into grey mush, so
+`PIXEL_ICON_16` is the same mark redrawn on the pixel grid — the box dropped,
+the R and the film strip squared up so every edge lands on a whole pixel. It
+rasterises aliased and ends up strictly two-tone. Edit it as ASCII art; `#` is
+ink and `.` is the plate. 24px and up still come from the resampled masters.
 
 `.icns` is written byte-wise rather than through Pillow, whose ICNS writer only
 works where macOS' `iconutil` exists — and these builds run on Windows.
