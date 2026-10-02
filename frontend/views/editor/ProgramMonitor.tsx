@@ -70,7 +70,7 @@ interface ActiveVideoContributor {
 interface FrameOverlayState {
   activeClip: TimelineClip | null
   crossDissolve: DissolvePair | null
-  compositingStack: TimelineClip[]
+  layerStack: TimelineClip[]
   activeTextClips: TimelineClip[]
   activeSubtitles: SubtitleClip[]
   activeLetterbox: ActiveLetterboxState | null
@@ -163,6 +163,10 @@ function getTopVisibleClipAtTime(mediaClips: TimelineClip[], tracks: Track[], ti
 
   for (let arrayIndex = 0; arrayIndex < mediaClips.length; arrayIndex += 1) {
     const clip = mediaClips[arrayIndex]
+    // Layers are drawn OVER whatever owns the frame (see getLayerStack), never
+    // instead of it — the same split the export makes between the flattened
+    // program and the graphics composited on top.
+    if (isLayerClip(clip)) continue
     if (tracks[clip.trackIndex]?.enabled === false) continue
     if (time < clip.startTime || time >= clip.startTime + clip.duration) continue
     if (!best) {
@@ -181,6 +185,7 @@ function getTopVisibleClipAtTime(mediaClips: TimelineClip[], tracks: Track[], ti
 function getLastEndingVisibleClip(mediaClips: TimelineClip[], tracks: Track[]): TimelineClip | null {
   let best: TimelineClip | null = null
   for (const clip of mediaClips) {
+    if (isLayerClip(clip)) continue
     if (tracks[clip.trackIndex]?.enabled === false) continue
     if (!best || clip.startTime + clip.duration > best.startTime + best.duration) {
       best = clip
@@ -260,17 +265,22 @@ function getActiveLetterbox(adjustmentClips: TimelineClip[], tracks: Track[], ti
   return null
 }
 
-function getCompositingStack(mediaClips: TimelineClip[], tracks: Track[], activeClip: TimelineClip | null, time: number): TimelineClip[] {
-  // A layer clip (moved, resized, faded, or explicitly set to composite) doesn't
-  // cover the frame any more, so what's beneath it has to be drawn. Anything else
-  // keeps the NLE default of the highest track winning outright.
-  if (!activeClip || !isLayerClip(activeClip)) return []
-
+/**
+ * The graphics drawn over the frame at this time — clips that have been moved,
+ * resized, faded or flagged to composite. Bottom track first, so they stack the
+ * way the timeline reads.
+ *
+ * These are rendered as their own elements ABOVE the active clip rather than
+ * replacing it. Keeping the clip underneath active is what stops playback
+ * stuttering at a layer's edges: the primary video stays in the pooled element
+ * the whole way through instead of being handed to a fresh <video> that has to
+ * load and seek mid-playback.
+ */
+function getLayerStack(mediaClips: TimelineClip[], tracks: Track[], time: number): TimelineClip[] {
   return mediaClips
     .filter(clip =>
-      clip.id !== activeClip.id &&
+      isLayerClip(clip) &&
       tracks[clip.trackIndex]?.enabled !== false &&
-      clip.trackIndex < activeClip.trackIndex &&
       time >= clip.startTime &&
       time < clip.startTime + clip.duration
     )
@@ -329,7 +339,7 @@ function getActiveVideoContributors(
   activeClip: TimelineClip | null,
   crossDissolve: DissolvePair | null,
   crossDissolveProgress: number,
-  compositingStack: TimelineClip[],
+  layerStack: TimelineClip[],
   time: number,
 ): ActiveVideoContributor[] {
   const contributors: ActiveVideoContributor[] = []
@@ -356,7 +366,7 @@ function getActiveVideoContributors(
     })
   }
 
-  for (const clip of compositingStack) {
+  for (const clip of layerStack) {
     if (clip.asset?.type !== 'video') continue
     contributors.push({
       clip,
@@ -384,20 +394,20 @@ function deriveFrameRenderState(cache: FrameRenderCache, tracks: Track[], time: 
   }
 
   const dissolve = getDissolveAtTime(cache.mediaClips, tracks, effectiveTime)
-  const compositingStack = getCompositingStack(cache.mediaClips, tracks, activeClip, effectiveTime)
+  const layerStack = getLayerStack(cache.mediaClips, tracks, effectiveTime)
 
   return {
     atTime: effectiveTime,
     activeClip,
     crossDissolve: dissolve?.pair ?? null,
     crossDissolveProgress: dissolve?.progress ?? 0,
-    compositingStack,
+    layerStack,
     activeTextClips: getActiveTextClips(cache.textClips, tracks, time),
     activeSubtitles: getActiveSubtitles(cache.subtitles, tracks, time),
     activeLetterbox: getActiveLetterbox(cache.adjustmentClips, tracks, time),
     activeAdjustmentEffects: [],
     audioOnlyClips: cache.audioClips.filter(clip => time >= clip.startTime && time < clip.startTime + clip.duration),
-    activeVideoContributors: getActiveVideoContributors(activeClip, dissolve?.pair ?? null, dissolve?.progress ?? 0, compositingStack, effectiveTime),
+    activeVideoContributors: getActiveVideoContributors(activeClip, dissolve?.pair ?? null, dissolve?.progress ?? 0, layerStack, effectiveTime),
   }
 }
 
@@ -427,7 +437,7 @@ function sameFrameOverlayState(a: FrameOverlayState, b: FrameOverlayState): bool
   return (
     a.activeClip === b.activeClip &&
     sameDissolve(a.crossDissolve, b.crossDissolve) &&
-    sameClipList(a.compositingStack, b.compositingStack) &&
+    sameClipList(a.layerStack, b.layerStack) &&
     sameClipList(a.activeTextClips, b.activeTextClips) &&
     sameSubtitleList(a.activeSubtitles, b.activeSubtitles) &&
     sameLetterbox(a.activeLetterbox, b.activeLetterbox) &&
@@ -519,7 +529,7 @@ export const ProgramMonitor = React.forwardRef<ProgramMonitorHandle, ProgramMoni
   const activeImageRef = React.useRef<HTMLImageElement | null>(null)
   const transitionBgRef = React.useRef<HTMLDivElement | null>(null)
   const videoPoolRef = React.useRef<Map<string, HTMLVideoElement>>(new Map())
-  const compositingMediaRefs = React.useRef<Map<string, HTMLVideoElement | HTMLImageElement>>(new Map())
+  const layerMediaRefs = React.useRef<Map<string, HTMLVideoElement | HTMLImageElement>>(new Map())
   const activePoolPathRef = React.useRef('')
   const activePoolClipIdRef = React.useRef<string | null>(null)
   const contributorSyncStatesRef = React.useRef<Map<string, VideoContributorSyncState>>(new Map())
@@ -557,7 +567,7 @@ export const ProgramMonitor = React.forwardRef<ProgramMonitorHandle, ProgramMoni
     return {
       activeClip: initial.activeClip,
       crossDissolve: initial.crossDissolve,
-      compositingStack: initial.compositingStack,
+      layerStack: initial.layerStack,
       activeTextClips: initial.activeTextClips,
       activeSubtitles: initial.activeSubtitles,
       activeLetterbox: initial.activeLetterbox,
@@ -624,7 +634,7 @@ export const ProgramMonitor = React.forwardRef<ProgramMonitorHandle, ProgramMoni
       const nextOverlayState: FrameOverlayState = {
         activeClip: nextState.activeClip,
         crossDissolve: nextState.crossDissolve,
-        compositingStack: nextState.compositingStack,
+        layerStack: nextState.layerStack,
         activeTextClips: nextState.activeTextClips,
         activeSubtitles: nextState.activeSubtitles,
         activeLetterbox: nextState.activeLetterbox,
@@ -792,13 +802,13 @@ export const ProgramMonitor = React.forwardRef<ProgramMonitorHandle, ProgramMoni
   const applyFrameVisuals = React.useCallback((state: FrameRenderState, mode: MonitorRenderMode) => {
     syncRetainedPoolVideos(state, mode)
 
-    const { activeClip, crossDissolve, crossDissolveProgress, compositingStack, atTime, activeVideoContributors } = state
+    const { activeClip, crossDissolve, crossDissolveProgress, layerStack, atTime, activeVideoContributors } = state
     const pool = videoPoolRef.current
     const poolContainer = videoPoolContainerRef.current
     const contributorsByKey = new Map(activeVideoContributors.map(contributor => [getContributorKey(contributor), contributor]))
     const activeVideoContributor = activeVideoContributors.find(contributor => contributor.target === 'active') ?? null
     const incomingVideoContributor = activeVideoContributors.find(contributor => contributor.target === 'incoming') ?? null
-    const compositingVideoContributors = new Map(
+    const layerVideoContributors = new Map(
       activeVideoContributors
         .filter(contributor => contributor.target === 'compositing')
         .map(contributor => [contributor.clip.id, contributor]),
@@ -1008,20 +1018,20 @@ export const ProgramMonitor = React.forwardRef<ProgramMonitorHandle, ProgramMoni
       if (incomingDissolveImageRef.current) clearEffectStyle(incomingDissolveImageRef.current)
     }
 
-    const compositingIds = new Set(compositingStack.map(clip => clip.id))
-    for (const [clipId, element] of compositingMediaRefs.current.entries()) {
+    const compositingIds = new Set(layerStack.map(clip => clip.id))
+    for (const [clipId, element] of layerMediaRefs.current.entries()) {
       if (!compositingIds.has(clipId)) {
         clearEffectStyle(element)
       }
     }
 
-    for (const clip of compositingStack) {
-      const element = compositingMediaRefs.current.get(clip.id)
+    for (const clip of layerStack) {
+      const element = layerMediaRefs.current.get(clip.id)
       if (!element) continue
       const clipStyle = getClipEffectStyles(clip, Math.max(0, atTime - clip.startTime))
       applyEffectStyle(element, clipStyle)
       if (element instanceof HTMLVideoElement) {
-        const contributor = compositingVideoContributors.get(clip.id)
+        const contributor = layerVideoContributors.get(clip.id)
         if (!contributor) {
           if (!element.paused) {
             element.pause()
@@ -1245,7 +1255,7 @@ export const ProgramMonitor = React.forwardRef<ProgramMonitorHandle, ProgramMoni
 
   const activeClip = frameScene.activeClip
   const monitorClip = activeClip
-  const compositingStack = frameScene.compositingStack
+  const layerStack = frameScene.layerStack
   const activeTextClips = frameScene.activeTextClips
   const activeSubtitles = frameScene.activeSubtitles
   const activeLetterbox = frameScene.activeLetterbox
@@ -1327,8 +1337,9 @@ export const ProgramMonitor = React.forwardRef<ProgramMonitorHandle, ProgramMoni
               {(() => {
                 return (
                 <>
-                  {/* Compositing: render clips from lower tracks underneath the active clip */}
-                  {compositingStack.map(lowerClip => {
+                  {/* Layers: graphics drawn OVER the active clip (z above the video
+                      pool and the active image, below the transform box and titles). */}
+                  {layerStack.map(lowerClip => {
                     const lowerPath = getClipPath(lowerClip) || lowerClip.asset?.path || ''
                     const lowerFileUrl = lowerPath ? pathToFileUrl(lowerPath) : ''
                     if (lowerClip.asset?.type === 'image' || lowerClip.type === 'image') {
@@ -1337,10 +1348,10 @@ export const ProgramMonitor = React.forwardRef<ProgramMonitorHandle, ProgramMoni
                           key={`comp-${lowerClip.id}`}
                           src={lowerFileUrl}
                           alt=""
-                          className="absolute inset-0 w-full h-full object-contain pointer-events-none z-[1]"
+                          className="absolute inset-0 w-full h-full object-contain pointer-events-none z-[6]"
                           ref={(el) => {
-                            if (el) compositingMediaRefs.current.set(lowerClip.id, el)
-                            else compositingMediaRefs.current.delete(lowerClip.id)
+                            if (el) layerMediaRefs.current.set(lowerClip.id, el)
+                            else layerMediaRefs.current.delete(lowerClip.id)
                           }}
                         />
                       )
@@ -1350,16 +1361,16 @@ export const ProgramMonitor = React.forwardRef<ProgramMonitorHandle, ProgramMoni
                         key={`comp-${lowerClip.id}`}
                         id={`comp-video-${lowerClip.id}`}
                         src={lowerFileUrl}
-                        className="absolute inset-0 w-full h-full object-contain pointer-events-none z-[1]"
+                        className="absolute inset-0 w-full h-full object-contain pointer-events-none z-[6]"
                         muted
                         playsInline
                         preload="auto"
                         ref={(el) => {
                           if (el) {
-                            compositingMediaRefs.current.set(lowerClip.id, el)
+                            layerMediaRefs.current.set(lowerClip.id, el)
                             el.muted = true
                           } else {
-                            compositingMediaRefs.current.delete(lowerClip.id)
+                            layerMediaRefs.current.delete(lowerClip.id)
                           }
                         }}
                       />
@@ -1502,8 +1513,8 @@ export const ProgramMonitor = React.forwardRef<ProgramMonitorHandle, ProgramMoni
                   stretch. Offered for any visible media clip, so the background can
                   be punched in as well as a logo placed on top. */}
               {(() => {
-                const target = [activeClip, ...compositingStack]
-                  .find(clip => clip && selectedClipIds.has(clip.id) && (clip.type === 'video' || clip.type === 'image'))
+                const target = [...layerStack].reverse().concat(activeClip ? [activeClip] : [])
+                  .find(clip => selectedClipIds.has(clip.id) && (clip.type === 'video' || clip.type === 'image'))
                 if (!target) return null
                 const atTime = isPlaying ? playbackTimeRef.current : currentTime
                 const timeInClip = Math.max(0, atTime - target.startTime)
