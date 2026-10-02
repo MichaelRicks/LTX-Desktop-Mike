@@ -368,6 +368,12 @@ export const timelineClipSchema = z.object({
   // in/out is almost always wanted); set 0 explicitly for a hard cut.
   textFadeIn: z.number().optional(),
   textFadeOut: z.number().optional(),
+  // The same, for a media clip acting as a layer: a logo that pops on and off is
+  // almost never what's wanted, and keyframing every one by hand is tedious. Unset
+  // = the 0.5s default, 0 = a hard cut. Ignored while the clip still fills the
+  // frame — a full-frame shot must not fade up from nothing.
+  fadeIn: z.number().optional(),
+  fadeOut: z.number().optional(),
   // Opacity automation: t = seconds from clip start, value 0..100. When present +
   // non-empty it replaces the clip's base opacity — textStyle.opacity for text
   // clips, `opacity` for video/image (linear between keys; a text clip's fade

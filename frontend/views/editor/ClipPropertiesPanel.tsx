@@ -11,7 +11,7 @@ import type { Asset, ClipLayerFrame, TimelineClip, LetterboxSettings, TextOverla
 import { DEFAULT_COLOR_CORRECTION, DEFAULT_LETTERBOX } from '../../types/project-model' // EFFECTS HIDDEN: removed EFFECT_DEFINITIONS, DEFAULT_EFFECT_MASK
 import { TEXT_PRESETS } from '../../types/project'
 import { namedResolutionTier } from '../../lib/video-resolution'
-import { clipLayerAt, formatTime } from './video-editor-utils'
+import { clipLayerAt, DEFAULT_LAYER_FADE, formatTime, isLayerClip } from './video-editor-utils'
 import { Tooltip } from '../../components/ui/tooltip'
 import {
   selectAssets,
@@ -859,6 +859,31 @@ export function ClipPropertiesPanel(props: ClipPropertiesPanelProps) {
               setCurrentTime={setCurrentTime}
               accent="accent-blue-500"
             />
+            {/* Fades, for a clip acting as a layer. A graphic that pops on and off
+                reads as a glitch, so both default to half a second; 0 is a hard cut.
+                A clip still filling the frame doesn't fade — it would come up from
+                black at the top of every shot — so the controls only show once it is
+                actually a layer. */}
+            {isLayerClip(selectedClip) && (
+              <div className="flex items-center gap-1.5 mt-2">
+                <span className="text-[10px] text-zinc-400 w-12">Fade</span>
+                <input
+                  type="number" step={0.1} min={0} max={Math.max(0, selectedClip.duration / 2)}
+                  value={selectedClip.fadeIn ?? DEFAULT_LAYER_FADE}
+                  title="Fade up at the start, in seconds (0 = hard cut)"
+                  className="w-14 px-1.5 py-1 rounded bg-zinc-800 border border-zinc-700 text-[11px] text-zinc-200 tabular-nums focus:outline-none focus:border-blue-500"
+                  onChange={(e) => updateClip(selectedClip.id, { fadeIn: Math.max(0, parseFloat(e.target.value) || 0) })}
+                />
+                <input
+                  type="number" step={0.1} min={0} max={Math.max(0, selectedClip.duration / 2)}
+                  value={selectedClip.fadeOut ?? DEFAULT_LAYER_FADE}
+                  title="Fade down at the end, in seconds (0 = hard cut)"
+                  className="w-14 px-1.5 py-1 rounded bg-zinc-800 border border-zinc-700 text-[11px] text-zinc-200 tabular-nums focus:outline-none focus:border-blue-500"
+                  onChange={(e) => updateClip(selectedClip.id, { fadeOut: Math.max(0, parseFloat(e.target.value) || 0) })}
+                />
+                <span className="text-[9px] text-zinc-500">sec in / out</span>
+              </div>
+            )}
           </div>
         )}
 

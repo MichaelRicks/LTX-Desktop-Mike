@@ -1,5 +1,6 @@
 import {
-  findDissolveBoundaries, type ColorCorrection, type FlatSegment, type OverlayLayer,
+  DEFAULT_LAYER_FADE, findDissolveBoundaries,
+  type ColorCorrection, type FlatSegment, type OverlayLayer,
 } from './timeline'
 import { keyframeExpr } from './keyframe-expr'
 
@@ -448,15 +449,26 @@ function buildOverlayLayers(
     filterLines.push(`${chain}[${source}]`)
     idx++
 
-    // Fade. A flat 100% needs no stage; a flat value is one filter; keys get one
-    // command per frame the value actually changes on.
+    // Alpha: the fade ramp at each end times whatever opacity is otherwise in
+    // force, keyframed or flat — exactly how getClipEffectStyles composes them for
+    // the preview. Fades are capped at half the clip so a short graphic still
+    // reaches full opacity.
     const okeys = ly.opacityKeyframes && ly.opacityKeyframes.length > 0 ? ly.opacityKeyframes : null
+    const half = dur / 2
+    const fadeIn = Math.min(ly.fadeIn ?? DEFAULT_LAYER_FADE, half)
+    const fadeOut = Math.min(ly.fadeOut ?? DEFAULT_LAYER_FADE, half)
     const opacityAt = (programT: number): number => {
-      const base = okeys ? linearKeyValue(okeys, programT - ly.startTime) : ly.opacity
-      return Math.max(0, Math.min(1, base / 100))
+      const l = programT - ly.startTime
+      let g = 1
+      if (fadeIn > 0 && l < fadeIn) g = Math.max(0, Math.min(1, l / fadeIn))
+      if (fadeOut > 0 && l > dur - fadeOut) g = Math.min(g, Math.max(0, Math.min(1, (dur - l) / fadeOut)))
+      const base = okeys ? linearKeyValue(okeys, l) : ly.opacity
+      return Math.max(0, Math.min(1, g * base / 100))
     }
     const first = opacityAt(ly.startTime)
-    if (okeys) {
+    // A fade or a keyframe means the value moves, so it needs one command per
+    // frame it changes on; anything else is flat and is one filter or none.
+    if (okeys || fadeIn > 0 || fadeOut > 0) {
       const cmds: string[] = []
       let last = -1
       const frames = Math.ceil(dur * o.fps) + 1

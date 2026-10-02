@@ -72,6 +72,11 @@ export const DEFAULT_DISSOLVE_DURATION = 0.5
 /** Default text-overlay opacity fade (seconds) when the clip hasn't set one. */
 export const DEFAULT_TEXT_FADE = 0.5
 
+/** Default fade (seconds) at each end of a layer clip. Same reasoning as text:
+ *  a graphic that pops on and off reads as a glitch, and hand-keyframing a fade
+ *  onto every logo is busywork. */
+export const DEFAULT_LAYER_FADE = 0.5
+
 /**
  * Opacity multiplier (0..1) for a text overlay's fade in/out at absolute time
  * `time`. Fades default to DEFAULT_TEXT_FADE when unset and are each capped at
@@ -105,6 +110,28 @@ export function linearKeyframeValue(keys: { t: number; value: number }[], t: num
     if (t < b.t) return a.value + (b.value - a.value) * ((t - a.t) / Math.max(1e-6, b.t - a.t))
   }
   return last.value
+}
+
+/**
+ * Opacity multiplier (0..1) for a layer clip's fade in/out at `timeInClip`
+ * seconds from its start. Fades default to DEFAULT_LAYER_FADE and are each capped
+ * at half the clip, so a short graphic still reaches full opacity. Multiplies
+ * whatever opacity is otherwise in force, keyframed or flat — the export mirrors
+ * this in the layer's alpha.
+ */
+export function layerFadeMultiplier(
+  clip: { duration: number; fadeIn?: number; fadeOut?: number },
+  timeInClip: number,
+): number {
+  const half = clip.duration / 2
+  const fin = Math.min(clip.fadeIn ?? DEFAULT_LAYER_FADE, half)
+  const fout = Math.min(clip.fadeOut ?? DEFAULT_LAYER_FADE, half)
+  let g = 1
+  if (fin > 0 && timeInClip < fin) g = Math.max(0, Math.min(1, timeInClip / fin))
+  if (fout > 0 && timeInClip > clip.duration - fout) {
+    g = Math.min(g, Math.max(0, Math.min(1, (clip.duration - timeInClip) / fout)))
+  }
+  return g
 }
 
 /** Smoothstep between two keys — the curve the Reframe editor and the export's
@@ -540,6 +567,11 @@ export function getClipEffectStyles(clip: TimelineClip, timeInClip?: number): Re
   let opacity = timeInClip !== undefined && clip.opacityKeyframes && clip.opacityKeyframes.length > 0
     ? mediaClipOpacity(clip, timeInClip)
     : (clip.opacity ?? 100) / 100
+  // A layer fades in and out by default; a clip that still fills the frame doesn't
+  // (it would fade up from black at the top of every shot).
+  if (timeInClip !== undefined && isLayerClip(clip)) {
+    opacity *= layerFadeMultiplier(clip, timeInClip)
+  }
   if (timeInClip !== undefined) {
     const tIn = clip.transitionIn
     const tOut = clip.transitionOut

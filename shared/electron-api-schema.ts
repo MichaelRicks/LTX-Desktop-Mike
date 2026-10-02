@@ -65,6 +65,9 @@ const exportClip = z.object({
     })).optional(),
   }).optional(),
   composite: z.boolean().optional(),
+  // Layer fade up/down in seconds. Unset = the 0.5s default, 0 = a hard cut.
+  fadeIn: z.number().optional(),
+  fadeOut: z.number().optional(),
   colorCorrection: exportColorCorrection.optional(),
   transitionIn: exportClipTransition.optional(),
   transitionOut: exportClipTransition.optional(),

@@ -11,7 +11,7 @@ import { pathToFileUrl } from '../../lib/file-url'
 import { VerticalReframeOverlay } from './VerticalReframeOverlay'
 import { VerticalFrameGuides } from '../../components/ReframeEditor'
 import { TextOverlayBox } from './TextOverlayBox'
-import { getOpacityPreview } from './text-opacity-preview'
+import { getOpacityPreview, useOpacityPreview } from './text-opacity-preview'
 import { DEFAULT_SUBTITLE_STYLE } from '../../types/project-model'
 import type { Asset, TimelineClip, Track, SubtitleClip } from '../../types/project-model'
 import { getClipEffectStyles as clipEffectStylesFor, getTransitionBgColor, formatTime, getShortcutLabel, tooltipLabel, getMaskedEffectOverlays, textClipOpacity, isLayerClip } from './video-editor-utils'
@@ -308,11 +308,19 @@ function toStyleValue(value: string | number | undefined): string {
  * from here rather than from the clip.
  */
 function getClipEffectStyles(clip: TimelineClip, timeInClip?: number): React.CSSProperties {
-  const preview = getLayerPreview()
-  return clipEffectStylesFor(
-    preview && preview.clipId === clip.id ? { ...clip, layer: preview.frame } : clip,
-    timeInClip,
-  )
+  const layerDrag = getLayerPreview()
+  const dialedOpacity = getOpacityPreview()
+  let previewed = clip
+  if (layerDrag && layerDrag.clipId === clip.id) {
+    previewed = { ...previewed, layer: layerDrag.frame }
+  }
+  // An opacity dialed in on the properties panel but not yet committed as a key.
+  // Text overlays read this themselves; a media layer is drawn by the monitor, so
+  // it has to be substituted here or the slider looks dead until ◆ is pressed.
+  if (dialedOpacity && dialedOpacity.clipId === clip.id && clip.type !== 'text') {
+    previewed = { ...previewed, opacity: dialedOpacity.value, opacityKeyframes: undefined }
+  }
+  return previewed === clip ? clipEffectStylesFor(clip, timeInClip) : clipEffectStylesFor(previewed, timeInClip)
 }
 
 function clearEffectStyle(element: HTMLElement): void {
@@ -513,6 +521,9 @@ export const ProgramMonitor = React.forwardRef<ProgramMonitorHandle, ProgramMoni
   const subtitles = useEditorStore(selectSubtitles)
   const getClipPath = React.useCallback((clip: TimelineClip) => resolveClipPathFromAssets(assets, clip), [assets])
   const selectedClipIds = useEditorStore(selectSelectedClipIds)
+  // Re-paint when the properties panel's uncommitted opacity changes, so a media
+  // layer tracks the slider the way a title does.
+  const dialedOpacity = useOpacityPreview()
   const showPropertiesPanel = useEditorStore(selectShowPropertiesPanel)
   const inPoint = useEditorStore(selectActiveTimelineInPoint)
   const outPoint = useEditorStore(selectActiveTimelineOutPoint)
@@ -1095,6 +1106,10 @@ export const ProgramMonitor = React.forwardRef<ProgramMonitorHandle, ProgramMoni
     const lastFrame = lastFrameRequestRef.current
     if (lastFrame) applyFrameVisuals(lastFrame.state, lastFrame.mode)
   }, [applyFrameVisuals])
+
+  React.useEffect(() => {
+    repaintFrameVisuals()
+  }, [dialedOpacity, repaintFrameVisuals])
 
   React.useEffect(() => {
     const pool = videoPoolRef.current

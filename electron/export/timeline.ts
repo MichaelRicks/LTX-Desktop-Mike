@@ -15,6 +15,7 @@ export interface ExportClip {
   opacityKeyframes?: { t: number; value: number }[];
   reframe?: ClipReframe;
   layer?: ClipLayer; composite?: boolean;
+  fadeIn?: number; fadeOut?: number;
   colorCorrection?: ColorCorrection; transitionIn?: ClipTransition; transitionOut?: ClipTransition;
 }
 
@@ -37,9 +38,15 @@ export interface OverlayLayer {
   flipH: boolean; flipV: boolean;
   opacity: number;
   opacityKeyframes?: { t: number; value: number }[];
+  /** Fade up/down in seconds. Undefined = DEFAULT_LAYER_FADE, 0 = a hard cut. */
+  fadeIn?: number; fadeOut?: number;
   layer: ClipLayer;
   colorCorrection?: ColorCorrection;
 }
+
+/** Mirrors DEFAULT_LAYER_FADE in video-editor-utils — a graphic that pops on and
+ *  off reads as a glitch, so a layer fades at both ends unless told otherwise. */
+export const DEFAULT_LAYER_FADE = 0.5
 
 const DEFAULT_LAYER: ClipLayer = { x: 0.5, y: 0.5, scaleX: 1, scaleY: 1 }
 
@@ -76,6 +83,8 @@ export function collectOverlayLayers(clips: ExportClip[]): OverlayLayer[] {
       flipV: clip.flipV || false,
       opacity: clip.opacity ?? 100,
       opacityKeyframes: clip.opacityKeyframes,
+      fadeIn: clip.fadeIn,
+      fadeOut: clip.fadeOut,
       layer: clip.layer ?? DEFAULT_LAYER,
       colorCorrection: clip.colorCorrection,
     }))

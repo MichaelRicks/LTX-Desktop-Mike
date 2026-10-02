@@ -48,6 +48,8 @@ export function buildExportPayload(
       reframe: clip.reframe,
       layer: clip.layer,
       composite: clip.composite,
+      fadeIn: clip.fadeIn,
+      fadeOut: clip.fadeOut,
       colorCorrection: clip.colorCorrection,
       transitionIn: clip.transitionIn,
       transitionOut: clip.transitionOut,
