@@ -10,7 +10,7 @@
 #   1) scripts\prepare-python.ps1              # builds python-embed/ (~5GB, downloads torch+cu128)
 #   2) scripts\build-python-release.ps1        # -> python-release/ assets + writes python-deps-hash.txt
 #   3) build the app (local-build) so it bundles the freshly written python-deps-hash.txt
-#   4) gh release create v<version> --repo MichaelRicks/LTX-Desktop-Mike (python-release\*)
+#   4) gh release create v<version> --repo MichaelRicks/RiX-Film-Studio-Pro (python-release\*)
 #
 # The hash is computed the SAME way for the bundled file and the release asset, so they
 # always agree — it does not need to match Lightricks' original algorithm.
@@ -114,4 +114,4 @@ $manifest | ConvertTo-Json -Depth 5 | Set-Content -Path (Join-Path $out "$prefix
 Write-Host "`nRelease assets ready in $out :" -ForegroundColor Cyan
 Get-ChildItem $out | Format-Table Name, @{ n = 'MB'; e = { [math]::Round($_.Length / 1MB) } } -AutoSize
 Write-Host "Next: build the app (so it bundles python-deps-hash.txt), then upload, e.g.:" -ForegroundColor Cyan
-Write-Host "  gh release create v1.2.7 --repo MichaelRicks/LTX-Desktop-Mike --title `"v1.2.7`" (Get-ChildItem `"$out`" | % FullName)"
+Write-Host "  gh release create v1.2.7 --repo MichaelRicks/RiX-Film-Studio-Pro --title `"v1.2.7`" (Get-ChildItem `"$out`" | % FullName)"

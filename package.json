@@ -1,5 +1,5 @@
 {
-  "name": "rix-desktop-studio-pro",
+  "name": "rix-film-studio-pro",
   "productName": "RiX Film Studio Pro",
   "version": "1.5.0",
   "description": "RiX Film Studio Pro — AI video studio built on LTX-2",
@@ -8,7 +8,7 @@
   "author": {
     "name": "Michael Ricks"
   },
-  "homepage": "https://github.com/MichaelRicks/LTX-Desktop-Mike",
+  "homepage": "https://github.com/MichaelRicks/RiX-Film-Studio-Pro",
   "license": "Apache-2.0",
   "private": true,
   "packageManager": "pnpm@10.30.3",

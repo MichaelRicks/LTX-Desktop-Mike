@@ -144,4 +144,4 @@ deb:
 publish:
   provider: github
   owner: MichaelRicks
-  repo: LTX-Desktop-Mike
+  repo: RiX-Film-Studio-Pro
