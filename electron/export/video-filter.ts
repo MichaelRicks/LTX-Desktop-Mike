@@ -1,5 +1,5 @@
 import {
-  DEFAULT_LAYER_FADE, findDissolveBoundaries,
+  buildDissolveTimeRemap, DEFAULT_LAYER_FADE, findDissolveBoundaries,
   type ColorCorrection, type FlatSegment, type OverlayLayer,
 } from './timeline'
 import { keyframeExpr } from './keyframe-expr'
@@ -334,7 +334,14 @@ function verticalWindow(seg: FlatSegment): {
  * spot lands inside each shot's window — a program-time expression that switches
  * window per shot and follows keyframed pans. Size scales with the window.
  */
-function verticalTextMap(segments: FlatSegment[], start: number, end: number, outW: number, outH: number) {
+function verticalTextMap(
+  segments: FlatSegment[],
+  start: number,
+  end: number,
+  outW: number,
+  outH: number,
+  toProgramTime: (t: number) => number,
+) {
   const overlapping = segments.filter(s => s.startTime < end - 1e-4 && s.startTime + s.duration > start + 1e-4)
   const wins = (overlapping.length ? overlapping : segments.slice(0, 1)).map(s => ({ s, w: verticalWindow(s) }))
   // Title size is fixed per drawtext: take the window it opens in.
@@ -342,7 +349,9 @@ function verticalTextMap(segments: FlatSegment[], start: number, end: number, ou
   const piecewise = (pick: (w: ReturnType<typeof verticalWindow>) => string) => {
     let expr = pick(wins[wins.length - 1].w)
     for (let i = wins.length - 2; i >= 0; i--) {
-      const boundary = wins[i + 1].s.startTime
+      // Which window applies is decided on the program clock, but segment start
+      // times are nominal — convert, or the switch happens at the wrong moment.
+      const boundary = toProgramTime(wins[i + 1].s.startTime)
       expr = `if(lt(t,${boundary.toFixed(6)}),${pick(wins[i].w)},${expr})`
     }
     return expr
@@ -383,7 +392,11 @@ function buildOverlayLayers(
   layers: OverlayLayer[],
   baseLabel: string,
   startIdx: number,
-  o: { width: number; height: number; fps: number; segments: FlatSegment[]; vertical?: boolean },
+  o: {
+    width: number; height: number; fps: number;
+    segments: FlatSegment[]; vertical?: boolean;
+    toProgramTime: (t: number) => number;
+  },
 ): { inputs: string[]; filterLines: string[]; label: string; nextIdx: number } {
   const inputs: string[] = []
   const filterLines: string[] = []
@@ -398,8 +411,10 @@ function buildOverlayLayers(
     const keys = ly.layer.keys && ly.layer.keys.length > 0
       ? [...ly.layer.keys].sort((a, b) => a.t - b.t)
       : null
+    // Where this lands on the program clock (see toProgramTime in the caller).
+    const startAt = o.toProgramTime(ly.startTime)
     // Clip-local clock, so the keys read the same as they do in the editor.
-    const local = `(t-${ly.startTime.toFixed(6)})`
+    const local = `(t-${startAt.toFixed(6)})`
     type LayerField = 'x' | 'y' | 'scaleX' | 'scaleY'
     const expr = (field: LayerField): string => keys && keys.length > 1
       ? keyframeExpr(keys.map(k => ({ t: k.t, v: k[field] })), local)
@@ -410,7 +425,9 @@ function buildOverlayLayers(
     // window mapping below then lands it at the right place and size, exactly as a
     // title is handled.
     const vmap = o.vertical
-      ? verticalTextMap(o.segments, ly.startTime, ly.startTime + dur, o.width, o.height)
+      // Selected against nominal times, because that is the clock the segments'
+      // own start times are on.
+      ? verticalTextMap(o.segments, ly.startTime, ly.startTime + dur, o.width, o.height, o.toProgramTime)
       : null
     const fitW = vmap ? Math.max(2, Math.round(vmap.frameW)) : o.width
     const fitH = vmap ? Math.max(2, Math.round(vmap.frameH)) : o.height
@@ -433,7 +450,7 @@ function buildOverlayLayers(
     }
     chain += `fps=${o.fps},`
     // Onto the program clock, so every expression below reads plain `t`.
-    chain += `setpts=PTS+${ly.startTime.toFixed(6)}/TB,`
+    chain += `setpts=PTS+${startAt.toFixed(6)}/TB,`
     chain += `scale=${fitW}:${fitH}:force_original_aspect_ratio=decrease,setsar=1,`
     if (ly.flipH) chain += 'hflip,'
     if (ly.flipV) chain += 'vflip,'
@@ -458,14 +475,14 @@ function buildOverlayLayers(
     const fadeIn = Math.min(ly.fadeIn ?? DEFAULT_LAYER_FADE, half)
     const fadeOut = Math.min(ly.fadeOut ?? DEFAULT_LAYER_FADE, half)
     const opacityAt = (programT: number): number => {
-      const l = programT - ly.startTime
+      const l = programT - startAt
       let g = 1
       if (fadeIn > 0 && l < fadeIn) g = Math.max(0, Math.min(1, l / fadeIn))
       if (fadeOut > 0 && l > dur - fadeOut) g = Math.min(g, Math.max(0, Math.min(1, (dur - l) / fadeOut)))
       const base = okeys ? linearKeyValue(okeys, l) : ly.opacity
       return Math.max(0, Math.min(1, g * base / 100))
     }
-    const first = opacityAt(ly.startTime)
+    const first = opacityAt(startAt)
     // A fade or a keyframe means the value moves, so it needs one command per
     // frame it changes on; anything else is flat and is one filter or none.
     if (okeys || fadeIn > 0 || fadeOut > 0) {
@@ -473,7 +490,7 @@ function buildOverlayLayers(
       let last = -1
       const frames = Math.ceil(dur * o.fps) + 1
       for (let f = 0; f < frames; f++) {
-        const t = ly.startTime + f / o.fps
+        const t = startAt + f / o.fps
         const v = opacityAt(t)
         if (Math.abs(v - last) > 0.002) {
           cmds.push(`${t.toFixed(4)} colorchannelmixer@${mixer} aa ${v.toFixed(4)}`)
@@ -532,6 +549,13 @@ export function buildVideoFilterGraph(
   // window (see verticalTextMap) — the picture is blown up to fill it, so the
   // title must scale with it or it renders ~1.8× too small.
   const textScale = height / 1080
+  // Nominal timeline time -> real program time. A dissolve overlaps the tail of one
+  // clip with the head of the next, so everything after it sits earlier in the
+  // encoded program than its timeline position says. Segments carry nominal times
+  // while every `t` in the graph below is program time, so anything placed BY time
+  // has to be converted: titles, subtitles and layers all did drift otherwise. Start
+  // times shift and durations are kept, which is how the audio pass handles it too.
+  const toProgramTime = buildDissolveTimeRemap(segments)
   const inputs: string[] = []
   const filterParts: string[] = []
   let idx = 0
@@ -674,7 +698,9 @@ export function buildVideoFilterGraph(
 
   // Layer clips (logos, graphics, PiP) composited over the flattened program.
   if (layers && layers.length > 0) {
-    const built = buildOverlayLayers(layers, lastLabel, idx, { width, height, fps, segments, vertical })
+    const built = buildOverlayLayers(layers, lastLabel, idx, {
+      width, height, fps, segments, vertical, toProgramTime,
+    })
     inputs.push(...built.inputs)
     filterParts.push(...built.filterLines)
     idx = built.nextIdx
@@ -694,7 +720,12 @@ export function buildVideoFilterGraph(
       const s = ov.style
       const nextLabel = `txt${ti}`
       // 9:16: place and size through the shot's window; else plain frame fractions.
-      const vmap = vertical ? verticalTextMap(segments, ov.startTime, ov.endTime, width, height) : null
+      // Nominal in, because the windows are picked against the segments' own clock.
+      const vmap = vertical
+        ? verticalTextMap(segments, ov.startTime, ov.endTime, width, height, toProgramTime)
+        : null
+      const ovStart = toProgramTime(ov.startTime)
+      const ovEnd = ovStart + Math.max(0.0001, ov.endTime - ov.startTime)
       const hf = vmap ? vmap.scale : textScale // style px (authored against 1080p) → export px
       const keyed = Boolean(ov.opacityKeyframes && ov.opacityKeyframes.length > 0)
       const sx = s.scaleX && s.scaleX > 0 ? s.scaleX : 1
@@ -755,25 +786,25 @@ export function buildVideoFilterGraph(
       // Opacity fade in/out via a time-based alpha expression (defaults 0.5s,
       // each capped at half the overlay). Multiplies the drawtext alpha, so it
       // rides on top of the style's own opacity. Commas escaped like `enable`.
-      const ovDur = Math.max(0.0001, ov.endTime - ov.startTime)
+      const ovDur = ovEnd - ovStart
       const fin = Math.min(ov.fadeIn ?? 0.5, ovDur / 2)
       const fout = Math.min(ov.fadeOut ?? 0.5, ovDur / 2)
       const ramps: string[] = []
-      if (fin > 0.001) ramps.push(`(t-${ov.startTime.toFixed(3)})/${fin.toFixed(3)}`)
-      if (fout > 0.001) ramps.push(`(${ov.endTime.toFixed(3)}-t)/${fout.toFixed(3)}`)
+      if (fin > 0.001) ramps.push(`(t-${ovStart.toFixed(3)})/${fin.toFixed(3)}`)
+      if (fout > 0.001) ramps.push(`(${ovEnd.toFixed(3)}-t)/${fout.toFixed(3)}`)
       const alphaTerms: string[] = []
       if (ramps.length > 0) {
         const inner = ramps.length === 2 ? `min(${ramps[0]}\\,${ramps[1]})` : ramps[0]
         alphaTerms.push(`max(0\\,min(1\\,${inner}))`)
       }
-      if (keyed) alphaTerms.push(`(${linearKeyExpr(ov.opacityKeyframes!, ov.startTime)})/100`)
+      if (keyed) alphaTerms.push(`(${linearKeyExpr(ov.opacityKeyframes!, ovStart)})/100`)
       // Drawn straight onto the video, drawtext's alpha is right. On the stretch
       // layer it isn't (see below), so there the opacity is applied to the layer.
       if (alphaTerms.length > 0 && !stretched) {
         parts.push(`alpha='max(0\\,min(1\\,${alphaTerms.join('*')}))'`)
       }
 
-      parts.push(`enable='between(t\\,${ov.startTime.toFixed(3)}\\,${ov.endTime.toFixed(3)})'`)
+      parts.push(`enable='between(t\\,${ovStart.toFixed(3)}\\,${ovEnd.toFixed(3)})'`)
 
       if (stretched) {
         // Transparent layer that only exists for the overlay's lifetime, shifted
@@ -787,7 +818,7 @@ export function buildVideoFilterGraph(
         // into colorchannelmixer's alpha gain by sendcmd.
         const layer = `txtl${ti}`
         const opacityAt = (t: number) => {
-          const local = t - ov.startTime
+          const local = t - ovStart
           let g = 1
           if (fin > 0.001 && local < fin) g = Math.max(0, Math.min(1, local / fin))
           if (fout > 0.001 && local > ovDur - fout) g = Math.min(g, Math.max(0, (ovDur - local) / fout))
@@ -798,20 +829,20 @@ export function buildVideoFilterGraph(
         let last = -1
         const frames = Math.ceil(ovDur * fps) + 1
         for (let f = 0; f < frames; f++) {
-          const t = ov.startTime + f / fps
+          const t = ovStart + f / fps
           const v = opacityAt(t)
           if (Math.abs(v - last) > 0.002) {
             cmds.push(`${t.toFixed(4)} colorchannelmixer@txo${ti} aa ${v.toFixed(4)}`)
             last = v
           }
         }
-        const first = opacityAt(ov.startTime)
+        const first = opacityAt(ovStart)
         const opacityStage = cmds.length > 1
           ? `sendcmd=c='${cmds.join(';')}',colorchannelmixer@txo${ti}=aa=${first.toFixed(4)},`
           : first < 0.999 ? `colorchannelmixer=aa=${first.toFixed(4)},` : ''
         filterParts.push(
           `color=c=black@0.0:s=${width}x${height}:r=${fps}:d=${ovDur.toFixed(6)},format=rgba,` +
-          `setpts=PTS+${ov.startTime.toFixed(6)}/TB,` +
+          `setpts=PTS+${ovStart.toFixed(6)}/TB,` +
           `drawtext=${parts.join(':')},` +
           `unpremultiply=inplace=1,` +
           opacityStage +
@@ -833,6 +864,8 @@ export function buildVideoFilterGraph(
   if (subtitles && subtitles.length > 0) {
     for (let si = 0; si < subtitles.length; si++) {
       const sub = subtitles[si]
+      const subStart = toProgramTime(sub.startTime)
+      const subEnd = subStart + Math.max(0.0001, sub.endTime - sub.startTime)
       const nextLabel = `sub${si}`
       // Escape text for ffmpeg drawtext (newlines stay raw, see escapeDrawtext).
       const escapedText = escapeDrawtext(sub.text)
@@ -861,7 +894,7 @@ export function buildVideoFilterGraph(
         boxPart = `:box=1:boxcolor=${bgColor}@${bgAlpha}:boxborderw=8`
       }
 
-      const dtFilter = `drawtext=text='${escapedText}'${alignPart}:fontsize=${fontSize}:fontcolor=${fontColor}:x=(w-text_w)/2:y=${yExpr}${boxPart}:enable='between(t\\,${sub.startTime.toFixed(3)}\\,${sub.endTime.toFixed(3)})'`
+      const dtFilter = `drawtext=text='${escapedText}'${alignPart}:fontsize=${fontSize}:fontcolor=${fontColor}:x=(w-text_w)/2:y=${yExpr}${boxPart}:enable='between(t\\,${subStart.toFixed(3)}\\,${subEnd.toFixed(3)})'`
 
       filterParts.push(`[${lastLabel}]${dtFilter}[${nextLabel}]`)
       lastLabel = nextLabel

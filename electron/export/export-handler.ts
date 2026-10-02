@@ -114,14 +114,9 @@ export async function exportTimelineNative(
   }
 
   // Graphics composited over the program (logos, lower thirds, PiP) rather than
-  // flattened into it. A dissolve overlaps two clips and so pulls everything after
-  // it earlier on the program clock — the same correction the audio pass makes
-  // below — so a layer's start has to go through it or the graphic lands late.
-  const remapLayerTime = buildDissolveTimeRemap(segments)
-  const layers = collectOverlayLayers(clips).map(layer => ({
-    ...layer,
-    startTime: remapLayerTime(layer.startTime),
-  }))
+  // flattened into it. Times stay nominal here: buildVideoFilterGraph converts them
+  // onto the program clock itself, along with the titles and the subtitles.
+  const layers = collectOverlayLayers(clips)
   for (const layer of layers) {
     if (!layer.filePath || !fs.existsSync(layer.filePath)) {
       return { success: false, error: `Layer source not found: ${path.basename(layer.filePath || '')}` }
