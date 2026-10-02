@@ -56,11 +56,14 @@ export interface MediaTransformBoxProps {
   timeInClip: number
   /** Live, uncommitted transform during a drag; null when the drag ends. */
   onPreview: (frame: ClipLayerFrame | null) => void
+  /** True while a drag is in flight, false a frame after it ends — late enough
+   *  that the click the mouseup generates has already been and gone. */
+  onDragActiveChange: (active: boolean) => void
   onCommit: (patch: Partial<ClipLayerFrame>) => void
 }
 
 export function MediaTransformBox({
-  clip, frameSize, timeInClip, onPreview, onCommit,
+  clip, frameSize, timeInClip, onPreview, onDragActiveChange, onCommit,
 }: MediaTransformBoxProps) {
   const boxRef = React.useRef<HTMLDivElement>(null)
   const [live, setLive] = React.useState<ClipLayerFrame | null>(null)
@@ -84,6 +87,7 @@ export function MediaTransformBox({
     const start = clipLayerAt(clip, timeInClip)
     let latest = start
     let moved = false
+    onDragActiveChange(true)
 
     const onMove = (ev: MouseEvent) => {
       latest = compute(ev, start)
@@ -95,9 +99,11 @@ export function MediaTransformBox({
       window.removeEventListener('mousemove', onMove)
       window.removeEventListener('mouseup', onUp)
       setLive(null)
-      // Nothing at all for a click that didn't move.
+      // Nothing at all for a click that didn't move — but the guard still has to
+      // outlive the click, or clicking the box would deselect the clip.
       if (!moved) {
         onPreview(null)
+        requestAnimationFrame(() => onDragActiveChange(false))
         return
       }
       // One history step per drag.
@@ -109,7 +115,10 @@ export function MediaTransformBox({
       })
       // Hold the preview for one frame: the commit re-renders the monitor, and
       // dropping the preview before that repaints the pre-drag position.
-      requestAnimationFrame(() => onPreview(null))
+      requestAnimationFrame(() => {
+        onPreview(null)
+        onDragActiveChange(false)
+      })
     }
     window.addEventListener('mousemove', onMove)
     window.addEventListener('mouseup', onUp)

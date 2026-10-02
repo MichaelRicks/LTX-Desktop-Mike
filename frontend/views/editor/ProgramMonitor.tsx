@@ -2,7 +2,7 @@ import React from 'react'
 import {
   Layers, Video, ChevronDown,
   ChevronLeft, ChevronRight, Pause, Play, Repeat,
-  Expand, Shrink, XCircle, Smartphone,
+  Expand, Shrink, XCircle, Frame,
 } from 'lucide-react'
 import { Button } from '../../components/ui/button'
 import { Tooltip } from '../../components/ui/tooltip'
@@ -541,10 +541,11 @@ export const ProgramMonitor = React.forwardRef<ProgramMonitorHandle, ProgramMoni
   const outPoint = useEditorStore(selectActiveTimelineOutPoint)
   const playingInOut = useEditorStore(selectPlayingInOut)
 
-  // Flag to prevent the video frame wrapper's onClick from clearing selection
-  // when the user clicked on a text overlay (mousedown fires first on the overlay,
-  // but click may bubble up to the wrapper if the mouse moved slightly).
-  const clickedTextOverlayRef = React.useRef(false)
+  // Stops the video frame wrapper's onClick from clearing the selection when the
+  // click belongs to something drawn on top of it — a text overlay or the media
+  // transform box. Mousedown lands on the widget, but the click is delivered to
+  // their common ancestor, so any drag that strays outside it reaches the wrapper.
+  const suppressFrameClickRef = React.useRef(false)
   const previewContainerRef = React.useRef<HTMLDivElement>(null)
   const videoPoolContainerRef = React.useRef<HTMLDivElement>(null)
   const incomingDissolveVideoRef = React.useRef<HTMLVideoElement | null>(null)
@@ -1355,7 +1356,7 @@ export const ProgramMonitor = React.forwardRef<ProgramMonitorHandle, ProgramMoni
                 className="relative bg-black overflow-hidden"
                 style={videoFrameSize.width > 0 ? { width: videoFrameSize.width, height: videoFrameSize.height } : { width: '100%', aspectRatio: '16/9' }}
                 onClick={() => {
-                  if (clickedTextOverlayRef.current) {
+                  if (suppressFrameClickRef.current) {
                     return
                   }
                   clearClipSelection()
@@ -1555,6 +1556,14 @@ export const ProgramMonitor = React.forwardRef<ProgramMonitorHandle, ProgramMoni
                       setLayerPreview(preview ? { clipId: target.id, frame: preview } : null)
                       repaintFrameVisuals()
                     }}
+                    onDragActiveChange={(active) => {
+                      // A drag that ends outside the box delivers its click to the
+                      // frame, whose handler clears the selection — so the clip the
+                      // user was just sizing would need re-picking in the timeline
+                      // before they could move it. Same guard the text box uses.
+                      suppressFrameClickRef.current = active
+                      if (!active) selectClip(target.id)
+                    }}
                     onCommit={(patch) => setClipLayerAt(target.id, timeInClip, patch)}
                   />
                 )
@@ -1574,7 +1583,7 @@ export const ProgramMonitor = React.forwardRef<ProgramMonitorHandle, ProgramMoni
                   onTransformCommit={(patch) => updateClip(tc.id, { textStyle: { ...tc.textStyle!, ...patch } })}
                   onBodyMouseDown={(e) => {
                     e.stopPropagation()
-                    clickedTextOverlayRef.current = true
+                    suppressFrameClickRef.current = true
                     selectClip(tc.id)
                     // Capture panel state at mousedown time so we can restore it after any
                     // spurious onClick handlers that might close it
@@ -1593,7 +1602,7 @@ export const ProgramMonitor = React.forwardRef<ProgramMonitorHandle, ProgramMoni
                       window.removeEventListener('mouseup', onUp)
                       // Reset the ref and restore state after all click events have fired
                       requestAnimationFrame(() => {
-                        clickedTextOverlayRef.current = false
+                        suppressFrameClickRef.current = false
                         selectClip(clipId)
                         if (wasOpen) setShowPropertiesPanel(true)
                       })
@@ -2036,7 +2045,7 @@ export const ProgramMonitor = React.forwardRef<ProgramMonitorHandle, ProgramMoni
             </Tooltip>
           </div>
 
-          {/* 9:16 guide toggle + options */}
+          {/* Framing guides: thirds, safe areas, 9:16 */}
           <div className="relative flex-shrink-0">
             <button
               onClick={(e) => { e.stopPropagation(); setVerticalGuideOpen(prev => !prev) }}
@@ -2047,8 +2056,8 @@ export const ProgramMonitor = React.forwardRef<ProgramMonitorHandle, ProgramMoni
               }`}
               title="Framing guides — thirds grid, title/action safe areas, or a 9:16 frame to check the cut is safe for a portrait crop"
             >
-              <Smartphone className="h-3 w-3" />
-              9:16
+              <Frame className="h-3 w-3" />
+              Guides
               <ChevronDown className="h-3 w-3" />
             </button>
             {verticalGuideOpen && (
