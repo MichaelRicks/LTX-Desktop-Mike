@@ -44,6 +44,8 @@ function Dock({ onClose }: { onClose: () => void }) {
   const [files, setFiles] = useState<LibFile[]>([])
   const [openFolders, setOpenFolders] = useState<Set<string>>(new Set())
   const [newName, setNewName] = useState('')
+  // Why the pending name can't be used, shown under the box until it changes.
+  const [nameHint, setNameHint] = useState<string | null>(null)
   const newNameRef = useRef<HTMLInputElement>(null)
   const [renaming, setRenaming] = useState<string | null>(null)
   const [renameVal, setRenameVal] = useState('')
@@ -101,19 +103,34 @@ function Dock({ onClose }: { onClose: () => void }) {
 
   const createFolder = async () => {
     const n = newName.trim()
-    // The name comes from the inline box, not a popup — clicking the button with an
-    // empty box is a common "where do I type the name?" mistake, so nudge + focus it.
-    if (!n) { flash('Type a folder name in the box first, then click Create'); newNameRef.current?.focus(); return }
+    // The name comes from the inline box, not a popup, so "where do I type the
+    // name?" is the mistake to design against. Every refusal says why right under
+    // the box and stays there until the name changes, and points the cursor at the
+    // box: a toast at the top of the panel is nowhere near the button the user just
+    // pressed and is gone in a second and a half, which reads as a dead button.
+    if (!n) { setNameHint('Type a folder name in the box above, then click Create.'); newNameRef.current?.focus(); return }
+    // Catch what the filesystem would reject anyway, while we can still name the
+    // offending character instead of surfacing a raw EINVAL path.
+    const badChars = [...new Set(n.match(/[\\/:*?"<>|]/g) ?? [])]
+    if (badChars.length > 0) { setNameHint(`A folder name can't contain ${badChars.join(' ')}`); newNameRef.current?.focus(); return }
+    // safeName() in the main process rejects ".." outright, so say so here rather
+    // than letting a plausible name like "Take 1..3" come back as "Invalid name".
+    if (n.includes('..')) { setNameHint(`A folder name can't contain ".."`); newNameRef.current?.focus(); return }
+    const clash = folders.find((folder) => folder.toLowerCase() === n.toLowerCase())
+    if (clash) { setNameHint(`"${clash}" already exists — pick another name.`); newNameRef.current?.focus(); return }
     if (!api) return
     const r = await api.gpmLibCreateFolder({ name: n })
     if (r.success) {
       // New folder at the TOP of the list (not appended below an expanded Inbox of
       // hundreds of files, where it looks like nothing happened).
-      saveOrder([n, ...loadOrder().filter((f) => f !== n)]); setNewName('')
+      saveOrder([n, ...loadOrder().filter((f) => f !== n)]); setNewName(''); setNameHint(null)
       setOpenFolders((prev) => new Set(prev).add(n))
       setStudioAssetsTarget(n) // route quick-saves into the folder just created
       await refresh()
-    } else flash(r.error)
+    } else {
+      // The list can be a moment stale, so the clash check above isn't the last word.
+      setNameHint(/EEXIST/.test(r.error) ? `"${n}" already exists — pick another name.` : r.error)
+    }
   }
   const commitRename = async (from: string) => {
     const to = renameVal.trim(); setRenaming(null)
@@ -205,9 +222,18 @@ function Dock({ onClose }: { onClose: () => void }) {
         </button>
       </div>
 
-      <div className="flex gap-2 px-3 py-2 shrink-0" style={{ borderBottom: `1px solid ${C.border}` }}>
-        <input ref={newNameRef} value={newName} onChange={(e) => setNewName(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') void createFolder() }} placeholder="Type a folder name…" className="flex-1 rounded-md px-2 py-1.5 text-xs outline-none" style={{ background: C.elev, color: C.text, border: `1px solid ${C.border}` }} />
-        <button onClick={() => void createFolder()} title={newName.trim() ? 'Create folder' : 'Type a folder name in the box first'} className="flex items-center gap-1 rounded-md px-2.5 py-1.5 text-xs font-medium transition-opacity" style={{ background: C.blue, color: '#fff', opacity: newName.trim() ? 1 : 0.45 }}><FolderPlus size={13} />Create</button>
+      <div className="px-3 py-2 shrink-0" style={{ borderBottom: `1px solid ${C.border}` }}>
+        <div className="flex gap-2">
+          <input
+            ref={newNameRef} value={newName}
+            onChange={(e) => { setNewName(e.target.value); setNameHint(null) }}
+            onKeyDown={(e) => { if (e.key === 'Enter') void createFolder() }}
+            placeholder="Type a folder name…" className="flex-1 rounded-md px-2 py-1.5 text-xs outline-none"
+            style={{ background: C.elev, color: C.text, border: `1px solid ${nameHint ? C.amber : C.border}` }}
+          />
+          <button onClick={() => void createFolder()} title={newName.trim() ? 'Create folder' : 'Type a folder name in the box first'} className="flex items-center gap-1 rounded-md px-2.5 py-1.5 text-xs font-medium transition-opacity" style={{ background: C.blue, color: '#fff', opacity: newName.trim() ? 1 : 0.45 }}><FolderPlus size={13} />Create</button>
+        </div>
+        {nameHint && <p className="mt-1.5 text-[10px] leading-snug" style={{ color: C.amber }}>{nameHint}</p>}
       </div>
 
       <div className="flex items-center gap-2 px-3 py-2 shrink-0" style={{ borderBottom: `1px solid ${C.border}` }}>
