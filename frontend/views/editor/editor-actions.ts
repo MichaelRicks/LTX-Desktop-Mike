@@ -252,11 +252,11 @@ function buildDroppedVisualClipInsertion(
         !candidate.locked &&
         candidate.sourcePatched !== false,
     )
-    if (audioTrackIndex < 0) {
-      audioTrackIndex = nextTracks.findIndex(
-        candidate => candidate.kind === 'audio' && !candidate.locked && candidate.sourcePatched !== false,
-      )
-    }
+    // No audio track of its own below this one: make a new one rather than
+    // reaching back up to the first audio track anywhere, which is how a clip
+    // dropped on V2 used to land its audio on A1, on top of what was there. New
+    // video tracks are paired with an audio track (see addTrack), so this is the
+    // path for timelines built before that.
     if (audioTrackIndex < 0) {
       const audioTrackCount = nextTracks.filter(candidate => candidate.kind === 'audio').length
       nextTracks = [
@@ -1527,19 +1527,35 @@ export function removeCrossDissolve(state: EditorState, leftClipId: string, righ
 }
 
 export function addTrack(state: EditorState, kind: 'video' | 'audio'): EditorState {
-  const tracks = selectTracks(state)
-  const sameKindCount = tracks.filter(track => track.kind === kind && track.type !== 'subtitle').length
-  const newTrack: Track = {
-    id: makeId('track'),
-    name: kind === 'audio' ? `A${sameKindCount + 1}` : `V${sameKindCount + 1}`,
-    muted: false,
-    locked: false,
-    kind,
-  }
-  return replaceActiveTimeline(state, timeline => ({
-    ...timeline,
-    tracks: [...timeline.tracks, newTrack],
-  }))
+  return replaceActiveTimeline(state, timeline => {
+    const nameFor = (trackKind: 'video' | 'audio') => {
+      const count = timeline.tracks.filter(track => track.kind === trackKind && track.type !== 'subtitle').length
+      return `${trackKind === 'audio' ? 'A' : 'V'}${count + 1}`
+    }
+    const added: Track[] = [{
+      id: makeId('track'),
+      name: nameFor(kind),
+      muted: false,
+      locked: false,
+      kind,
+    }]
+    // A video track comes with an audio track of its own, even when nothing needs
+    // it yet. Dropping a clip with sound onto a video track that has no audio
+    // track below it sends the audio to the first one anywhere — in practice A1,
+    // straight over whatever was already there. Pairing them gives that audio
+    // somewhere of its own to land. (Adding an audio track on its own stays a
+    // single track: extra audio for music or effects is a normal thing to want.)
+    if (kind === 'video') {
+      added.push({
+        id: makeId('track-audio'),
+        name: nameFor('audio'),
+        muted: false,
+        locked: false,
+        kind: 'audio',
+      })
+    }
+    return { ...timeline, tracks: [...timeline.tracks, ...added] }
+  })
 }
 
 export function deleteTrack(state: EditorState, trackId: string): EditorState {

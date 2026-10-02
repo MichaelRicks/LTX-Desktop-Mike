@@ -531,17 +531,6 @@ export function VideoEditorTimelineEditingPanel(props: VideoEditorTimelineEditin
     }))
   }, [setClips, setSubtitles])
 
-  const addTrack = useCallback((kind: 'video' | 'audio') => {
-    const sameKindCount = tracks.filter(track => track.kind === kind && track.type !== 'subtitle').length
-    setTracks(prev => [...prev, {
-      id: `track-${Date.now()}`,
-      name: kind === 'audio' ? `A${sameKindCount + 1}` : `V${sameKindCount + 1}`,
-      muted: false,
-      locked: false,
-      kind,
-    }])
-  }, [setTracks, tracks])
-
   const deleteTrack = useCallback((idx: number) => {
     if (tracks.length <= 1) return
     setClips(prev => prev
@@ -2022,7 +2011,7 @@ export function VideoEditorTimelineEditingPanel(props: VideoEditorTimelineEditin
                 {/* Add track buttons - pinned above scrollable area */}
                 <div className="flex-shrink-0 h-7 flex items-center px-2 gap-1.5 border-b border-zinc-700/50">
                   <button 
-                    onClick={() => addTrack('video')}
+                    onClick={() => actions.addTrack('video')}
                     className="text-[10px] text-zinc-500 hover:text-zinc-300 flex items-center gap-0.5"
                     title="Add video track"
                   >
@@ -2030,7 +2019,7 @@ export function VideoEditorTimelineEditingPanel(props: VideoEditorTimelineEditin
                     V
                   </button>
                   <button 
-                    onClick={() => addTrack('audio')}
+                    onClick={() => actions.addTrack('audio')}
                     className="text-[10px] text-emerald-500/70 hover:text-emerald-400 flex items-center gap-0.5"
                     title="Add audio track"
                   >
