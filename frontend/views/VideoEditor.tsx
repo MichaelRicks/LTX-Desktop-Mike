@@ -86,6 +86,11 @@ interface VideoEditorProps {
   pendingIcLoraUpdate: PendingIcLoraUpdate | null
 }
 
+interface LiveAssetFields {
+  binId?: string
+  favorite: boolean
+}
+
 interface VideoEditorWithStoreProps {
   currentProject: Project
   saveProject: (project: Project) => void
@@ -210,6 +215,10 @@ function VideoEditorWithStore({
   // mistaken for an external add and pulled straight back in.
   const seenEditorAssetIdsRef = useRef(new Set<string>())
   for (const asset of editorModel.assets) seenEditorAssetIdsRef.current.add(asset.id)
+  // Last `binId`/`favorite` seen on the live project, per asset, so the pull-in
+  // effect below can tell a genuine external edit from this editor's own change
+  // arriving back round through the debounced autosave.
+  const lastLiveAssetFieldsRef = useRef(new Map<string, LiveAssetFields>())
 
   const bladeShiftHeldRef = useRef(false)
   const [bladeShiftHeld, setBladeShiftHeld] = useState(false)
@@ -540,15 +549,37 @@ function VideoEditorWithStore({
     // object back over the live project (see updatedProject's
     // survivingEditorAssets) — silently reverting the Gen Space edit. Pull the
     // live values in as soon as they change so that doesn't happen.
-    const liveById = new Map(currentProject.assets.map(asset => [asset.id, asset]))
-    for (const asset of editorModel.assets) {
-      const live = liveById.get(asset.id)
-      if (!live) continue
-      if (live.binId !== asset.binId || !!live.favorite !== !!asset.favorite) {
-        actions.updateAsset(asset.id, { binId: live.binId, favorite: live.favorite })
-      }
+    //
+    // "As soon as they change" is the whole trick: each live asset is compared
+    // against the last live value seen here, never against the editor's own
+    // copy. Straight after a bin move or a favorite toggle made *in* the editor
+    // the two differ simply because autosave is debounced, so comparing against
+    // the editor's copy read that as an external edit and wrote the stale
+    // project value back — an asset moved to a bin snapped out of it again
+    // before the user saw it land.
+    const previousLive = lastLiveAssetFieldsRef.current
+    const nextLive = new Map<string, LiveAssetFields>()
+    const editorAssetsById = new Map(editorModelRef.current.assets.map(asset => [asset.id, asset]))
+    for (const live of currentProject.assets) {
+      const liveFields: LiveAssetFields = { binId: live.binId, favorite: !!live.favorite }
+      nextLive.set(live.id, liveFields)
+
+      // First sighting: the editor's copy came from this same project, so
+      // there's nothing to pull in — just record the baseline.
+      const seen = previousLive.get(live.id)
+      if (!seen) continue
+      if (seen.binId === liveFields.binId && seen.favorite === liveFields.favorite) continue
+
+      // The live value really did change elsewhere. Skip the write anyway if the
+      // editor already agrees — that's this editor's own change coming back
+      // round through autosave.
+      const editorAsset = editorAssetsById.get(live.id)
+      if (!editorAsset) continue
+      if (editorAsset.binId === liveFields.binId && !!editorAsset.favorite === liveFields.favorite) continue
+      actions.updateAsset(live.id, { binId: live.binId, favorite: live.favorite })
     }
-  }, [currentProject.assets, editorModel.assets, actions])
+    lastLiveAssetFieldsRef.current = nextLive
+  }, [currentProject.assets, actions])
 
   // --- Core timeline logic ---
 
