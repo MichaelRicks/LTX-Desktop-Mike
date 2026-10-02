@@ -7,7 +7,7 @@ import { getMainWindow } from '../window'
 import { logger } from '../logger'
 import { validatePath } from '../path-validation'
 import { findFfmpegPath, getVideoDimensions, runFfmpeg, stopExportProcess } from './ffmpeg-utils'
-import { buildDissolveTimeRemap, computeFinalVideoDuration, flattenTimeline } from './timeline'
+import { buildDissolveTimeRemap, collectOverlayLayers, computeFinalVideoDuration, flattenTimeline } from './timeline'
 import { buildVideoFilterGraph } from './video-filter'
 import { mixAudioToPcm } from './audio-mix'
 import { handle } from '../ipc/typed-handle'
@@ -113,6 +113,21 @@ export async function exportTimelineNative(
     }
   }
 
+  // Graphics composited over the program (logos, lower thirds, PiP) rather than
+  // flattened into it. A dissolve overlaps two clips and so pulls everything after
+  // it earlier on the program clock — the same correction the audio pass makes
+  // below — so a layer's start has to go through it or the graphic lands late.
+  const remapLayerTime = buildDissolveTimeRemap(segments)
+  const layers = collectOverlayLayers(clips).map(layer => ({
+    ...layer,
+    startTime: remapLayerTime(layer.startTime),
+  }))
+  for (const layer of layers) {
+    if (!layer.filePath || !fs.existsSync(layer.filePath)) {
+      return { success: false, error: `Layer source not found: ${path.basename(layer.filePath || '')}` }
+    }
+  }
+
   // Total program duration drives the progress percentage: ffmpeg reports the
   // encoded position (`time=`), which we divide by this to get a fraction.
   const totalDur = computeFinalVideoDuration(segments)
@@ -136,11 +151,11 @@ export async function exportTimelineNative(
   }
 
   try {
-    logger.info( `[Export] Step 1: Video-only export (${segments.length} segments)`)
+    logger.info( `[Export] Step 1: Video-only export (${segments.length} segments, ${layers.length} layers)`)
     {
       const fontFile = resolveExportFont()
       const { inputs, filterScript } = buildVideoFilterGraph(segments, {
-        width, height, fps, letterbox, subtitles, textOverlays, fontFile, vertical,
+        width, height, fps, letterbox, subtitles, textOverlays, fontFile, vertical, layers,
         resolveFontFile: resolveOverlayFontFile,
       })
 

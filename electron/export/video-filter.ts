@@ -1,4 +1,6 @@
-import { findDissolveBoundaries, type FlatSegment } from './timeline'
+import {
+  findDissolveBoundaries, type ColorCorrection, type FlatSegment, type OverlayLayer,
+} from './timeline'
 import { keyframeExpr } from './keyframe-expr'
 
 export interface ExportSubtitle {
@@ -86,10 +88,10 @@ function cssColorToFfmpeg(css: string, extraAlpha = 1): string | null {
  * close creative match to the live preview, not colorimetric precision -
  * consistent with the preview's own hue-rotate/sepia approximations.
  */
-function buildGradingFilters(seg: FlatSegment, localDuration: number): string {
+/** The color-correction filters alone, comma-joined, or '' — shared by segments
+ *  and by the overlay layers, which have no transitions to fade. */
+function buildColorGradeFilters(cc: ColorCorrection | undefined): string {
   const parts: string[] = []
-  const cc = seg.colorCorrection
-
   if (cc) {
     const brightness = cc.brightness / 100 + cc.exposure / 200 + cc.highlights / 300
     const contrast = 1 + cc.contrast / 100 + cc.shadows / 300
@@ -105,6 +107,13 @@ function buildGradingFilters(seg: FlatSegment, localDuration: number): string {
       parts.push(`colortemperature=temperature=${kelvin}`)
     }
   }
+  return parts.join(',')
+}
+
+function buildGradingFilters(seg: FlatSegment, localDuration: number): string {
+  const parts: string[] = []
+  const grade = buildColorGradeFilters(seg.colorCorrection)
+  if (grade) parts.push(grade)
 
   // Fades are defined relative to the ORIGINAL clip's start/end, so only
   // apply them to the fragment that actually touches that edge - a clip
@@ -339,12 +348,153 @@ function verticalTextMap(segments: FlatSegment[], start: number, end: number, ou
   }
   return {
     scale,
+    /** The virtual 16:9 frame the 9:16 window crops from, in output pixels — what a
+     *  layer is sized against so the window mapping lands it correctly. Fixed to the
+     *  opening window, like `scale`. */
+    frameW: outW / wins[0].w.winW,
+    frameH: outH / wins[0].w.winH,
     /** Output-pixel center X/Y for a title at frame fraction (px, py). Unescaped commas. */
     centerX: (px: number) => piecewise(w => `(${outW}*((${px.toFixed(6)}-${w.winXExpr})/${w.winW.toFixed(6)}))`),
     centerY: (py: number) => piecewise(w => `(${outH}*((${py.toFixed(6)}-${w.winYExpr})/${w.winH.toFixed(6)}))`),
+    /** Same, for a frame fraction that is itself an expression (a keyframed layer). */
+    centerXExpr: (px: string) => piecewise(w => `(${outW}*(((${px})-${w.winXExpr})/${w.winW.toFixed(6)}))`),
+    centerYExpr: (py: string) => piecewise(w => `(${outH}*(((${py})-${w.winYExpr})/${w.winH.toFixed(6)}))`),
   }
 }
 
+/** Commas inside a filter option value have to be escaped even when quoted. */
+const escCommas = (expr: string): string => expr.replace(/,/g, '\\,')
+
+/**
+ * Composite the layer clips (logos, graphics, PiP) over the flattened program.
+ *
+ * Each becomes its own input, sized to what it fills the frame at — the same
+ * letterboxed fit the preview's object-contain element paints — then scaled, faded
+ * and positioned. All three animations are ffmpeg expressions over program time:
+ * `scale` with eval=frame for the size, overlay's own per-frame x/y for the
+ * position, and one alpha value per frame pushed into colorchannelmixer by sendcmd
+ * for the fade — the same technique the stretched-title path below uses.
+ *
+ * The transform eases with smoothstep (keyframeExpr) to match clipLayerAt() in the
+ * renderer; opacity is linear, matching the preview there too.
+ */
+function buildOverlayLayers(
+  layers: OverlayLayer[],
+  baseLabel: string,
+  startIdx: number,
+  o: { width: number; height: number; fps: number; segments: FlatSegment[]; vertical?: boolean },
+): { inputs: string[]; filterLines: string[]; label: string; nextIdx: number } {
+  const inputs: string[] = []
+  const filterLines: string[] = []
+  let label = baseLabel
+  let idx = startIdx
+
+  for (let li = 0; li < layers.length; li++) {
+    const ly = layers[li]
+    const dur = ly.duration
+    if (dur <= 0.001) continue
+    const speed = ly.speed || 1
+    const keys = ly.layer.keys && ly.layer.keys.length > 0
+      ? [...ly.layer.keys].sort((a, b) => a.t - b.t)
+      : null
+    // Clip-local clock, so the keys read the same as they do in the editor.
+    const local = `(t-${ly.startTime.toFixed(6)})`
+    type LayerField = 'x' | 'y' | 'scaleX' | 'scaleY'
+    const expr = (field: LayerField): string => keys && keys.length > 1
+      ? keyframeExpr(keys.map(k => ({ t: k.t, v: k[field] })), local)
+      : (keys ? keys[0][field] : ly.layer[field]).toFixed(6)
+
+    // The frame the layer sits on. A vertical export only shows the 9:16 window of
+    // that frame, so fit into the larger virtual frame the window crops from — the
+    // window mapping below then lands it at the right place and size, exactly as a
+    // title is handled.
+    const vmap = o.vertical
+      ? verticalTextMap(o.segments, ly.startTime, ly.startTime + dur, o.width, o.height)
+      : null
+    const fitW = vmap ? Math.max(2, Math.round(vmap.frameW)) : o.width
+    const fitH = vmap ? Math.max(2, Math.round(vmap.frameH)) : o.height
+
+    const source = `l${li}s`
+    const faded = `l${li}f`
+    const mixer = `lyo${li}`
+
+    if (ly.type === 'image') {
+      inputs.push('-loop', '1', '-framerate', String(o.fps), '-t', dur.toFixed(6), '-i', ly.filePath)
+    } else {
+      inputs.push('-i', ly.filePath)
+    }
+
+    let chain = `[${idx}:v]`
+    if (ly.type !== 'image') {
+      const trimEnd = ly.trimStart + dur * speed
+      chain += `trim=start=${ly.trimStart.toFixed(6)}:end=${trimEnd.toFixed(6)},setpts=PTS-STARTPTS,`
+      if (speed !== 1) chain += `setpts=PTS/${speed.toFixed(6)},`
+    }
+    chain += `fps=${o.fps},`
+    // Onto the program clock, so every expression below reads plain `t`.
+    chain += `setpts=PTS+${ly.startTime.toFixed(6)}/TB,`
+    chain += `scale=${fitW}:${fitH}:force_original_aspect_ratio=decrease,setsar=1,`
+    if (ly.flipH) chain += 'hflip,'
+    if (ly.flipV) chain += 'vflip,'
+    const grade = buildColorGradeFilters(ly.colorCorrection)
+    if (grade) chain += `${grade},`
+    // rgba so a logo's own transparency survives, and so the alpha gain below has
+    // something to multiply.
+    chain += 'format=rgba,'
+    // Animated size. eval=frame re-reads the expressions every frame; sizes are
+    // forced even and at least 2px, because odd or zero dimensions trip scalers.
+    chain += `scale=w='trunc(max(2\\,iw*(${escCommas(expr('scaleX'))}))/2)*2'`
+    chain += `:h='trunc(max(2\\,ih*(${escCommas(expr('scaleY'))}))/2)*2':eval=frame`
+    filterLines.push(`${chain}[${source}]`)
+    idx++
+
+    // Fade. A flat 100% needs no stage; a flat value is one filter; keys get one
+    // command per frame the value actually changes on.
+    const okeys = ly.opacityKeyframes && ly.opacityKeyframes.length > 0 ? ly.opacityKeyframes : null
+    const opacityAt = (programT: number): number => {
+      const base = okeys ? linearKeyValue(okeys, programT - ly.startTime) : ly.opacity
+      return Math.max(0, Math.min(1, base / 100))
+    }
+    const first = opacityAt(ly.startTime)
+    if (okeys) {
+      const cmds: string[] = []
+      let last = -1
+      const frames = Math.ceil(dur * o.fps) + 1
+      for (let f = 0; f < frames; f++) {
+        const t = ly.startTime + f / o.fps
+        const v = opacityAt(t)
+        if (Math.abs(v - last) > 0.002) {
+          cmds.push(`${t.toFixed(4)} colorchannelmixer@${mixer} aa ${v.toFixed(4)}`)
+          last = v
+        }
+      }
+      filterLines.push(cmds.length > 1
+        ? `[${source}]sendcmd=c='${cmds.join(';')}',colorchannelmixer@${mixer}=aa=${first.toFixed(4)}[${faded}]`
+        : `[${source}]colorchannelmixer=aa=${first.toFixed(4)}[${faded}]`)
+    } else if (first < 0.999) {
+      filterLines.push(`[${source}]colorchannelmixer=aa=${first.toFixed(4)}[${faded}]`)
+    } else {
+      filterLines.push(`[${source}]null[${faded}]`)
+    }
+
+    // Position: the layer's CENTER goes to (x, y) as a fraction of the frame, so
+    // the overlay's top-left is that minus half its own (animated) size.
+    const xExpr = vmap
+      ? `${vmap.centerXExpr(expr('x'))}-w/2`
+      : `W*(${expr('x')})-w/2`
+    const yExpr = vmap
+      ? `${vmap.centerYExpr(expr('y'))}-h/2`
+      : `H*(${expr('y')})-h/2`
+    const nextLabel = `lyout${li}`
+    filterLines.push(
+      `[${label}][${faded}]overlay=x='${escCommas(xExpr)}':y='${escCommas(yExpr)}'` +
+      `:eof_action=pass:format=auto[${nextLabel}]`,
+    )
+    label = nextLabel
+  }
+
+  return { inputs, filterLines, label, nextIdx: idx }
+}
 /**
  * Build the ffmpeg filter_complex script and input arguments for the video-only pass.
  * Pure string building — zero I/O.
@@ -360,9 +510,11 @@ export function buildVideoFilterGraph(
     /** Per-overlay font file for a family + boldness; falls back to `fontFile`. */
     resolveFontFile?: (fontFamily: string | undefined, bold: boolean) => string | undefined;
     vertical?: boolean;
+    /** Graphics composited over the program — see buildOverlayLayers. */
+    layers?: OverlayLayer[];
   },
 ): { inputs: string[]; filterScript: string } {
-  const { width, height, fps, letterbox, subtitles, textOverlays, fontFile, resolveFontFile, vertical } = opts
+  const { width, height, fps, letterbox, subtitles, textOverlays, fontFile, resolveFontFile, vertical, layers } = opts
   // Text sizes are authored against a 1080-line 16:9 frame. A 16:9 export scales
   // by its height. A 9:16 export instead maps each title through the shot's 9:16
   // window (see verticalTextMap) — the picture is blown up to fill it, so the
@@ -506,6 +658,15 @@ export function buildVideoFilterGraph(
         lastLabel = nextLabel
       }
     }
+  }
+
+  // Layer clips (logos, graphics, PiP) composited over the flattened program.
+  if (layers && layers.length > 0) {
+    const built = buildOverlayLayers(layers, lastLabel, idx, { width, height, fps, segments, vertical })
+    inputs.push(...built.inputs)
+    filterParts.push(...built.filterLines)
+    idx = built.nextIdx
+    lastLabel = built.label
   }
 
   // Text-overlay burn-in (drawtext) — the type:'text' clips with a textStyle.

@@ -12,8 +12,73 @@ export interface ExportClip {
   speed: number; reversed: boolean; flipH: boolean; flipV: boolean; opacity: number; trackIndex: number;
   muted: boolean; volume: number; audioFadeIn?: number; audioFadeOut?: number;
   volumeKeyframes?: { t: number; value: number }[];
+  opacityKeyframes?: { t: number; value: number }[];
   reframe?: ClipReframe;
+  layer?: ClipLayer; composite?: boolean;
   colorCorrection?: ColorCorrection; transitionIn?: ClipTransition; transitionOut?: ClipTransition;
+}
+
+/** Where a media clip sits in the frame and how big it is, optionally keyframed.
+ *  x/y are the layer's CENTER as a fraction of frame width/height; scaleX/scaleY
+ *  multiply the size it fills the frame at. Mirrors ClipLayer in the renderer's
+ *  project model, and clipLayerAt() there samples it the same way (smoothstep).
+ *  Key `t` is clip-local seconds. */
+export interface ClipLayer {
+  x: number; y: number; scaleX: number; scaleY: number;
+  keys?: Array<{ t: number; x: number; y: number; scaleX: number; scaleY: number }>;
+}
+
+/** One graphic drawn over the flattened program: a logo, a lower third, a PiP. */
+export interface OverlayLayer {
+  filePath: string; type: string;
+  /** Program time. The caller remaps it for dissolves before building the graph. */
+  startTime: number;
+  duration: number; trimStart: number; speed: number;
+  flipH: boolean; flipV: boolean;
+  opacity: number;
+  opacityKeyframes?: { t: number; value: number }[];
+  layer: ClipLayer;
+  colorCorrection?: ColorCorrection;
+}
+
+const DEFAULT_LAYER: ClipLayer = { x: 0.5, y: 0.5, scaleX: 1, scaleY: 1 }
+
+/**
+ * Is this clip a layer — i.e. does it no longer simply fill the frame, so it has
+ * to be drawn OVER the tracks below instead of replacing them? Mirrors
+ * isLayerClip() in video-editor-utils, which decides the same thing for the
+ * preview. Anything else keeps the NLE default of the highest track winning.
+ */
+export function isLayerExportClip(clip: ExportClip): boolean {
+  if (clip.type !== 'video' && clip.type !== 'image') return false
+  if (clip.composite) return true
+  if ((clip.opacity ?? 100) < 100) return true
+  if (clip.opacityKeyframes && clip.opacityKeyframes.length > 0) return true
+  const layer = clip.layer
+  if (!layer) return false
+  if (layer.keys && layer.keys.length > 0) return true
+  return layer.x !== 0.5 || layer.y !== 0.5 || layer.scaleX !== 1 || layer.scaleY !== 1
+}
+
+/** The layer clips, bottom track first, so they stack the way the preview shows. */
+export function collectOverlayLayers(clips: ExportClip[]): OverlayLayer[] {
+  return clips
+    .filter(isLayerExportClip)
+    .sort((a, b) => (a.trackIndex - b.trackIndex) || (a.startTime - b.startTime))
+    .map(clip => ({
+      filePath: clip.path,
+      type: clip.type,
+      startTime: clip.startTime,
+      duration: clip.duration,
+      trimStart: clip.trimStart,
+      speed: clip.speed || 1,
+      flipH: clip.flipH || false,
+      flipV: clip.flipV || false,
+      opacity: clip.opacity ?? 100,
+      opacityKeyframes: clip.opacityKeyframes,
+      layer: clip.layer ?? DEFAULT_LAYER,
+      colorCorrection: clip.colorCorrection,
+    }))
 }
 
 /** 9:16 window position (0..1 along the free axis), optionally keyframed. */
@@ -43,8 +108,11 @@ export interface FlatSegment {
  * At each point in time, the highest trackIndex wins for video (NLE convention).
  */
 export function flattenTimeline(clips: ExportClip[]): FlatSegment[] {
-  // Only consider video/image clips for visual flattening
-  const videoClips = clips.filter(c => c.type === 'video' || c.type === 'image')
+  // Only consider video/image clips for visual flattening, and not the layer ones:
+  // those are composited on top afterwards (see collectOverlayLayers), so the clip
+  // BELOW a layer has to keep the frame for that whole span rather than being
+  // replaced by it.
+  const videoClips = clips.filter(c => (c.type === 'video' || c.type === 'image') && !isLayerExportClip(c))
   if (videoClips.length === 0) return []
 
   // Collect all time boundaries

@@ -46,11 +46,25 @@ const exportClip = z.object({
   audioFadeIn: z.number().optional(),
   audioFadeOut: z.number().optional(),
   volumeKeyframes: z.array(z.object({ t: z.number(), value: z.number() })).optional(),
+  opacityKeyframes: z.array(z.object({ t: z.number(), value: z.number() })).optional(),
   // 9:16 framing (see TimelineClip.reframe); only applied when exporting vertical.
   reframe: z.object({
     pos: z.number(),
     keys: z.array(z.object({ t: z.number(), pos: z.number() })).optional(),
   }).optional(),
+  // Placement in the frame for a graphic/logo clip (see TimelineClip.layer). Set,
+  // faded or flagged `composite` and the clip is drawn OVER the tracks below
+  // instead of replacing them.
+  layer: z.object({
+    x: z.number(),
+    y: z.number(),
+    scaleX: z.number(),
+    scaleY: z.number(),
+    keys: z.array(z.object({
+      t: z.number(), x: z.number(), y: z.number(), scaleX: z.number(), scaleY: z.number(),
+    })).optional(),
+  }).optional(),
+  composite: z.boolean().optional(),
   colorCorrection: exportColorCorrection.optional(),
   transitionIn: exportClipTransition.optional(),
   transitionOut: exportClipTransition.optional(),
