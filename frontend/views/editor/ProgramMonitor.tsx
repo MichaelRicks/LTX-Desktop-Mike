@@ -330,6 +330,17 @@ function clearEffectStyle(element: HTMLElement): void {
   element.style.opacity = ''
 }
 
+/**
+ * Park a layer element that has just left the frame. It stays mounted until
+ * React's next render, and this pass runs inside the playback tick — so clearing
+ * its style instead would paint it full-frame and fully opaque for that one frame,
+ * which is a flash of the graphic as the playhead leaves it. Hiding it is enough;
+ * the unmount takes it away, and applyEffectStyle un-hides it if it comes back.
+ */
+function hideEffectStyle(element: HTMLElement): void {
+  element.style.opacity = '0'
+}
+
 function applyEffectStyle(
   element: HTMLElement,
   style: React.CSSProperties,
@@ -1029,10 +1040,10 @@ export const ProgramMonitor = React.forwardRef<ProgramMonitorHandle, ProgramMoni
       if (incomingDissolveImageRef.current) clearEffectStyle(incomingDissolveImageRef.current)
     }
 
-    const compositingIds = new Set(layerStack.map(clip => clip.id))
+    const layerIds = new Set(layerStack.map(clip => clip.id))
     for (const [clipId, element] of layerMediaRefs.current.entries()) {
-      if (!compositingIds.has(clipId)) {
-        clearEffectStyle(element)
+      if (!layerIds.has(clipId)) {
+        hideEffectStyle(element)
       }
     }
 
