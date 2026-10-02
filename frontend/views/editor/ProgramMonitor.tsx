@@ -16,6 +16,7 @@ import { DEFAULT_SUBTITLE_STYLE } from '../../types/project-model'
 import type { Asset, TimelineClip, Track, SubtitleClip } from '../../types/project-model'
 import { getClipEffectStyles as clipEffectStylesFor, getTransitionBgColor, formatTime, getShortcutLabel, tooltipLabel, getMaskedEffectOverlays, textClipOpacity, isLayerClip } from './video-editor-utils'
 import { MediaTransformBox } from './MediaTransformBox'
+import { TitleSafeGuides } from './TitleSafeGuides'
 import { getLayerPreview, setLayerPreview } from './layer-preview'
 import type { KeyboardLayout } from '../../lib/keyboard-shortcuts'
 import {
@@ -569,8 +570,8 @@ export const ProgramMonitor = React.forwardRef<ProgramMonitorHandle, ProgramMoni
   // "Protect for 9:16" guide: a centered vertical frame (sides dimmed) with
   // optional thirds grid + social-app UI zones, plus an independent thirds grid
   // over the full frame. Persisted per machine.
-  const [verticalGuide, setVerticalGuide] = React.useState<{ frame: boolean; grid: boolean; safe: boolean; fullGrid: boolean }>(() => {
-    const defaults = { frame: false, grid: true, safe: false, fullGrid: false }
+  const [verticalGuide, setVerticalGuide] = React.useState<{ frame: boolean; grid: boolean; safe: boolean; fullGrid: boolean; titleSafe: boolean }>(() => {
+    const defaults = { frame: false, grid: true, safe: false, fullGrid: false, titleSafe: false }
     try {
       const raw = localStorage.getItem('editor.verticalGuide')
       if (raw) return { ...defaults, ...JSON.parse(raw) }
@@ -1685,6 +1686,11 @@ export const ProgramMonitor = React.forwardRef<ProgramMonitorHandle, ProgramMoni
                   <VerticalFrameGuides showGrid showSafe={false} />
                 </div>
               )}
+              {verticalGuide.titleSafe && videoFrameSize.width > 0 && (
+                <div className="absolute inset-0 z-[19] pointer-events-none">
+                  <TitleSafeGuides />
+                </div>
+              )}
               {verticalGuide.frame && videoFrameSize.width > 0 && (() => {
                 const src = activeClip
                   ? assets.find(a => a.id === activeClip.assetId) ?? activeClip.asset
@@ -2035,11 +2041,11 @@ export const ProgramMonitor = React.forwardRef<ProgramMonitorHandle, ProgramMoni
             <button
               onClick={(e) => { e.stopPropagation(); setVerticalGuideOpen(prev => !prev) }}
               className={`h-6 px-2 rounded text-[11px] font-medium flex items-center gap-1 transition-colors border ${
-                verticalGuide.frame || verticalGuide.fullGrid
+                verticalGuide.frame || verticalGuide.fullGrid || verticalGuide.titleSafe
                   ? 'bg-zinc-900 text-[rgb(var(--accent))] border-[rgb(var(--accent))]/60'
                   : 'bg-zinc-900 text-zinc-400 border-zinc-700 hover:border-zinc-600'
               }`}
-              title="Framing guides — full-frame thirds grid, or a 9:16 frame to check the cut is safe for a portrait crop"
+              title="Framing guides — thirds grid, title/action safe areas, or a 9:16 frame to check the cut is safe for a portrait crop"
             >
               <Smartphone className="h-3 w-3" />
               9:16
@@ -2052,6 +2058,7 @@ export const ProgramMonitor = React.forwardRef<ProgramMonitorHandle, ProgramMoni
               >
                 {([
                   { key: 'fullGrid', label: 'Thirds grid (full frame)' },
+                  { key: 'titleSafe', label: 'Title & action safe' },
                   { key: 'frame', label: 'Show 9:16 frame' },
                   { key: 'grid', label: 'Thirds grid in 9:16' },
                   { key: 'safe', label: 'Social UI safe zones' },
