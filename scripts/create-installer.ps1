@@ -54,12 +54,12 @@ Write-Host "========================================" -ForegroundColor Green
 
 if ($Unpack) {
     $UnpackedDir = Join-Path $ReleaseDir "win-unpacked"
-    $ExePath = Join-Path $UnpackedDir "LTX Desktop.exe"
+    $ExePath = Join-Path $UnpackedDir "RiX Film Studio Pro.exe"
     Write-Host "`nUnpacked app ready!" -ForegroundColor Cyan
     Write-Host "Run: $ExePath" -ForegroundColor Cyan
     Write-Host "`nTip: Just restart the app after code changes - no rebuild needed!" -ForegroundColor Green
 } else {
-    $Installer = Get-ChildItem -Path $ReleaseDir -Filter "*.exe" | Where-Object { $_.Name -like "*Setup*" } | Select-Object -First 1
+    $Installer = Get-ChildItem -Path $ReleaseDir -Filter "*.exe" | Where-Object { $_.Name -like "*Setup*" } | Sort-Object LastWriteTime -Descending | Select-Object -First 1
     if ($Installer) {
         $InstallerSize = [math]::Round($Installer.Length / 1MB, 2)
         Write-Host "`nInstaller: $($Installer.Name)" -ForegroundColor Cyan

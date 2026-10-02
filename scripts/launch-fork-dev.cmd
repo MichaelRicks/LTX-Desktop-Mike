@@ -1,8 +1,8 @@
 @echo off
-title LTX Desktop Studio Pro
+title RiX Film Studio Pro
 cd /d "C:\Dev\LTX-Desktop"
 echo ============================================================
-echo   Launching LTX Desktop Studio Pro (Dev fork)...
+echo   Launching RiX Film Studio Pro (Dev fork)...
 echo   First launch takes ~15-30s (Vite + Electron + backend).
 echo   The app window will open shortly. Keep this window open;
 echo   closing it stops the app.
@@ -16,5 +16,5 @@ rem cold Qwen loads take minutes. E: already holds an identical copy of the cach
 set "LTX_HF_HOME=E:\hf-cache"
 "C:\Program Files\nodejs\node.exe" "C:\Dev\LTX-Desktop\node_modules\vite\bin\vite.js"
 echo.
-echo (LTX Desktop Studio Pro has stopped. Press any key to close.)
+echo (RiX Film Studio Pro has stopped. Press any key to close.)
 pause >nul

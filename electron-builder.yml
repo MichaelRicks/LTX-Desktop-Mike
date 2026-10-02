@@ -61,7 +61,7 @@ win:
       arch:
         - x64
   icon: resources/icon.ico
-  artifactName: ${productName}-Setup.${ext}
+  artifactName: RiX-Film-Studio-Pro-Setup.${ext}
   # Unsigned for the tester phase — Windows SmartScreen will warn ("More info ->
   # Run anyway"). Re-add signing (own cert / Azure Trusted Signing) before a wider
   # release. The Lightricks Azure cert config was removed here.
