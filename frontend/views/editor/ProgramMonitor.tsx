@@ -14,7 +14,9 @@ import { TextOverlayBox } from './TextOverlayBox'
 import { getOpacityPreview } from './text-opacity-preview'
 import { DEFAULT_SUBTITLE_STYLE } from '../../types/project-model'
 import type { Asset, TimelineClip, Track, SubtitleClip } from '../../types/project-model'
-import { getClipEffectStyles, getTransitionBgColor, formatTime, getShortcutLabel, tooltipLabel, getMaskedEffectOverlays, textClipOpacity } from './video-editor-utils'
+import { getClipEffectStyles as clipEffectStylesFor, getTransitionBgColor, formatTime, getShortcutLabel, tooltipLabel, getMaskedEffectOverlays, textClipOpacity, isLayerClip } from './video-editor-utils'
+import { MediaTransformBox } from './MediaTransformBox'
+import { getLayerPreview, setLayerPreview } from './layer-preview'
 import type { KeyboardLayout } from '../../lib/keyboard-shortcuts'
 import {
   selectActiveTimelineInPoint,
@@ -259,7 +261,10 @@ function getActiveLetterbox(adjustmentClips: TimelineClip[], tracks: Track[], ti
 }
 
 function getCompositingStack(mediaClips: TimelineClip[], tracks: Track[], activeClip: TimelineClip | null, time: number): TimelineClip[] {
-  if (!activeClip || (activeClip.opacity ?? 100) >= 100) return []
+  // A layer clip (moved, resized, faded, or explicitly set to composite) doesn't
+  // cover the frame any more, so what's beneath it has to be drawn. Anything else
+  // keeps the NLE default of the highest track winning outright.
+  if (!activeClip || !isLayerClip(activeClip)) return []
 
   return mediaClips
     .filter(clip =>
@@ -284,6 +289,20 @@ function getStyleOpacity(style: React.CSSProperties): number {
 function toStyleValue(value: string | number | undefined): string {
   if (value === undefined) return ''
   return String(value)
+}
+
+/**
+ * getClipEffectStyles, with an in-flight transform drag substituted in so the
+ * media follows the handles live. The drag itself commits once, on release, so
+ * the store (and undo) never sees the intermediate frames — hence reading it
+ * from here rather than from the clip.
+ */
+function getClipEffectStyles(clip: TimelineClip, timeInClip?: number): React.CSSProperties {
+  const preview = getLayerPreview()
+  return clipEffectStylesFor(
+    preview && preview.clipId === clip.id ? { ...clip, layer: preview.frame } : clip,
+    timeInClip,
+  )
 }
 
 function clearEffectStyle(element: HTMLElement): void {
@@ -464,6 +483,7 @@ export const ProgramMonitor = React.forwardRef<ProgramMonitorHandle, ProgramMoni
     pause,
     play,
     selectClip,
+    setClipLayerAt,
     setClipTextPosition,
     setCurrentTime,
     setShowPropertiesPanel,
@@ -1059,6 +1079,13 @@ export const ProgramMonitor = React.forwardRef<ProgramMonitorHandle, ProgramMoni
     applyFrameVisuals(nextState, mode)
   }, [applyFrameVisuals, syncFrameScene, syncPlaybackTimecode])
 
+  /** Re-apply element styles for the frame already on screen. A transform drag
+   *  changes no frame state, so renderFrame() would early-out on it. */
+  const repaintFrameVisuals = React.useCallback(() => {
+    const lastFrame = lastFrameRequestRef.current
+    if (lastFrame) applyFrameVisuals(lastFrame.state, lastFrame.mode)
+  }, [applyFrameVisuals])
+
   React.useEffect(() => {
     const pool = videoPoolRef.current
     for (const [, video] of pool) {
@@ -1470,6 +1497,30 @@ export const ProgramMonitor = React.forwardRef<ProgramMonitorHandle, ProgramMoni
                   </React.Fragment>
                 )
               })}
+
+              {/* Transform box for the selected video/image clip — move, resize,
+                  stretch. Offered for any visible media clip, so the background can
+                  be punched in as well as a logo placed on top. */}
+              {(() => {
+                const target = [activeClip, ...compositingStack]
+                  .find(clip => clip && selectedClipIds.has(clip.id) && (clip.type === 'video' || clip.type === 'image'))
+                if (!target) return null
+                const atTime = isPlaying ? playbackTimeRef.current : currentTime
+                const timeInClip = Math.max(0, atTime - target.startTime)
+                return (
+                  <MediaTransformBox
+                    key={`layer-${target.id}`}
+                    clip={target}
+                    frameSize={videoFrameSize}
+                    timeInClip={timeInClip}
+                    onPreview={(preview) => {
+                      setLayerPreview(preview ? { clipId: target.id, frame: preview } : null)
+                      repaintFrameVisuals()
+                    }}
+                    onCommit={(patch) => setClipLayerAt(target.id, timeInClip, patch)}
+                  />
+                )
+              })()}
 
               {/* Text overlay clips */}
               {activeTextClips.map(tc => (

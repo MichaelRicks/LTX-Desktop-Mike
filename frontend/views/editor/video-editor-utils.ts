@@ -5,8 +5,10 @@ import {
 } from 'lucide-react'
 import { formatKeyCombo, type ActionId, type KeyboardLayout } from '../../lib/keyboard-shortcuts'
 export type { KeyboardLayout } from '../../lib/keyboard-shortcuts'
-import type { TimelineClip, TransitionType, Track, ClipEffect, EffectMask } from '../../types/project-model'
-import { DEFAULT_COLOR_CORRECTION } from '../../types/project-model'
+import type {
+  TimelineClip, TransitionType, Track, ClipEffect, EffectMask, ClipLayer, ClipLayerFrame,
+} from '../../types/project-model'
+import { DEFAULT_CLIP_LAYER, DEFAULT_COLOR_CORRECTION } from '../../types/project-model'
 
 // ── Tool types & definitions ────────────────────────────────────────
 
@@ -103,6 +105,75 @@ export function linearKeyframeValue(keys: { t: number; value: number }[], t: num
     if (t < b.t) return a.value + (b.value - a.value) * ((t - a.t) / Math.max(1e-6, b.t - a.t))
   }
   return last.value
+}
+
+/** Smoothstep between two keys — the curve the Reframe editor and the export's
+ *  keyframeExpr() both use, so layer motion matches on both sides. */
+function smoothstepMix(a: number, b: number, s: number): number {
+  const c = Math.max(0, Math.min(1, s))
+  return a + (b - a) * c * c * (3 - 2 * c)
+}
+
+/**
+ * Where a media clip's layer sits at `timeInClip` seconds from its start, and how
+ * big it is. Keys are eased with smoothstep and hold their end values outside the
+ * keyed range. No layer at all = DEFAULT_CLIP_LAYER (centered, full size), which
+ * renders exactly as a clip with no layer ever did.
+ */
+export function clipLayerAt(
+  clip: { layer?: ClipLayer | null },
+  timeInClip: number,
+): ClipLayerFrame {
+  const layer = clip.layer
+  if (!layer) return DEFAULT_CLIP_LAYER
+  const keys = layer.keys
+  if (!keys || keys.length === 0) return layer
+  const sorted = keys.length > 1 && keys.some((k, i) => i > 0 && k.t < keys[i - 1].t)
+    ? [...keys].sort((a, b) => a.t - b.t)
+    : keys
+  const first = sorted[0]
+  if (timeInClip <= first.t) return first
+  const last = sorted[sorted.length - 1]
+  if (timeInClip >= last.t) return last
+  for (let i = 0; i < sorted.length - 1; i++) {
+    const a = sorted[i]
+    const b = sorted[i + 1]
+    if (timeInClip >= b.t) continue
+    const s = (timeInClip - a.t) / Math.max(1e-6, b.t - a.t)
+    return {
+      x: smoothstepMix(a.x, b.x, s),
+      y: smoothstepMix(a.y, b.y, s),
+      scaleX: smoothstepMix(a.scaleX, b.scaleX, s),
+      scaleY: smoothstepMix(a.scaleY, b.scaleY, s),
+    }
+  }
+  return last
+}
+
+/** Is this clip acting as a layer — i.e. does it no longer simply fill the frame,
+ *  so the tracks below it have to show through? Transform, partial opacity and
+ *  opacity keys all qualify, as does the explicit toggle. */
+export function isLayerClip(clip: TimelineClip): boolean {
+  if (clip.type !== 'video' && clip.type !== 'image') return false
+  if (clip.composite) return true
+  if ((clip.opacity ?? 100) < 100) return true
+  if (clip.opacityKeyframes && clip.opacityKeyframes.length > 0) return true
+  const layer = clip.layer
+  if (!layer) return false
+  if (layer.keys && layer.keys.length > 0) return true
+  return layer.x !== 0.5 || layer.y !== 0.5 || layer.scaleX !== 1 || layer.scaleY !== 1
+}
+
+/** A media clip's opacity (0..1) at `timeInClip`: keyframed, else the flat
+ *  `opacity`. The export mirrors this through colorchannelmixer's alpha gain. */
+export function mediaClipOpacity(
+  clip: { opacity?: number; opacityKeyframes?: { t: number; value: number }[] },
+  timeInClip: number,
+): number {
+  const base = clip.opacityKeyframes && clip.opacityKeyframes.length > 0
+    ? linearKeyframeValue(clip.opacityKeyframes, timeInClip)
+    : clip.opacity ?? 100
+  return Math.max(0, Math.min(1, base / 100))
 }
 
 /** Text-overlay opacity (0..1) at a timeline time: keyframed or static base
@@ -449,10 +520,26 @@ export function getClipEffectStyles(clip: TimelineClip, timeInClip?: number): Re
   EFFECTS HIDDEN */
 
   const transforms: string[] = []
+  // Layer placement first, so the flips below mirror the clip's own pixels rather
+  // than reflecting it across the frame. translate is in percentages of the
+  // element, which is the full frame, matching x/y being fractions of the frame.
+  let transformOrigin: string | undefined
+  if (clip.layer && timeInClip !== undefined) {
+    const { x, y, scaleX, scaleY } = clipLayerAt(clip, timeInClip)
+    if (x !== 0.5 || y !== 0.5) {
+      transforms.push(`translate(${((x - 0.5) * 100).toFixed(4)}%, ${((y - 0.5) * 100).toFixed(4)}%)`)
+    }
+    if (scaleX !== 1 || scaleY !== 1) {
+      transforms.push(`scale(${scaleX.toFixed(5)}, ${scaleY.toFixed(5)})`)
+      transformOrigin = 'center'
+    }
+  }
   if (clip.flipH) transforms.push('scaleX(-1)')
   if (clip.flipV) transforms.push('scaleY(-1)')
 
-  let opacity = (clip.opacity ?? 100) / 100
+  let opacity = timeInClip !== undefined && clip.opacityKeyframes && clip.opacityKeyframes.length > 0
+    ? mediaClipOpacity(clip, timeInClip)
+    : (clip.opacity ?? 100) / 100
   if (timeInClip !== undefined) {
     const tIn = clip.transitionIn
     const tOut = clip.transitionOut
@@ -491,6 +578,7 @@ export function getClipEffectStyles(clip: TimelineClip, timeInClip?: number): Re
   const style: React.CSSProperties = {}
   if (filters.length > 0) style.filter = filters.join(' ')
   if (transforms.length > 0) style.transform = transforms.join(' ')
+  if (transformOrigin) style.transformOrigin = transformOrigin
   if (opacity < 1) style.opacity = opacity
   if (clipPath) style.clipPath = clipPath
 

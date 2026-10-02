@@ -319,6 +319,25 @@ export const assetSchema = z.object({
   renderMs: z.number().optional(),
 })
 
+/** Where a media clip sits in the frame and how big it is. `x`/`y` are the
+ *  layer's CENTER as a fraction of frame width/height (0.5/0.5 = centered);
+ *  `scaleX`/`scaleY` multiply the size it would fill the frame at (1 = unchanged).
+ *  Chosen so the same numbers drive a CSS transform and ffmpeg's scale/overlay
+ *  without conversion. */
+export const clipLayerFrameSchema = z.object({
+  x: z.number(),
+  y: z.number(),
+  scaleX: z.number(),
+  scaleY: z.number(),
+})
+
+export const clipLayerSchema = clipLayerFrameSchema.extend({
+  /** Keys are eased with smoothstep, like reframe. `t` = seconds from clip start. */
+  keys: z.array(clipLayerFrameSchema.extend({ t: z.number() })).optional(),
+})
+
+export const DEFAULT_CLIP_LAYER: ClipLayerFrame = { x: 0.5, y: 0.5, scaleX: 1, scaleY: 1 }
+
 export const timelineClipSchema = z.object({
   id: z.string(),
   assetId: z.string().nullable(),
@@ -349,9 +368,10 @@ export const timelineClipSchema = z.object({
   // in/out is almost always wanted); set 0 explicitly for a hard cut.
   textFadeIn: z.number().optional(),
   textFadeOut: z.number().optional(),
-  // Text-overlay opacity automation: t = seconds from clip start, value 0..100.
-  // When present + non-empty it replaces textStyle.opacity (linear between keys;
-  // fade in/out still multiplies on top).
+  // Opacity automation: t = seconds from clip start, value 0..100. When present +
+  // non-empty it replaces the clip's base opacity — textStyle.opacity for text
+  // clips, `opacity` for video/image (linear between keys; a text clip's fade
+  // in/out still multiplies on top).
   opacityKeyframes: z.array(z.object({ t: z.number(), value: z.number() })).optional(),
   trackIndex: z.number(),
   asset: assetSchema.nullable(),
@@ -369,6 +389,15 @@ export const timelineClipSchema = z.object({
   effects: z.array(clipEffectSchema).optional(),
   letterbox: letterboxSettingsSchema.optional(),
   textStyle: textOverlayStyleSchema.optional(),
+  // Graphic/logo placement for a video or image clip: where it sits in the frame
+  // and how big it is, optionally keyframed. Absent = fills the frame as it always
+  // has. See clipLayerAt() in video-editor-utils for sampling.
+  layer: clipLayerSchema.optional(),
+  // Composite over the tracks below instead of replacing them. Set automatically
+  // the first time a clip is transformed or faded; also settable on its own, for a
+  // full-frame logo with an alpha channel that needs no resizing. Unset keeps the
+  // NLE default, where the highest track wins outright.
+  composite: z.boolean().optional(),
 })
 
 export const timelineSchema = z.object({
@@ -435,6 +464,9 @@ export type EffectMask = z.infer<typeof effectMaskSchema>
 export type EffectType = z.infer<typeof clipEffectSchema.shape.type>
 export type ClipEffect = z.infer<typeof clipEffectSchema>
 export type TextOverlayStyle = z.infer<typeof textOverlayStyleSchema>
+export type ClipLayerFrame = z.infer<typeof clipLayerFrameSchema>
+export type ClipLayer = z.infer<typeof clipLayerSchema>
+export type ClipLayerKey = NonNullable<ClipLayer['keys']>[number]
 export type TimelineClip = z.infer<typeof timelineClipSchema>
 export type Timeline = z.infer<typeof timelineSchema>
 export type AssetBins = z.infer<typeof assetBinsSchema>

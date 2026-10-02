@@ -5,6 +5,8 @@ import type {
   Asset,
   AssetBins,
   AssetTake,
+  ClipLayerFrame,
+  ClipLayerKey,
   ColorCorrection,
   LetterboxSettings,
   Project,
@@ -18,11 +20,14 @@ import type {
 import {
   createAssetBinId,
   createDefaultTimeline,
+  DEFAULT_CLIP_LAYER,
   DEFAULT_COLOR_CORRECTION,
   DEFAULT_LETTERBOX,
   DEFAULT_TEXT_STYLE,
 } from '../../types/project-model'
-import { resolveOverlaps, type EditorLayout, type ToolType } from './video-editor-utils'
+import {
+  clipLayerAt, linearKeyframeValue, resolveOverlaps, type EditorLayout, type ToolType,
+} from './video-editor-utils'
 import {
   applyUndoSnapshot,
   createInitialEditorState,
@@ -1276,6 +1281,140 @@ export function toggleClipReverse(state: EditorState, clipId: string): EditorSta
 
 export function setClipOpacity(state: EditorState, clipId: string, opacity: number): EditorState {
   return updateClip(state, clipId, { opacity })
+}
+
+// ── Layer transform (logos / graphics on an upper track) ───────────────────────
+//
+// A clip's layer is either static (`layer` alone) or animated (`layer.keys`).
+// Dragging the transform box edits whichever applies: with keys, the key at the
+// playhead, adding one there if there isn't one; without, the static frame. That
+// way a drag never silently throws away an animation, and never invents one.
+
+/** Key index at `t`, or -1. A third of a frame at 24fps is close enough to call
+ *  it the same key: the playhead can't land nearer than that by dragging. */
+function clipLayerKeyIndexAt(keys: ClipLayerKey[], t: number): number {
+  return keys.findIndex(key => Math.abs(key.t - t) < 0.014)
+}
+
+function sortClipLayerKeys(keys: ClipLayerKey[]): ClipLayerKey[] {
+  return [...keys].sort((a, b) => a.t - b.t)
+}
+
+/** Move/resize the layer as seen at `timeInClip`. Also marks the clip as
+ *  compositing: it no longer fills the frame, so what's under it has to show. */
+export function setClipLayerAt(
+  state: EditorState,
+  clipId: string,
+  timeInClip: number,
+  patch: Partial<ClipLayerFrame>,
+): EditorState {
+  return mapClips(state, clip => {
+    if (clip.id !== clipId) return clip
+    const frame: ClipLayerFrame = { ...clipLayerAt(clip, timeInClip), ...patch }
+    const keys = clip.layer?.keys
+    if (keys && keys.length > 0) {
+      const at = clipLayerKeyIndexAt(keys, timeInClip)
+      const nextKeys = at >= 0
+        ? keys.map((key, i) => (i === at ? { ...frame, t: key.t } : key))
+        : sortClipLayerKeys([...keys, { ...frame, t: timeInClip }])
+      // Keep the static frame in step with the first key, minus its `t`.
+      const { t: _t, ...firstFrame } = nextKeys[0]
+      return { ...clip, layer: { ...firstFrame, keys: nextKeys }, composite: true }
+    }
+    return { ...clip, layer: { ...frame }, composite: true }
+  })
+}
+
+/** Snapshot the layer as it looks at `timeInClip` into a key there. The first key
+ *  on a static layer just pins its current value; the second one makes it move. */
+export function addClipLayerKey(state: EditorState, clipId: string, timeInClip: number): EditorState {
+  return mapClips(state, clip => {
+    if (clip.id !== clipId) return clip
+    const frame = clipLayerAt(clip, timeInClip)
+    const keys = clip.layer?.keys ?? []
+    const at = clipLayerKeyIndexAt(keys, timeInClip)
+    const nextKeys = at >= 0
+      ? keys.map((key, i) => (i === at ? { ...frame, t: key.t } : key))
+      : sortClipLayerKeys([...keys, { ...frame, t: timeInClip }])
+    return { ...clip, layer: { ...(clip.layer ?? DEFAULT_CLIP_LAYER), keys: nextKeys }, composite: true }
+  })
+}
+
+/** Drop a key. The last one leaves the layer static at that key's own values, so
+ *  removing the final key doesn't make the graphic jump. */
+export function removeClipLayerKey(state: EditorState, clipId: string, index: number): EditorState {
+  return mapClips(state, clip => {
+    if (clip.id !== clipId || !clip.layer?.keys) return clip
+    const removed = clip.layer.keys[index]
+    const rest = clip.layer.keys.filter((_, i) => i !== index)
+    if (rest.length > 0) return { ...clip, layer: { ...clip.layer, keys: rest } }
+    const { t: _t, ...frame } = removed ?? { ...clip.layer, t: 0 }
+    return { ...clip, layer: frame }
+  })
+}
+
+/** Slide a key along the clip (dragging its diamond on the timeline). */
+export function moveClipLayerKey(
+  state: EditorState,
+  clipId: string,
+  index: number,
+  timeInClip: number,
+): EditorState {
+  return mapClips(state, clip => {
+    if (clip.id !== clipId || !clip.layer?.keys) return clip
+    const t = Math.max(0, Math.min(clip.duration, timeInClip))
+    const keys = clip.layer.keys.map((key, i) => (i === index ? { ...key, t: +t.toFixed(3) } : key))
+    return { ...clip, layer: { ...clip.layer, keys: sortClipLayerKeys(keys) } }
+  })
+}
+
+/** Back to filling the frame. Leaves `composite` alone — a full-frame logo with an
+ *  alpha channel still wants to composite after its transform is reset. */
+export function resetClipLayer(state: EditorState, clipId: string): EditorState {
+  return mapClips(state, clip => {
+    if (clip.id !== clipId) return clip
+    const { layer: _layer, ...rest } = clip
+    return rest as TimelineClip
+  })
+}
+
+/** Drop the animation, keeping the layer wherever it is at `timeInClip`. */
+export function clearClipLayerKeys(state: EditorState, clipId: string, timeInClip: number): EditorState {
+  return mapClips(state, clip => {
+    if (clip.id !== clipId || !clip.layer?.keys) return clip
+    return { ...clip, layer: { ...clipLayerAt(clip, timeInClip) } }
+  })
+}
+
+export function setClipComposite(state: EditorState, clipId: string, composite: boolean): EditorState {
+  return updateClip(state, clipId, { composite })
+}
+
+// ── Opacity automation (shared with text overlays) ─────────────────────────────
+
+/** Key the clip's opacity at `timeInClip`, seeding from whatever it is there. */
+export function addClipOpacityKey(state: EditorState, clipId: string, timeInClip: number): EditorState {
+  return mapClips(state, clip => {
+    if (clip.id !== clipId) return clip
+    const base = clip.type === 'text'
+      ? clip.textStyle?.opacity ?? 100
+      : clip.opacity ?? 100
+    const keys = clip.opacityKeyframes ?? []
+    const value = keys.length > 0 ? linearKeyframeValue(keys, timeInClip) : base
+    const at = keys.findIndex(key => Math.abs(key.t - timeInClip) < 0.014)
+    const next = at >= 0
+      ? keys.map((key, i) => (i === at ? { ...key, value } : key))
+      : [...keys, { t: +timeInClip.toFixed(3), value }].sort((a, b) => a.t - b.t)
+    return { ...clip, opacityKeyframes: next, composite: clip.type === 'text' ? clip.composite : true }
+  })
+}
+
+export function removeClipOpacityKey(state: EditorState, clipId: string, index: number): EditorState {
+  return mapClips(state, clip => {
+    if (clip.id !== clipId || !clip.opacityKeyframes) return clip
+    const rest = clip.opacityKeyframes.filter((_, i) => i !== index)
+    return { ...clip, opacityKeyframes: rest.length > 0 ? rest : undefined }
+  })
 }
 
 export function setClipFlipH(state: EditorState, clipId: string, value: boolean): EditorState {

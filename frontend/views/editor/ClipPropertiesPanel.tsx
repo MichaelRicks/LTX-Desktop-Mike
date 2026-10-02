@@ -7,11 +7,11 @@ import {
   SunDim, Moon, RotateCcw, Film, // EFFECTS HIDDEN: removed EyeOff, Sparkles, Plus, X
   AlignLeft, AlignCenter, AlignRight, Diamond, ChevronLeft, Eraser,
 } from 'lucide-react'
-import type { Asset, TimelineClip, LetterboxSettings, TextOverlayStyle, TransitionType } from '../../types/project-model' // EFFECTS HIDDEN: removed EffectMask
+import type { Asset, ClipLayerFrame, TimelineClip, LetterboxSettings, TextOverlayStyle, TransitionType } from '../../types/project-model' // EFFECTS HIDDEN: removed EffectMask
 import { DEFAULT_COLOR_CORRECTION, DEFAULT_LETTERBOX } from '../../types/project-model' // EFFECTS HIDDEN: removed EFFECT_DEFINITIONS, DEFAULT_EFFECT_MASK
 import { TEXT_PRESETS } from '../../types/project'
 import { namedResolutionTier } from '../../lib/video-resolution'
-import { formatTime, linearKeyframeValue } from './video-editor-utils'
+import { clipLayerAt, formatTime } from './video-editor-utils'
 import { Tooltip } from '../../components/ui/tooltip'
 import {
   selectAssets,
@@ -23,6 +23,7 @@ import {
 import { useEditorActions, useEditorStore } from './editor-store'
 import { FontPicker } from '../../components/FontPicker'
 import { setOpacityPreview } from './text-opacity-preview'
+import { OpacityKeyframeRow } from './OpacityKeyframeRow'
 import { fontHasBold } from '../../../shared/font-catalog'
 
 interface ClipPropertiesPanelProps {
@@ -34,12 +35,21 @@ export function ClipPropertiesPanel(props: ClipPropertiesPanelProps) {
     onCreateVideoFromImage,
   } = props
   const {
+    addClipLayerKey,
+    clearClipLayerKeys,
     deleteClipDisplayedTake,
+    removeClipLayerKey,
+    resetClipLayer,
     setClipAudioLevel,
     setClipAudioMuted,
+    setClipComposite,
+    setClipLayerAt,
     setCurrentTime,
     updateClip,
   } = useEditorActions()
+  // Keeps W and H in step while resizing from the panel (the preview's corner
+  // handles already do this; its edge handles are the way to stretch one axis).
+  const [linkLayerScale, setLinkLayerScale] = useState(true)
   const currentTime = useEditorStore(selectCurrentTime)
   // Opacity value dialed in between keyframes, not yet committed with ◆.
   const [pendingOpacity, setPendingOpacity] = useState<{ clipId: string; t: number; value: number } | null>(null)
@@ -496,84 +506,20 @@ export function ClipPropertiesPanel(props: ClipPropertiesPanelProps) {
                 </div>
               </div>
 
-              {/* Opacity — static, or keyframed manually: set the slider, click ◆ to
-                  commit a key at the playhead. Sitting ON a key, the slider edits
-                  that key directly; between keys, the slider value is pending until ◆. */}
-              {(() => {
-                const keys = [...(selectedClip.opacityKeyframes ?? [])].sort((a, b) => a.t - b.t)
-                const localT = currentTime - selectedClip.startTime
-                const inClip = localT >= -1e-3 && localT <= selectedClip.duration + 1e-3
-                const t = Math.max(0, Math.min(selectedClip.duration, localT))
-                const KEY_EPS = 1 / 48
-                const keyIdx = keys.findIndex(k => Math.abs(k.t - t) < KEY_EPS)
-                const pending = pendingOpacity && pendingOpacity.clipId === selectedClip.id && Math.abs(pendingOpacity.t - t) < KEY_EPS
-                  ? pendingOpacity.value
-                  : null
-                const value = pending ?? (keys.length ? Math.round(linearKeyframeValue(keys, t)) : ts.opacity)
-                const setKeys = (next: { t: number; value: number }[] | undefined) =>
-                  updateClip(selectedClip.id, { opacityKeyframes: next && next.length ? next : undefined })
-                const upsert = (v: number) => setKeys([...keys.filter(k => Math.abs(k.t - t) >= KEY_EPS), { t, value: v }].sort((a, b) => a.t - b.t))
-                const prevKey = [...keys].reverse().find(k => k.t < t - KEY_EPS)
-                const nextKey = keys.find(k => k.t > t + KEY_EPS)
-                const iconBtn = 'p-1 rounded text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800 disabled:opacity-30 disabled:hover:bg-transparent'
-                return (
-                  <div className="space-y-1">
-                    <div className="flex items-center justify-between">
-                      <span className="text-[10px] text-zinc-400">Opacity</span>
-                      <div className="flex items-center gap-1.5">
-                        <input
-                          type="range" min={0} max={100} value={value}
-                          disabled={keys.length > 0 && !inClip}
-                          onChange={e => {
-                            const v = parseInt(e.target.value)
-                            if (!keys.length) updateText({ opacity: v })       // static opacity
-                            else if (keyIdx >= 0) upsert(v)                     // editing the key under the playhead
-                            else setPendingOpacity({ clipId: selectedClip.id, t, value: v }) // new key: waits for ◆
-                          }}
-                          className="w-20 accent-cyan-500"
-                        />
-                        <span className={`text-[10px] w-8 text-right tabular-nums ${pending != null ? 'text-amber-300' : 'text-zinc-300'}`}>{value}%</span>
-                        <button
-                          onClick={() => { upsert(value); setPendingOpacity(null) }}
-                          disabled={!inClip}
-                          className={`${iconBtn} ${keyIdx >= 0 ? 'text-amber-300' : 'text-amber-300/70'} ${pending != null ? 'ring-1 ring-amber-400 animate-pulse' : ''}`}
-                          title={inClip ? 'Set an opacity keyframe at the playhead with this value' : 'Move the playhead over this clip to add a keyframe'}
-                        >
-                          <Diamond className={`h-3 w-3 ${keyIdx >= 0 ? 'fill-current' : ''}`} />
-                        </button>
-                      </div>
-                    </div>
-                    {pending != null && (
-                      <p className="text-[9px] text-amber-300/90 pl-1">Click ◆ to keyframe {pending}% here.</p>
-                    )}
-                    {keys.length > 0 && (
-                      <div className="flex items-center justify-between pl-1">
-                        <span className="text-[9px] text-amber-300/80 tabular-nums">
-                          {keys.length} key{keys.length === 1 ? '' : 's'}{keyIdx >= 0 ? ` · on key ${keyIdx + 1}` : ''}
-                        </span>
-                        <div className="flex items-center gap-0.5">
-                          <button onClick={() => prevKey && setCurrentTime(selectedClip.startTime + prevKey.t)} disabled={!prevKey} className={iconBtn} title="Previous keyframe">
-                            <ChevronLeft className="h-3 w-3" />
-                          </button>
-                          <button onClick={() => nextKey && setCurrentTime(selectedClip.startTime + nextKey.t)} disabled={!nextKey} className={iconBtn} title="Next keyframe">
-                            <ChevronRight className="h-3 w-3" />
-                          </button>
-                          <button onClick={() => setKeys(keys.filter((_, i) => i !== keyIdx))} disabled={keyIdx < 0} className={iconBtn} title="Delete the keyframe at the playhead">
-                            <Trash2 className="h-3 w-3" />
-                          </button>
-                          <button
-                            onClick={() => { updateClip(selectedClip.id, { opacityKeyframes: undefined, textStyle: { ...ts, opacity: value } }) }}
-                            className={iconBtn}
-                            title="Clear keyframes (keeps the current opacity)"
-                          >
-                            <Eraser className="h-3 w-3" />
-                          </button>
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                )
-              })()}
+              <OpacityKeyframeRow
+                clipId={selectedClip.id}
+                startTime={selectedClip.startTime}
+                duration={selectedClip.duration}
+                keys={selectedClip.opacityKeyframes ?? []}
+                staticValue={ts.opacity}
+                currentTime={currentTime}
+                pending={pendingOpacity}
+                setPending={setPendingOpacity}
+                setKeys={(next) => updateClip(selectedClip.id, { opacityKeyframes: next && next.length ? next : undefined })}
+                setStatic={(v) => updateText({ opacity: v })}
+                clearKeys={(v) => updateClip(selectedClip.id, { opacityKeyframes: undefined, textStyle: { ...ts, opacity: v } })}
+                setCurrentTime={setCurrentTime}
+              />
 
               {/* Font weight & style */}
               <div className="flex items-center justify-between">
@@ -893,25 +839,142 @@ export function ClipPropertiesPanel(props: ClipPropertiesPanelProps) {
         {/* --- Opacity --- */}
         {!isTextClip && (
           <div className="pt-3 border-t border-zinc-800">
-            <div className="flex items-center justify-between mb-1.5">
-              <label className="text-xs font-semibold text-zinc-400">Opacity</label>
-              <span className="text-[10px] text-zinc-500 tabular-nums">{selectedClip.opacity ?? 100}%</span>
-            </div>
-            <input
-              type="range"
-              min={0}
-              max={100}
-              step={1}
-              value={selectedClip.opacity ?? 100}
-              onChange={(e) => updateClip(selectedClip.id, { opacity: parseInt(e.target.value) })}
-              className="w-full h-1.5 accent-blue-500"
+            <label className="text-xs font-semibold text-zinc-400 block mb-1.5">Opacity</label>
+            <OpacityKeyframeRow
+              clipId={selectedClip.id}
+              startTime={selectedClip.startTime}
+              duration={selectedClip.duration}
+              keys={selectedClip.opacityKeyframes ?? []}
+              staticValue={selectedClip.opacity ?? 100}
+              currentTime={currentTime}
+              pending={pendingOpacity}
+              setPending={setPendingOpacity}
+              setKeys={(next) => updateClip(selectedClip.id, {
+                opacityKeyframes: next && next.length ? next : undefined,
+                // Fading means the tracks below have to show through.
+                composite: next && next.length ? true : selectedClip.composite,
+              })}
+              setStatic={(v) => updateClip(selectedClip.id, { opacity: v, composite: v < 100 ? true : selectedClip.composite })}
+              clearKeys={(v) => updateClip(selectedClip.id, { opacityKeyframes: undefined, opacity: v })}
+              setCurrentTime={setCurrentTime}
+              accent="accent-blue-500"
             />
-            <div className="flex justify-between text-[9px] text-zinc-600 mt-0.5">
-              <span>0%</span>
-              <span>100%</span>
-            </div>
           </div>
         )}
+
+        {/* --- Transform: place and size a clip in the frame (logos, graphics,
+               punch-ins). Keyframe it to animate. Dragging the box in the program
+               monitor writes the same values. --- */}
+        {hasVisualTransformControls && (() => {
+          const localT = currentTime - selectedClip.startTime
+          const inClip = localT >= -1e-3 && localT <= selectedClip.duration + 1e-3
+          const t = Math.max(0, Math.min(selectedClip.duration, localT))
+          const frame = clipLayerAt(selectedClip, t)
+          const keys = [...(selectedClip.layer?.keys ?? [])].sort((a, b) => a.t - b.t)
+          const KEY_EPS = 1 / 48
+          const keyIdx = keys.findIndex(k => Math.abs(k.t - t) < KEY_EPS)
+          const prevKey = [...keys].reverse().find(k => k.t < t - KEY_EPS)
+          const nextKey = keys.find(k => k.t > t + KEY_EPS)
+          const iconBtn = 'p-1 rounded text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800 disabled:opacity-30 disabled:hover:bg-transparent'
+          const num = 'w-14 px-1.5 py-1 rounded bg-zinc-800 border border-zinc-700 text-[11px] text-zinc-200 tabular-nums focus:outline-none focus:border-blue-500'
+          const set = (patch: Partial<ClipLayerFrame>) => setClipLayerAt(selectedClip.id, t, patch)
+          const pct = (v: number) => Math.round(v * 1000) / 10
+          return (
+            <div className="pt-3 border-t border-zinc-800">
+              <div className="flex items-center justify-between mb-2">
+                <label className="text-xs font-semibold text-zinc-400">Transform</label>
+                {selectedClip.layer && (
+                  <Tooltip content="Reset to fill the frame" side="left">
+                    <button onClick={() => resetClipLayer(selectedClip.id)} className={iconBtn}>
+                      <RotateCcw className="h-3 w-3" />
+                    </button>
+                  </Tooltip>
+                )}
+              </div>
+              <div className="space-y-1.5">
+                <div className="flex items-center gap-1.5">
+                  <span className="text-[10px] text-zinc-400 w-12">Position</span>
+                  <input
+                    type="number" step={1} value={pct(frame.x)} className={num} title="Horizontal center, % of frame width"
+                    onChange={(e) => set({ x: (parseFloat(e.target.value) || 0) / 100 })}
+                  />
+                  <input
+                    type="number" step={1} value={pct(frame.y)} className={num} title="Vertical center, % of frame height"
+                    onChange={(e) => set({ y: (parseFloat(e.target.value) || 0) / 100 })}
+                  />
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <span className="text-[10px] text-zinc-400 w-12">Size</span>
+                  <input
+                    type="number" step={1} min={2} value={pct(frame.scaleX)} className={num} title="Width, % of the size it fills the frame at"
+                    onChange={(e) => {
+                      const v = Math.max(0.02, (parseFloat(e.target.value) || 0) / 100)
+                      set(linkLayerScale ? { scaleX: v, scaleY: v } : { scaleX: v })
+                    }}
+                  />
+                  <input
+                    type="number" step={1} min={2} value={pct(frame.scaleY)} className={num} title="Height, % of the size it fills the frame at"
+                    onChange={(e) => {
+                      const v = Math.max(0.02, (parseFloat(e.target.value) || 0) / 100)
+                      set(linkLayerScale ? { scaleX: v, scaleY: v } : { scaleY: v })
+                    }}
+                  />
+                  <label className="flex items-center gap-1 cursor-pointer" title="Keep width and height in proportion">
+                    <input
+                      type="checkbox" checked={linkLayerScale}
+                      onChange={(e) => setLinkLayerScale(e.target.checked)}
+                      className="rounded bg-zinc-800 border-zinc-600"
+                    />
+                    <span className="text-[9px] text-zinc-500">Link</span>
+                  </label>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-[9px] text-amber-300/80 tabular-nums">
+                    {keys.length > 0
+                      ? `${keys.length} key${keys.length === 1 ? '' : 's'}${keyIdx >= 0 ? ` · on key ${keyIdx + 1}` : ''}`
+                      : 'Not animated'}
+                  </span>
+                  <div className="flex items-center gap-0.5">
+                    <button
+                      onClick={() => addClipLayerKey(selectedClip.id, t)}
+                      disabled={!inClip}
+                      className={`${iconBtn} ${keyIdx >= 0 ? 'text-amber-300' : 'text-amber-300/70'}`}
+                      title={inClip ? 'Keyframe this position and size at the playhead' : 'Move the playhead over this clip to add a keyframe'}
+                    >
+                      <Diamond className={`h-3 w-3 ${keyIdx >= 0 ? 'fill-current' : ''}`} />
+                    </button>
+                    <button onClick={() => prevKey && setCurrentTime(selectedClip.startTime + prevKey.t)} disabled={!prevKey} className={iconBtn} title="Previous keyframe">
+                      <ChevronLeft className="h-3 w-3" />
+                    </button>
+                    <button onClick={() => nextKey && setCurrentTime(selectedClip.startTime + nextKey.t)} disabled={!nextKey} className={iconBtn} title="Next keyframe">
+                      <ChevronRight className="h-3 w-3" />
+                    </button>
+                    <button onClick={() => removeClipLayerKey(selectedClip.id, keyIdx)} disabled={keyIdx < 0} className={iconBtn} title="Delete the keyframe at the playhead">
+                      <Trash2 className="h-3 w-3" />
+                    </button>
+                    <button
+                      onClick={() => clearClipLayerKeys(selectedClip.id, t)}
+                      disabled={keys.length === 0}
+                      className={iconBtn}
+                      title="Clear keyframes (keeps the current position and size)"
+                    >
+                      <Eraser className="h-3 w-3" />
+                    </button>
+                  </div>
+                </div>
+                <label className="flex items-center gap-2 cursor-pointer pt-0.5" title="Draw over the tracks below instead of replacing them. Needed for a full-frame logo with transparency.">
+                  <input
+                    type="checkbox"
+                    checked={selectedClip.composite ?? false}
+                    onChange={(e) => setClipComposite(selectedClip.id, e.target.checked)}
+                    className="rounded bg-zinc-800 border-zinc-600"
+                  />
+                  <span className="text-[11px] text-zinc-300">Composite over lower tracks</span>
+                </label>
+              </div>
+            </div>
+          )
+        })()}
 
         {/* --- Flip --- */}
         {hasVisualTransformControls && (

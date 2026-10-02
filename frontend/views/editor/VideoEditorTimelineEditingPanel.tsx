@@ -81,6 +81,7 @@ import {
 } from './editor-selectors'
 import { useTimelineDrag } from './useTimelineDrag'
 import { useEditorActions, useEditorStore } from './editor-store'
+import { ClipKeyframeDiamonds } from './ClipKeyframeDiamonds'
 import { skipMcpReveal, useMcpReveal } from './mcp-reveal'
 
 // Custom scissors cursor SVG for the blade tool (white with dark outline for contrast)
@@ -2661,74 +2662,58 @@ export function VideoEditorTimelineEditingPanel(props: VideoEditorTimelineEditin
                           </div>
                         )
                       })()}
-                      {/* Text opacity keyframes. Drag a diamond to slide the key in time
-                          (the playhead follows so the preview shows it); click one to park
-                          the playhead on it and open the clip's properties to adjust it.
-                          Double-click (or Alt+click) deletes a key. */}
-                      {clip.type === 'text' && clip.opacityKeyframes && clip.opacityKeyframes.length > 0 && (
-                        <div className="absolute inset-x-0 bottom-0 h-3 z-20 pointer-events-none">
-                          {clip.opacityKeyframes.map((k, i) => (
-                            <button
-                              key={`okf-${i}`}
-                              className="absolute bottom-0.5 -translate-x-1/2 text-amber-300 hover:text-amber-100 hover:scale-125 transition-transform pointer-events-auto cursor-ew-resize"
-                              style={{ left: `${Math.max(0, Math.min(1, k.t / Math.max(1e-6, clip.duration))) * 100}%` }}
-                              title={`Opacity ${Math.round(k.value)}% at ${k.t.toFixed(2)}s — drag to move, click to edit, double-click to delete`}
-                              onClick={(e) => e.stopPropagation()}
-                              onDoubleClick={(e) => {
-                                e.stopPropagation(); e.preventDefault()
-                                setClips(prev => prev.map(c => {
-                                  if (c.id !== clip.id || !c.opacityKeyframes) return c
-                                  const rest = c.opacityKeyframes.filter((_, j) => j !== i)
-                                  return { ...c, opacityKeyframes: rest.length ? rest : undefined }
-                                }))
-                              }}
-                              onMouseDown={(e) => {
-                                e.stopPropagation()
-                                e.preventDefault()
-                                if (e.altKey) {
-                                  setClips(prev => prev.map(c => {
-                                    if (c.id !== clip.id || !c.opacityKeyframes) return c
-                                    const rest = c.opacityKeyframes.filter((_, j) => j !== i)
-                                    return { ...c, opacityKeyframes: rest.length ? rest : undefined }
-                                  }))
-                                  return
-                                }
-                                const rect = (e.currentTarget.closest('[data-clip-id]') as HTMLElement | null)?.getBoundingClientRect()
-                                if (!rect) return
-                                const startX = e.clientX
-                                let dragged = false
-                                const onMove = (ev: MouseEvent) => {
-                                  if (!dragged && Math.abs(ev.clientX - startX) < 3) return
-                                  dragged = true
-                                  const tNew = Math.max(0, Math.min(clip.duration, ((ev.clientX - rect.left) / rect.width) * clip.duration))
-                                  setClips(prev => prev.map(c => c.id === clip.id && c.opacityKeyframes
-                                    ? { ...c, opacityKeyframes: c.opacityKeyframes.map((kk, j) => (j === i ? { ...kk, t: +tNew.toFixed(3) } : kk)) }
-                                    : c))
-                                  setCurrentTime(clip.startTime + tNew)
-                                }
-                                const onUp = () => {
-                                  document.removeEventListener('mousemove', onMove)
-                                  document.removeEventListener('mouseup', onUp)
-                                  document.body.style.cursor = ''
-                                  if (dragged) {
-                                    setClips(prev => prev.map(c => c.id === clip.id && c.opacityKeyframes
-                                      ? { ...c, opacityKeyframes: [...c.opacityKeyframes].sort((a, b) => a.t - b.t) }
-                                      : c))
-                                  } else {
-                                    setSelectedClipIds(expandWithLinkedClips(new Set([clip.id])))
-                                    setShowPropertiesPanel(true)
-                                    setCurrentTime(clip.startTime + k.t)
-                                  }
-                                }
-                                document.addEventListener('mousemove', onMove)
-                                document.addEventListener('mouseup', onUp)
-                                document.body.style.cursor = 'ew-resize'
-                              }}
-                            >
-                              <Diamond className="h-2.5 w-2.5 fill-current" />
-                            </button>
-                          ))}
-                        </div>
+                      {/* Transform keyframes (violet), for a clip placed/sized as a layer.
+                          Sits just above the opacity row so the two can be read apart. */}
+                      {clip.layer?.keys && clip.layer.keys.length > 0 && (
+                        <ClipKeyframeDiamonds
+                          keys={clip.layer.keys.map(k => k.t)}
+                          duration={clip.duration}
+                          colorClass="text-violet-300 hover:text-violet-100"
+                          rowClass="bottom-3"
+                          title={(i) => {
+                            const k = clip.layer!.keys![i]
+                            return `Position ${Math.round(k.x * 1000) / 10}%, ${Math.round(k.y * 1000) / 10}% · size ` +
+                              `${Math.round(k.scaleX * 1000) / 10}% at ${k.t.toFixed(2)}s — drag to move, click to edit, double-click to delete`
+                          }}
+                          onDelete={(i) => actions.removeClipLayerKey(clip.id, i)}
+                          onMoveKey={(i, t) => { actions.moveClipLayerKey(clip.id, i, t); setCurrentTime(clip.startTime + t) }}
+                          onDragEnd={() => { /* moveClipLayerKey already keeps the keys sorted */ }}
+                          onPark={(t) => {
+                            setSelectedClipIds(expandWithLinkedClips(new Set([clip.id])))
+                            setShowPropertiesPanel(true)
+                            setCurrentTime(clip.startTime + t)
+                          }}
+                        />
+                      )}
+                      {/* Opacity keyframes (amber) — on text overlays and on media clips
+                          that have been faded or keyframed. */}
+                      {clip.opacityKeyframes && clip.opacityKeyframes.length > 0 && (
+                        <ClipKeyframeDiamonds
+                          keys={clip.opacityKeyframes.map(k => k.t)}
+                          duration={clip.duration}
+                          colorClass="text-amber-300 hover:text-amber-100"
+                          title={(i) => {
+                            const k = clip.opacityKeyframes![i]
+                            return `Opacity ${Math.round(k.value)}% at ${k.t.toFixed(2)}s — drag to move, click to edit, double-click to delete`
+                          }}
+                          onDelete={(i) => actions.removeClipOpacityKey(clip.id, i)}
+                          onMoveKey={(i, t) => {
+                            setClips(prev => prev.map(c => c.id === clip.id && c.opacityKeyframes
+                              ? { ...c, opacityKeyframes: c.opacityKeyframes.map((kk, j) => (j === i ? { ...kk, t: +t.toFixed(3) } : kk)) }
+                              : c))
+                            setCurrentTime(clip.startTime + t)
+                          }}
+                          onDragEnd={() => {
+                            setClips(prev => prev.map(c => c.id === clip.id && c.opacityKeyframes
+                              ? { ...c, opacityKeyframes: [...c.opacityKeyframes].sort((a, b) => a.t - b.t) }
+                              : c))
+                          }}
+                          onPark={(t) => {
+                            setSelectedClipIds(expandWithLinkedClips(new Set([clip.id])))
+                            setShowPropertiesPanel(true)
+                            setCurrentTime(clip.startTime + t)
+                          }}
+                        />
                       )}
                       {/* Blade cut indicator line */}
                       {activeTool === 'blade' && bladeHoverInfo && (() => {
