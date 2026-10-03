@@ -7,7 +7,7 @@ import { Button } from '../components/ui/button'
 import { pathToFileUrl } from '../lib/file-url'
 import type { Project } from '../types/project-model'
 import { useProjectReferencesMigration } from '../hooks/useProjectReferencesMigration'
-import { listProjectBackups, readProjectBackup, scheduleProjectBackup, type ProjectBackupInfo } from '../lib/project-backup'
+import { listDeletedProjects, listProjectBackups, readProjectBackup, scheduleProjectBackup, type ProjectBackupInfo } from '../lib/project-backup'
 
 function formatDate(timestamp: number): string {
   const date = new Date(timestamp)
@@ -186,11 +186,12 @@ export function Home() {
   ), [getProject, projectIds])
 
   // Compare the project list with the backups on disk: offer to restore what
-  // localStorage lost, and write a backup for any project that has none yet.
+  // localStorage lost, write a backup for any project that has none yet, and drop
+  // projects this list still holds that were deleted elsewhere since.
   useEffect(() => {
     if (migrationStatus.status === 'needed' || migrationStatus.status === 'inProgress') return
     let cancelled = false
-    void listProjectBackups().then(backups => {
+    void Promise.all([listProjectBackups(), listDeletedProjects()]).then(([backups, deletedAtById]) => {
       if (cancelled) return
       const backupById = new Map(backups.map(backup => [backup.projectId, backup]))
       const localById = new Map(projects.map(project => [project.id, project]))
@@ -200,13 +201,16 @@ export function Home() {
       }))
       for (const project of projects) {
         const backup = backupById.get(project.id)
-        if (!backup || backup.updatedAt < project.updatedAt) {
+        const deletedAt = deletedAtById.get(project.id)
+        if (!backup && deletedAt !== undefined && deletedAt >= project.updatedAt) {
+          deleteProject(project.id)
+        } else if (!backup || backup.updatedAt < project.updatedAt) {
           scheduleProjectBackup(project.id, JSON.stringify(project))
         }
       }
     }).catch(() => { /* backups are best-effort; Home still works without them */ })
     return () => { cancelled = true }
-  }, [migrationStatus.status, projects])
+  }, [deleteProject, migrationStatus.status, projects])
 
   const handleRestoreBackups = async () => {
     const failed: string[] = []

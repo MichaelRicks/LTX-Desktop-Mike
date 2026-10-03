@@ -53,6 +53,12 @@ export default defineConfig({
       '@': path.resolve(__dirname, './frontend')
     }
   },
+  // The dev origin is where localStorage (the project list) lives: on another port
+  // the app opens with a different, older set of projects. Fail instead of moving.
+  server: {
+    port: 5173,
+    strictPort: true
+  },
   base: './',  // Use relative paths for Electron file:// protocol
   build: {
     outDir: 'dist'

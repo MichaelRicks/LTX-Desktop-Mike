@@ -314,6 +314,10 @@ export const electronAPISchemas = {
       assetCount: z.number(),
     })),
   },
+  listDeletedProjects: {
+    input: z.object({}),
+    output: z.array(z.object({ projectId: z.string(), deletedAt: z.number() })),
+  },
   readProjectBackup: {
     input: z.object({ projectId: z.string() }),
     output: ipcResult({ data: z.string() }),

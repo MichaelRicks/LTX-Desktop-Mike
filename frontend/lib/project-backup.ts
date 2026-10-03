@@ -49,6 +49,12 @@ export async function listProjectBackups(): Promise<ProjectBackupInfo[]> {
   return (await api()?.listProjectBackups?.()) ?? []
 }
 
+/** Project id -> when it was deleted, for projects deleted from any copy of the project list. */
+export async function listDeletedProjects(): Promise<Map<string, number>> {
+  const deleted = (await api()?.listDeletedProjects?.()) ?? []
+  return new Map(deleted.map(entry => [entry.projectId, entry.deletedAt]))
+}
+
 export async function readProjectBackup(projectId: string): Promise<unknown> {
   const result = await window.electronAPI.readProjectBackup({ projectId })
   if (!result.success) throw new Error(result.error)

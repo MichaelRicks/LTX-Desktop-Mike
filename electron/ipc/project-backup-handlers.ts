@@ -16,12 +16,44 @@ export const PROJECT_BACKUP_FILE = 'project.rix.json'
 // back, then the stale project got saved). Kept so the newer state stays restorable.
 const NEWER_BACKUP_FILE = 'project.rix.newer.json'
 
+// Ids of deleted projects -> when they were deleted. Another copy of localStorage
+// (rolled back, or a different dev origin) may still hold a deleted project; without
+// this it would write the backup again and the project would come back.
+const DELETED_PROJECTS_FILE = '.deleted-projects.json'
+
 // Project ids become a folder name: refuse anything that could leave the assets root.
 const PROJECT_ID_PATTERN = /^[A-Za-z0-9_-]{1,120}$/
 
 function backupPath(projectId: string): string {
   if (!PROJECT_ID_PATTERN.test(projectId)) throw new Error(`Invalid project id: ${projectId}`)
   return path.join(getProjectAssetsPath(), projectId, PROJECT_BACKUP_FILE)
+}
+
+function deletedProjectsPath(): string {
+  return path.join(getProjectAssetsPath(), DELETED_PROJECTS_FILE)
+}
+
+function readDeletedProjects(): Record<string, number> {
+  try {
+    const file = deletedProjectsPath()
+    if (!fs.existsSync(file)) return {}
+    const parsed = JSON.parse(fs.readFileSync(file, 'utf-8')) as unknown
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {}
+    return Object.fromEntries(
+      Object.entries(parsed).filter((entry): entry is [string, number] => typeof entry[1] === 'number'),
+    )
+  } catch (error) {
+    logger.warn(`Ignoring unreadable deleted-projects list: ${error}`)
+    return {}
+  }
+}
+
+function writeDeletedProjects(deleted: Record<string, number>): void {
+  const file = deletedProjectsPath()
+  fs.mkdirSync(path.dirname(file), { recursive: true })
+  const tmp = `${file}.tmp`
+  fs.writeFileSync(tmp, JSON.stringify(deleted), 'utf-8')
+  fs.renameSync(tmp, file)
 }
 
 interface BackupSummary { file: string; name: string; updatedAt: number; assetCount: number }
@@ -55,8 +87,15 @@ export function registerProjectBackupHandlers(): void {
   handle('saveProjectBackup', ({ projectId, data }) => {
     try {
       const file = backupPath(projectId)
-      fs.mkdirSync(path.dirname(file), { recursive: true })
       const incomingUpdatedAt = Number((JSON.parse(data) as { updatedAt?: unknown }).updatedAt) || 0
+      const deleted = readDeletedProjects()
+      if (projectId in deleted) {
+        // A copy from before the delete stays deleted; one edited since is wanted again.
+        if (incomingUpdatedAt <= deleted[projectId]) return { success: true as const }
+        delete deleted[projectId]
+        writeDeletedProjects(deleted)
+      }
+      fs.mkdirSync(path.dirname(file), { recursive: true })
       const newest = newestBackup(projectId)
       if (newest && newest.file === file && newest.updatedAt > incomingUpdatedAt) {
         fs.renameSync(file, path.join(path.dirname(file), NEWER_BACKUP_FILE))
@@ -94,6 +133,10 @@ export function registerProjectBackupHandlers(): void {
     return backups
   })
 
+  handle('listDeletedProjects', () => (
+    Object.entries(readDeletedProjects()).map(([projectId, deletedAt]) => ({ projectId, deletedAt }))
+  ))
+
   handle('readProjectBackup', ({ projectId }) => {
     try {
       const newest = newestBackup(projectId)
@@ -109,6 +152,7 @@ export function registerProjectBackupHandlers(): void {
       const file = backupPath(projectId)
       fs.rmSync(file, { force: true })
       fs.rmSync(path.join(path.dirname(file), NEWER_BACKUP_FILE), { force: true })
+      writeDeletedProjects({ ...readDeletedProjects(), [projectId]: Date.now() })
       return { success: true as const }
     } catch (error) {
       return { success: false as const, error: String(error) }
