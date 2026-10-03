@@ -824,6 +824,15 @@ export function buildVideoFilterGraph(
         // fade/keyframed opacity to the whole layer — one value per frame, pushed
         // into colorchannelmixer's alpha gain by sendcmd.
         const layer = `txtl${ti}`
+        // The text is drawn at its unstretched size, so a title squeezed to fit the
+        // frame is wider (or taller) than the frame before the squeeze. Size the
+        // canvas so it still comes out frame-sized after scaling, or drawtext crops
+        // the ends of the text at the canvas edge.
+        const canvasDim = (frame: number, stretch: number) => (
+          Math.min(8192, Math.ceil(frame / Math.min(1, stretch) / 2) * 2)
+        )
+        const canvasW = canvasDim(width, sx)
+        const canvasH = canvasDim(height, sy)
         const opacityAt = (t: number) => {
           const local = t - ovStart
           let g = 1
@@ -848,7 +857,7 @@ export function buildVideoFilterGraph(
           ? `sendcmd=c='${cmds.join(';')}',colorchannelmixer@txo${ti}=aa=${first.toFixed(4)},`
           : first < 0.999 ? `colorchannelmixer=aa=${first.toFixed(4)},` : ''
         filterParts.push(
-          `color=c=black@0.0:s=${width}x${height}:r=${fps}:d=${ovDur.toFixed(6)},format=rgba,` +
+          `color=c=black@0.0:s=${canvasW}x${canvasH}:r=${fps}:d=${ovDur.toFixed(6)},format=rgba,` +
           `setpts=PTS+${ovStart.toFixed(6)}/TB,` +
           `drawtext=${parts.join(':')},` +
           `unpremultiply=inplace=1,` +
