@@ -9,6 +9,7 @@ import type {
   TimelineClip, TransitionType, Track, ClipEffect, EffectMask, ClipLayer, ClipLayerFrame,
 } from '../../types/project-model'
 import { DEFAULT_CLIP_LAYER, DEFAULT_COLOR_CORRECTION } from '../../types/project-model'
+import { filmLookFilterId } from '../../components/FilmLookDefs'
 
 // ── Tool types & definitions ────────────────────────────────────────
 
@@ -435,6 +436,12 @@ export function migrateTracks(tracks: Track[]): Track[] {
 export function getClipEffectStyles(clip: TimelineClip, timeInClip?: number): React.CSSProperties {
   const cc = clip.colorCorrection || DEFAULT_COLOR_CORRECTION
   const filters: string[] = []
+
+  // The film look goes first, so the manual sliders below trim a graded image.
+  // The export orders them the same way (buildColorGradeFilters). The def this
+  // points at is rendered by <FilmLookDefs> — see filmLookFilterId.
+  const lookId = filmLookFilterId(clip.filmLook)
+  if (lookId) filters.push(`url(#${lookId})`)
 
   if (cc.brightness !== 0) filters.push(`brightness(${1 + cc.brightness / 100})`)
   if (cc.contrast !== 0) filters.push(`contrast(${1 + cc.contrast / 100})`)

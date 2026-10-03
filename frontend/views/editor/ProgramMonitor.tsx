@@ -7,6 +7,7 @@ import {
 import { Button } from '../../components/ui/button'
 import { Tooltip } from '../../components/ui/tooltip'
 import { AudioWaveform } from '../../components/AudioWaveform'
+import { FilmLookDefs } from '../../components/FilmLookDefs'
 import { pathToFileUrl } from '../../lib/file-url'
 import { VerticalReframeOverlay } from './VerticalReframeOverlay'
 import { VerticalFrameGuides } from '../../components/ReframeEditor'
@@ -533,6 +534,12 @@ export const ProgramMonitor = React.forwardRef<ProgramMonitorHandle, ProgramMoni
   const subtitles = useEditorStore(selectSubtitles)
   const getClipPath = React.useCallback((clip: TimelineClip) => resolveClipPathFromAssets(assets, clip), [assets])
   const selectedClipIds = useEditorStore(selectSelectedClipIds)
+  // One def per distinct look+intensity on the timeline — <FilmLookDefs> dedupes,
+  // this just keeps the array identity stable between unrelated state changes.
+  const filmLooksInUse = React.useMemo(
+    () => clips.flatMap((c) => (c.filmLook ? [c.filmLook] : [])),
+    [clips],
+  )
   // Re-paint when the properties panel's uncommitted opacity changes, so a media
   // layer tracks the slider the way a title does.
   const dialedOpacity = useOpacityPreview()
@@ -1297,6 +1304,8 @@ export const ProgramMonitor = React.forwardRef<ProgramMonitorHandle, ProgramMoni
 
   return (
     <div className="flex flex-col flex-1 min-w-0 min-h-0">
+        {/* The SVG filters the graded clips reference by id (see getClipEffectStyles). */}
+        <FilmLookDefs looks={filmLooksInUse} />
         {/* Preview (existing) */}
         <div
           ref={previewContainerRef}

@@ -69,6 +69,7 @@ const exportClip = z.object({
   fadeIn: z.number().optional(),
   fadeOut: z.number().optional(),
   colorCorrection: exportColorCorrection.optional(),
+  filmLook: z.object({ presetId: z.string(), intensity: z.number() }).optional(),
   transitionIn: exportClipTransition.optional(),
   transitionOut: exportClipTransition.optional(),
 })

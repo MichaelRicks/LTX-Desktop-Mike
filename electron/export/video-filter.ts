@@ -2,6 +2,7 @@ import {
   buildDissolveTimeRemap, DEFAULT_LAYER_FADE, findDissolveBoundaries,
   type ColorCorrection, type FlatSegment, type OverlayLayer,
 } from './timeline'
+import { ffmpegFilmLookChain, type ClipFilmLook } from '../../shared/film-looks'
 import { keyframeExpr } from './keyframe-expr'
 
 export interface ExportSubtitle {
@@ -89,10 +90,16 @@ function cssColorToFfmpeg(css: string, extraAlpha = 1): string | null {
  * close creative match to the live preview, not colorimetric precision -
  * consistent with the preview's own hue-rotate/sepia approximations.
  */
-/** The color-correction filters alone, comma-joined, or '' — shared by segments
- *  and by the overlay layers, which have no transitions to fade. */
-function buildColorGradeFilters(cc: ColorCorrection | undefined): string {
+/** The look + color-correction filters alone, comma-joined, or '' — shared by
+ *  segments and by the overlay layers, which have no transitions to fade.
+ *
+ *  The film look runs FIRST, so the manual sliders trim a graded image rather
+ *  than being swallowed by it. The preview applies them in the same order (the
+ *  SVG look filter ahead of the CSS adjustments in getClipEffectStyles). */
+function buildColorGradeFilters(cc: ColorCorrection | undefined, filmLook?: ClipFilmLook): string {
   const parts: string[] = []
+  const look = ffmpegFilmLookChain(filmLook)
+  if (look) parts.push(look)
   if (cc) {
     const brightness = cc.brightness / 100 + cc.exposure / 200 + cc.highlights / 300
     const contrast = 1 + cc.contrast / 100 + cc.shadows / 300
@@ -113,7 +120,7 @@ function buildColorGradeFilters(cc: ColorCorrection | undefined): string {
 
 function buildGradingFilters(seg: FlatSegment, localDuration: number): string {
   const parts: string[] = []
-  const grade = buildColorGradeFilters(seg.colorCorrection)
+  const grade = buildColorGradeFilters(seg.colorCorrection, seg.filmLook)
   if (grade) parts.push(grade)
 
   // Fades are defined relative to the ORIGINAL clip's start/end, so only
@@ -454,7 +461,7 @@ function buildOverlayLayers(
     chain += `scale=${fitW}:${fitH}:force_original_aspect_ratio=decrease,setsar=1,`
     if (ly.flipH) chain += 'hflip,'
     if (ly.flipV) chain += 'vflip,'
-    const grade = buildColorGradeFilters(ly.colorCorrection)
+    const grade = buildColorGradeFilters(ly.colorCorrection, ly.filmLook)
     if (grade) chain += `${grade},`
     // rgba so a logo's own transparency survives, and so the alpha gain below has
     // something to multiply.

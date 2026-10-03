@@ -1,3 +1,5 @@
+import type { ClipFilmLook } from '../../shared/film-looks'
+
 export interface ColorCorrection {
   brightness: number; contrast: number; saturation: number; temperature: number;
   tint: number; exposure: number; highlights: number; shadows: number;
@@ -16,7 +18,8 @@ export interface ExportClip {
   reframe?: ClipReframe;
   layer?: ClipLayer; composite?: boolean;
   fadeIn?: number; fadeOut?: number;
-  colorCorrection?: ColorCorrection; transitionIn?: ClipTransition; transitionOut?: ClipTransition;
+  colorCorrection?: ColorCorrection; filmLook?: ClipFilmLook;
+  transitionIn?: ClipTransition; transitionOut?: ClipTransition;
 }
 
 /** Where a media clip sits in the frame and how big it is, optionally keyframed.
@@ -41,7 +44,7 @@ export interface OverlayLayer {
   /** Fade up/down in seconds. Undefined = DEFAULT_LAYER_FADE, 0 = a hard cut. */
   fadeIn?: number; fadeOut?: number;
   layer: ClipLayer;
-  colorCorrection?: ColorCorrection;
+  colorCorrection?: ColorCorrection; filmLook?: ClipFilmLook;
 }
 
 /** Mirrors DEFAULT_LAYER_FADE in video-editor-utils — a graphic that pops on and
@@ -87,6 +90,7 @@ export function collectOverlayLayers(clips: ExportClip[]): OverlayLayer[] {
       fadeOut: clip.fadeOut,
       layer: clip.layer ?? DEFAULT_LAYER,
       colorCorrection: clip.colorCorrection,
+      filmLook: clip.filmLook,
     }))
 }
 
@@ -103,7 +107,8 @@ export interface FlatSegment {
   reframe?: ClipReframe;
   /** Source pixel size — filled in by the exporter for 9:16 exports (title mapping). */
   srcWidth?: number; srcHeight?: number;
-  colorCorrection?: ColorCorrection; transitionIn?: ClipTransition; transitionOut?: ClipTransition;
+  colorCorrection?: ColorCorrection; filmLook?: ClipFilmLook;
+  transitionIn?: ClipTransition; transitionOut?: ClipTransition;
   // Position of this segment within its ORIGINAL clip's own timeline (not the
   // overall program timeline) and that clip's total duration - needed so a
   // clip fragmented by a higher-track overlay still only applies its
@@ -165,6 +170,7 @@ export function flattenTimeline(clips: ExportClip[]): FlatSegment[] {
         volume: c.volume,
         reframe: c.reframe,
         colorCorrection: c.colorCorrection,
+        filmLook: c.filmLook,
         transitionIn: c.transitionIn,
         transitionOut: c.transitionOut,
         offsetInClip,

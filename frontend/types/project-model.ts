@@ -387,6 +387,10 @@ export const timelineClipSchema = z.object({
   transitionIn: clipTransitionSchema.default(DEFAULT_CLIP_TRANSITION),
   transitionOut: clipTransitionSchema.default(DEFAULT_CLIP_TRANSITION),
   colorCorrection: colorCorrectionSchema.default(DEFAULT_COLOR_CORRECTION),
+  // Curated film look (shared/film-looks.ts), applied BEFORE the manual color
+  // correction above. Only the preset id and intensity are stored, so the recipe
+  // stays in one place for the preview and the export to read.
+  filmLook: z.object({ presetId: z.string(), intensity: z.number() }).optional(),
   opacity: z.number().default(100),
   takeIndex: z.number().optional(),
   isRegenerating: z.boolean().optional(),

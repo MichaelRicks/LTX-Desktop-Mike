@@ -51,6 +51,7 @@ export function buildExportPayload(
       fadeIn: clip.fadeIn,
       fadeOut: clip.fadeOut,
       colorCorrection: clip.colorCorrection,
+      filmLook: clip.filmLook,
       transitionIn: clip.transitionIn,
       transitionOut: clip.transitionOut,
     }))
