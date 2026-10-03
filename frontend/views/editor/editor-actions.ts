@@ -978,12 +978,26 @@ export function addTextClip(state: EditorState, params: AddTextClipParams = {}):
     .map((track, index) => ({ track, index }))
     .filter(({ track }) => track.kind === 'video' && track.type !== 'subtitle')
     .map(({ index }) => index)
-  const targetTrack = params.trackIndex ?? (
+  let targetTrack = params.trackIndex ?? (
     videoTrackIndices.length > 0 ? videoTrackIndices[videoTrackIndices.length - 1] : 0
   )
-  const clip = createTextClip(params.style, insertTime, targetTrack)
+  let clip = createTextClip(params.style, insertTime, targetTrack)
 
-  let next = replaceActiveTimeline(state, timeline => ({
+  // A title goes over the picture, not in place of it: when the top video track
+  // already has something where the title would land, give it a new track above.
+  let next = state
+  const occupied = selectClips(state).some(other => (
+    other.trackIndex === targetTrack
+    && other.startTime < clip.startTime + clip.duration
+    && other.startTime + other.duration > clip.startTime
+  ))
+  if (params.trackIndex === undefined && occupied) {
+    targetTrack = tracks.length
+    next = addTrack(next, 'video')
+    clip = { ...clip, trackIndex: targetTrack }
+  }
+
+  next = replaceActiveTimeline(next, timeline => ({
     ...timeline,
     clips: resolveOverlaps([...timeline.clips, clip], new Set([clip.id])),
   }))
