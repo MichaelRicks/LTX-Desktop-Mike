@@ -37,7 +37,8 @@ export function createWindow(): BrowserWindow {
 
   // Load the app
   if (isDev) {
-    mainWindow.loadURL('http://localhost:5173')
+    // vite-plugin-electron sets this to the port Vite actually bound (5173 may be taken)
+    mainWindow.loadURL(process.env.VITE_DEV_SERVER_URL ?? 'http://localhost:5173')
     // DevTools can be opened manually with Ctrl+Shift+I or F12
   } else {
     mainWindow.loadFile(path.join(app.getAppPath(), 'dist', 'index.html'))
