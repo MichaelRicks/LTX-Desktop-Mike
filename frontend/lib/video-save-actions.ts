@@ -27,7 +27,7 @@ function toStem(name: string | undefined, fallbackPath: string): string {
 let toastEl: HTMLDivElement | null = null
 let toastTimer: ReturnType<typeof setTimeout> | null = null
 
-function flashToast(message: string, isError = false): void {
+export function flashToast(message: string, isError = false): void {
   if (toastTimer) clearTimeout(toastTimer)
   if (!toastEl) {
     toastEl = document.createElement('div')

@@ -40,6 +40,7 @@ import { ReframeEditor, type ReframeRect, type ReframeKeyframe } from '../compon
 import { pathToFileUrl } from '../lib/file-url'
 import { GPM_IMAGE_DND_TYPE, saveDataUrlToTempFile, type GpmDndImage } from '../components/gpm/gpm-image-file'
 import { FILE_DND, type LibFile } from '../components/gpm/DownloadsBrowser'
+import { frameSeedFromVideo } from '../lib/video-frame-seed'
 import { useDownloadsBrowserOpen } from '../components/gpm/downloads-browser-store'
 import { usePromptManagerProOpen } from '../components/gpm/prompt-manager-pro-store'
 import {
@@ -982,10 +983,14 @@ function PromptBar({
     }
 
     // Image dragged from the Downloads Browser — already a real file on disk.
+    // A video seeds the slot with its own first frame, which is the setup for
+    // re-rolling that shot. The clip's prompt/model/seed live on the project's
+    // asset record rather than the file, so none of those come with it.
     const dlData = e.dataTransfer.getData(FILE_DND)
     if (dlData) {
       const f = JSON.parse(dlData) as LibFile
-      if (!f.isVideo) onInputImageChange(f.path)
+      if (f.isVideo) void frameSeedFromVideo(f.path).then((p) => { if (p) onInputImageChange(p) })
+      else if (!f.isAudio) onInputImageChange(f.path)
       return
     }
 
@@ -994,12 +999,19 @@ function PromptBar({
       const asset = JSON.parse(assetData) as Asset
       if (asset.type === 'image') {
         onInputImageChange(asset.path)
+      } else if (asset.type === 'video') {
+        void frameSeedFromVideo(asset.path).then((p) => { if (p) onInputImageChange(p) })
       }
       return
     }
 
     // File drop from the OS (Finder/Explorer) — mirrors handleFileSelect.
     const file = e.dataTransfer.files?.[0]
+    if (file && file.type.startsWith('video/')) {
+      const filePath = window.electronAPI?.getPathForFile(file)
+      if (filePath) void frameSeedFromVideo(filePath).then((p) => { if (p) onInputImageChange(p) })
+      return
+    }
     if (file && file.type.startsWith('image/')) {
       const filePath = window.electronAPI?.getPathForFile(file)
       onInputImageChange(filePath || URL.createObjectURL(file))
@@ -1072,7 +1084,7 @@ function PromptBar({
     const dlData = e.dataTransfer.getData(FILE_DND)
     if (dlData) {
       const f = JSON.parse(dlData) as LibFile
-      if (!f.isVideo) onInputLastImageChange(f.path)
+      if (!f.isVideo && !f.isAudio) onInputLastImageChange(f.path)
       return
     }
 

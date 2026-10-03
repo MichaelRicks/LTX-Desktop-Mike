@@ -465,6 +465,14 @@ export const electronAPISchemas = {
     output: z.object({ path: z.string() }),
   },
 
+  // A clip dropped on the prompt bar's start-frame slot: pull its opening frame
+  // into a temp PNG the renderer can hand straight to the image input. Temp, not
+  // Continuations — this is a scratch still for a re-roll, not a saved asset.
+  extractVideoSeedFrame: {
+    input: z.object({ videoPath: z.string() }),
+    output: z.object({ path: z.string() }),
+  },
+
   // "Continue as new shot": extract a clip's last frame into the Continuations
   // library folder to seed an i2v continuation; returns source dims/fps so the
   // next gen matches (clips must cut together cleanly on the timeline).
